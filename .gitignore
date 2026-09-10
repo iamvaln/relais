@@ -6,3 +6,5 @@ node_modules/
 dist/
 build/
 *.log
+apps/*/dist/
+coverage/
