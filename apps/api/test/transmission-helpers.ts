@@ -54,3 +54,53 @@ export async function buildContactBody(keys: DeviceKeys, relaisPk: string, input
     question_ids: input.question_ids,
   }
 }
+
+export type Roles3 = { k1: boolean; k2: boolean; k3: boolean }
+export type Share = { enc: string; sig: string }
+export type ContactBodyLike = Awaited<ReturnType<typeof buildContactBody>>
+
+/** Une part Si_enc opaque de 32 bytes + sa signature Ed25519 sur SHA256(Si_enc) (DEC-29). */
+export function buildShare(keys: DeviceKeys, seed: number): Share & { bytes: Buffer } {
+  const bytes = opaque(seed, 32)
+  return { bytes, enc: bytes.toString('base64'), sig: signHash(keys, bytes) }
+}
+
+export function buildShares(keys: DeviceKeys, roles: Roles3, seed: number) {
+  return {
+    k1: roles.k1 ? buildShare(keys, seed * 10 + 1) : null,
+    k2: roles.k2 ? buildShare(keys, seed * 10 + 2) : null,
+    k3: roles.k3 ? buildShare(keys, seed * 10 + 3) : null,
+  }
+}
+
+export interface ActivationContact {
+  id: string
+  body: ContactBodyLike
+  seed: number
+}
+
+/** Corps de POST /transmission/activate : chaque contact re-signé, une part par rôle, un verify_token. */
+export function buildActivationBody(
+  keys: DeviceKeys,
+  contacts: ActivationContact[],
+  opts: { n?: number; m?: number; silence?: number; frequency?: number } = {},
+) {
+  return {
+    silence_duration_months: opts.silence ?? 3,
+    checkin_frequency_weeks: opts.frequency ?? 4,
+    schema: { n: opts.n ?? 2, m: opts.m ?? contacts.length },
+    contacts: contacts.map((c) => {
+      const shares = buildShares(keys, c.body.roles, c.seed)
+      return {
+        id: c.id,
+        ...c.body,
+        shares: {
+          k1: shares.k1 && { enc: shares.k1.enc, sig: shares.k1.sig },
+          k2: shares.k2 && { enc: shares.k2.enc, sig: shares.k2.sig },
+          k3: shares.k3 && { enc: shares.k3.enc, sig: shares.k3.sig },
+        },
+        verify_token: opaque(c.seed * 100, 40).toString('base64'),
+      }
+    }),
+  }
+}

@@ -8,10 +8,12 @@ import { limits } from '../../plugins/rate-limit.js'
 import { relaisKeyVersion, relaisPublicKeyBase64 } from '../../services/secrets/index.js'
 import * as transmission from './service.js'
 import {
+  activateBody,
   configBody,
   contactBody,
   contactParams,
   schemaBody,
+  type ActivateBody,
   type ConfigBody,
   type ContactBody,
   type ContactParams,
@@ -59,5 +61,11 @@ export async function transmissionRoutes(app: FastifyInstance): Promise<void> {
     '/config',
     { schema: { body: configBody }, preHandler: [authenticate, requireStepUp('edit_transmission')] },
     async (req) => ok(await transmission.updateConfig(req.user!.id, req.body)),
+  )
+
+  app.post<{ Body: ActivateBody }>(
+    '/activate',
+    { schema: { body: activateBody }, preHandler: [authenticate, requireStepUp('activate_transmission')] },
+    async (req) => ok(await transmission.activate(req.user!.id, req.body)),
   )
 }

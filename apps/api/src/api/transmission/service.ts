@@ -6,7 +6,10 @@ import { AppError } from '../../lib/errors.js'
 import { prisma } from '../../lib/prisma.js'
 import sodium from '../../lib/sodium.js'
 import { relaisKeypair } from '../../services/secrets/index.js'
-import type { ConfigBody, ContactBody, Roles, SchemaBody } from './schemas.js'
+import { env } from '../../config/env.js'
+import { emailService } from '../../services/email/index.js'
+import { objectStore } from '../../services/storage/index.js'
+import type { ActivateBody, ActivateContact, ConfigBody, ContactBody, Roles, SchemaBody } from './schemas.js'
 
 // --- Vues -----------------------------------------------------------------------
 
@@ -94,13 +97,22 @@ export async function getConfig(userId: string): Promise<TransmissionConfigView>
 }
 
 /** La ligne transmission_configs est créée inactive à la première écriture. */
-async function ensureConfig(userId: string): Promise<{ id: string }> {
+async function ensureConfig(userId: string): Promise<{ id: string; status: string }> {
   return prisma().transmission_configs.upsert({
     where: { user_id: userId },
     create: { user_id: userId },
     update: {},
-    select: { id: true },
+    select: { id: true, status: true },
   })
+}
+
+/** Contacts et schéma sont figés dès l'activation : les parts Shamir en dépendent. */
+function assertEditable(status: string): void {
+  if (status !== 'inactive') {
+    throw new AppError('TRANSMISSION_ALREADY_ACTIVE', {
+      message: 'Transmission active : désactivez-la avant de modifier contacts ou schéma.',
+    })
+  }
 }
 
 // --- Règles de validation (Note-01, BO-05) --------------------------------------
@@ -165,11 +177,20 @@ async function assertPlanAllowsOneMore(transmissionId: string, plan: string): Pr
 }
 
 /** L'owner doit avoir enregistré sa clé Ed25519 (POST /auth/keys) : elle authentifie chaque contact. */
-async function ownerKey(userId: string): Promise<{ plan: string; ed25519Pk: Buffer }> {
-  const user = await prisma().users.findUnique({ where: { id: userId }, select: { plan: true, ed25519_pk: true } })
+interface OwnerKey {
+  plan: string
+  language: 'fr' | 'en'
+  ed25519Pk: Buffer
+}
+
+async function ownerKey(userId: string): Promise<OwnerKey> {
+  const user = await prisma().users.findUnique({
+    where: { id: userId },
+    select: { plan: true, language: true, ed25519_pk: true },
+  })
   if (!user) throw new AppError('NOT_FOUND')
   if (!user.ed25519_pk) throw new AppError('AUTH_KEY_NOT_SET')
-  return { plan: user.plan, ed25519Pk: Buffer.from(user.ed25519_pk) }
+  return { plan: user.plan, language: user.language === 'en' ? 'en' : 'fr', ed25519Pk: Buffer.from(user.ed25519_pk) }
 }
 
 /** DEC-29 : Ed25519.verify(notification_sig, notification_enc, ed25519_pk). */
@@ -179,21 +200,34 @@ function verifyNotificationSig(ed25519Pk: Buffer, notificationEnc: Uint8Array, s
   }
 }
 
+interface Notification {
+  email: string
+  phone: string | null
+}
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+
 /**
- * DEC-28 : la sealed box doit s'ouvrir avec la clé de Relais — sinon, au
- * décès, personne ne pourra prévenir ce contact. On vérifie sans conserver
- * le clair.
+ * DEC-28 : la sealed box doit s'ouvrir avec la clé de Relais et contenir un
+ * email — sinon, le moment venu, personne ne pourra prévenir ce contact. Le
+ * clair n'est jamais conservé ni loggé ; il ne sert qu'à envoyer l'email.
  */
-async function assertSealedBoxOpens(notificationEnc: Uint8Array): Promise<void> {
+async function openNotification(notificationEnc: Uint8Array): Promise<Notification> {
   await sodium.ready
   const { publicKey, privateKey } = await relaisKeypair()
-  try {
-    sodium.crypto_box_seal_open(notificationEnc, publicKey, privateKey)
-  } catch {
-    throw new AppError('VALIDATION_ERROR', {
-      details: { notification_enc: 'sealed box illisible avec la clé de Relais (GET /transmission/relais-key)' },
-    })
+  const reject = (why: string): never => {
+    throw new AppError('VALIDATION_ERROR', { details: { notification_enc: why } })
   }
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(Buffer.from(sodium.crypto_box_seal_open(notificationEnc, publicKey, privateKey)).toString('utf8'))
+  } catch {
+    return reject('sealed box illisible avec la clé de Relais (GET /transmission/relais-key)')
+  }
+  if (typeof parsed !== 'object' || parsed === null) return reject('doit sceller un objet { email, phone }')
+  const { email, phone } = parsed as { email?: unknown; phone?: unknown }
+  if (typeof email !== 'string' || !EMAIL_RE.test(email)) return reject('email manquant ou invalide dans la sealed box')
+  return { email, phone: typeof phone === 'string' ? phone : null }
 }
 
 function validateRoles(roles: Roles): void {
@@ -216,21 +250,22 @@ interface ValidatedContact {
   notificationEnc: Uint8Array<ArrayBuffer>
   notificationSig: Uint8Array<ArrayBuffer>
   secretEnc: Uint8Array<ArrayBuffer>
-  plan: string
+  notification: Notification
+  owner: OwnerKey
 }
 
-/** Règles communes à POST et PUT : décodage, rôles, questions, clé de l'owner, signature, sealed box. */
-async function validateContactInput(userId: string, body: ContactBody): Promise<ValidatedContact> {
+/** Règles communes à POST, PUT et activate : décodage, rôles, questions, clé de l'owner, signature, sealed box. */
+async function validateContactInput(userId: string, body: ContactBody, owner?: OwnerKey): Promise<ValidatedContact> {
   const notificationEnc = decodeOrThrow('notification_enc', body.notification_enc)
   const notificationSig = decodeOrThrow('notification_sig', body.notification_sig)
   const secretEnc = decodeOrThrow('secret_enc', body.secret_enc)
   validateRoles(body.roles)
   await validateQuestions(body.question_ids)
 
-  const { plan, ed25519Pk } = await ownerKey(userId)
-  verifyNotificationSig(ed25519Pk, notificationEnc, notificationSig)
-  await assertSealedBoxOpens(notificationEnc)
-  return { notificationEnc, notificationSig, secretEnc, plan }
+  const key = owner ?? (await ownerKey(userId))
+  verifyNotificationSig(key.ed25519Pk, notificationEnc, notificationSig)
+  const notification = await openNotification(notificationEnc)
+  return { notificationEnc, notificationSig, secretEnc, notification, owner: key }
 }
 
 function contactColumns(body: ContactBody, v: ValidatedContact) {
@@ -252,7 +287,8 @@ export async function createContact(userId: string, body: ContactBody): Promise<
   const v = await validateContactInput(userId, body)
 
   const cfg = await ensureConfig(userId)
-  await assertPlanAllowsOneMore(cfg.id, v.plan)
+  assertEditable(cfg.status)
+  await assertPlanAllowsOneMore(cfg.id, v.owner.plan)
   const last = await prisma().trusted_contacts.aggregate({ where: { transmission_id: cfg.id }, _max: { contact_order: true } })
   const position = (last._max.contact_order ?? 0) + 1
 
@@ -264,17 +300,17 @@ export async function createContact(userId: string, body: ContactBody): Promise<
 }
 
 /** Un contact vivant (non retiré) appartenant à l'utilisateur, sinon 404. */
-async function findOwnContact(userId: string, id: string): Promise<{ id: string }> {
+async function findOwnContact(userId: string, id: string): Promise<{ id: string; status: string }> {
   const c = await prisma().trusted_contacts.findFirst({
     where: { id, user_id: userId, contact_status: { not: 'removed' } },
-    select: { id: true },
+    select: { id: true, transmission_configs: { select: { status: true } } },
   })
   if (!c) throw new AppError('NOT_FOUND', { message: 'Contact introuvable.' })
-  return c
+  return { id: c.id, status: c.transmission_configs.status }
 }
 
 export async function updateContact(userId: string, id: string, body: ContactBody): Promise<ContactView> {
-  await findOwnContact(userId, id)
+  assertEditable((await findOwnContact(userId, id)).status)
   const v = await validateContactInput(userId, body)
   const row = await prisma().trusted_contacts.update({ where: { id }, data: contactColumns(body, v), select: contactSelect })
   return toContactView(row)
@@ -282,7 +318,7 @@ export async function updateContact(userId: string, id: string, body: ContactBod
 
 /** Retrait logique : la ligne reste (audit, positions), le contact sort de la config. */
 export async function removeContact(userId: string, id: string): Promise<{ id: string; status: 'removed' }> {
-  await findOwnContact(userId, id)
+  assertEditable((await findOwnContact(userId, id)).status)
   await prisma().trusted_contacts.update({ where: { id }, data: { contact_status: 'removed' } })
   return { id, status: 'removed' }
 }
@@ -293,7 +329,7 @@ export async function updateSchema(userId: string, body: SchemaBody): Promise<Tr
   if (body.m < body.n) {
     throw new AppError('VALIDATION_ERROR', { details: { m: 'M doit être supérieur ou égal à N' } })
   }
-  await ensureConfig(userId)
+  assertEditable((await ensureConfig(userId)).status)
   await prisma().transmission_configs.update({ where: { user_id: userId }, data: { schema_n: body.n, schema_m: body.m } })
   return getConfig(userId)
 }
@@ -305,4 +341,162 @@ export async function updateConfig(userId: string, body: ConfigBody): Promise<Tr
     data: { silence_duration_months: body.silence_duration_months, checkin_frequency_weeks: body.checkin_frequency_weeks },
   })
   return getConfig(userId)
+}
+
+// --- Activation (Backend §3.4, DEC-29, DEC-30) ----------------------------------------
+
+const KEY_SLOTS = ['k1', 'k2', 'k3'] as const
+type KeySlot = (typeof KEY_SLOTS)[number]
+
+function sharePath(userId: string, contactId: string, slot: KeySlot): string {
+  return `shares/${userId}/${contactId}/${slot}.enc`
+}
+
+interface PreparedShare {
+  slot: KeySlot
+  path: string
+  bytes: Uint8Array<ArrayBuffer>
+  hash: string
+}
+
+interface PreparedContact {
+  id: string
+  body: ActivateContact
+  validated: ValidatedContact
+  verifyToken: Uint8Array<ArrayBuffer>
+  shares: PreparedShare[]
+}
+
+/**
+ * DEC-29 : une part par rôle détenu, aucune pour les autres, chaque part
+ * signée Ed25519 sur SHA256(Si_enc). Une seule signature invalide rejette
+ * toute l'activation.
+ */
+function prepareShares(userId: string, c: ActivateContact, ed25519Pk: Buffer): PreparedShare[] {
+  const out: PreparedShare[] = []
+  for (const slot of KEY_SLOTS) {
+    const held = c.roles[slot]
+    const share = c.shares[slot]
+    if (held && !share) {
+      throw new AppError('VALIDATION_ERROR', { details: { contacts: { [c.id]: `part ${slot} manquante pour un rôle détenu` } } })
+    }
+    if (!held && share) {
+      throw new AppError('VALIDATION_ERROR', { details: { contacts: { [c.id]: `part ${slot} fournie sans le rôle` } } })
+    }
+    if (!share) continue
+    const bytes = decodeOrThrow(`shares.${slot}.enc`, share.enc)
+    const sig = decodeOrThrow(`shares.${slot}.sig`, share.sig)
+    const hash = sha256Hex(Buffer.from(bytes))
+    if (!ed25519Verify(ed25519Pk, Buffer.from(hash, 'hex'), Buffer.from(sig))) {
+      throw new AppError('AUTH_TOKEN_INVALID', { message: `Signature de la part ${slot} invalide.` })
+    }
+    out.push({ slot, path: sharePath(userId, c.id, slot), bytes, hash })
+  }
+  return out
+}
+
+export async function activate(userId: string, body: ActivateBody): Promise<{ activated: true; contacts_notified: number }> {
+  const cfg = await ensureConfig(userId)
+  if (cfg.status !== 'inactive') throw new AppError('TRANSMISSION_ALREADY_ACTIVE')
+  if (body.schema.m < body.schema.n) {
+    throw new AppError('VALIDATION_ERROR', { details: { schema: 'M doit être supérieur ou égal à N' } })
+  }
+
+  // Le corps doit couvrir exactement les contacts vivants.
+  const live = await prisma().trusted_contacts.findMany({
+    where: { transmission_id: cfg.id, contact_status: { not: 'removed' } },
+    select: { id: true },
+  })
+  const liveIds = new Set(live.map((c) => c.id))
+  const bodyIds = body.contacts.map((c) => c.id)
+  const missing = [...liveIds].filter((id) => !bodyIds.includes(id))
+  const unknown = bodyIds.filter((id, i) => !liveIds.has(id) || bodyIds.indexOf(id) !== i)
+  if (missing.length > 0 || unknown.length > 0) {
+    throw new AppError('VALIDATION_ERROR', {
+      message: 'Le corps doit reprendre chaque contact, une fois.',
+      details: { contacts: { missing, unknown } },
+    })
+  }
+
+  if (body.contacts.length < 2) notConfigured('Au moins deux contacts de confiance sont nécessaires.')
+  if (body.schema.m > body.contacts.length) notConfigured('M ne peut pas dépasser le nombre de contacts.')
+  if (!body.contacts.some((c) => c.roles.k1)) notConfigured('Au moins un contact doit détenir le rôle K1 (comptes & accès).')
+
+  // Toutes les vérifications avant la moindre écriture.
+  const owner = await ownerKey(userId)
+  const prepared: PreparedContact[] = []
+  for (const c of body.contacts) {
+    const validated = await validateContactInput(userId, c, owner)
+    prepared.push({ id: c.id, body: c, validated, verifyToken: decodeOrThrow('verify_token', c.verify_token), shares: prepareShares(userId, c, owner.ed25519Pk) })
+  }
+
+  // Dépôt des parts, puis bascule atomique en base.
+  const store = objectStore()
+  const written: string[] = []
+  try {
+    for (const p of prepared) {
+      for (const s of p.shares) {
+        await store.put(s.path, s.bytes)
+        written.push(s.path)
+      }
+    }
+    const now = new Date()
+    const nextCheckin = new Date(now.getTime() + body.checkin_frequency_weeks * 7 * 24 * 3600 * 1000)
+    await prisma().$transaction([
+      ...prepared.map((p) => {
+        const bySlot = (slot: KeySlot) => p.shares.find((s) => s.slot === slot)
+        return prisma().trusted_contacts.update({
+          where: { id: p.id },
+          data: {
+            ...contactColumns(p.body, p.validated),
+            verify_token: p.verifyToken,
+            storj_k1_path: bySlot('k1')?.path ?? null,
+            storj_k2_path: bySlot('k2')?.path ?? null,
+            storj_k3_path: bySlot('k3')?.path ?? null,
+            share_k1_hash: bySlot('k1')?.hash ?? null,
+            share_k2_hash: bySlot('k2')?.hash ?? null,
+            share_k3_hash: bySlot('k3')?.hash ?? null,
+          },
+        })
+      }),
+      prisma().transmission_configs.update({
+        where: { id: cfg.id },
+        data: {
+          status: 'active',
+          activated_at: now,
+          schema_n: body.schema.n,
+          schema_m: body.schema.m,
+          silence_duration_months: body.silence_duration_months,
+          checkin_frequency_weeks: body.checkin_frequency_weeks,
+          last_checkin_at: now,
+          next_checkin_due: nextCheckin,
+          relance_count: 0,
+          last_relance_at: null,
+        },
+      }),
+    ])
+  } catch (err) {
+    await Promise.allSettled(written.map((k) => store.delete(k)))
+    if (err instanceof AppError) throw err
+    throw new AppError('VAULT_SYNC_FAILED', { message: 'Échec du dépôt des parts.', cause: err })
+  }
+
+  // DEC-30 : prévenir chaque contact, directement ici. L'adresse ne vit que
+  // le temps de l'envoi ; email_log n'en garde que le hash.
+  let notified = 0
+  for (const p of prepared) {
+    const { sent } = await emailService().send({
+      userId,
+      to: p.validated.notification.email,
+      type: 'transmission_contact',
+      locale: owner.language,
+      params: { link: `${env().FRONTEND_URL}/contact` },
+    })
+    if (sent) notified++
+  }
+  return { activated: true, contacts_notified: notified }
+}
+
+function notConfigured(why: string): never {
+  throw new AppError('TRANSMISSION_NOT_CONFIGURED', { message: why })
 }

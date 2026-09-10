@@ -1,8 +1,9 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest'
 import { prisma } from '../src/lib/prisma.js'
 import sodium from '../src/lib/sodium.js'
-import { api, closeAll, generateDeviceKeys, registerUser, resetState, signWith, stepUp, type DeviceKeys } from './helpers.js'
-import { buildContactBody, fetchRelaisKey, sealToRelais } from './transmission-helpers.js'
+import { objectStore } from '../src/services/storage/index.js'
+import { api, closeAll, generateDeviceKeys, lastEmailTo, registerUser, resetState, signWith, stepUp, type DeviceKeys } from './helpers.js'
+import { buildActivationBody, buildContactBody, buildShare, fetchRelaisKey, sealToRelais, sha256Hex, type ActivationContact } from './transmission-helpers.js'
 
 /** Owner avec clé publique enregistrée + clé de Relais récupérée. */
 async function owner(email = 'adjoua@example.cm') {
@@ -348,5 +349,180 @@ describe('PUT /transmission/config', () => {
       const r = await (await api()).put('/transmission/config').set(o.auth).set('X-Step-Up-Token', su).send(bad).expect(400)
       expect(r.body.error.code).toBe('VALIDATION_ERROR')
     }
+  })
+})
+
+// --- Activation (DEC-29 signatures des parts, DEC-30 email direct) -------------
+
+type RolesIn = { k1?: boolean; k2?: boolean; k3?: boolean }
+
+/** Crée les contacts via POST et renvoie de quoi les réémettre dans /activate. */
+async function contacts(o: Owner, roles: RolesIn[]): Promise<ActivationContact[]> {
+  const out: ActivationContact[] = []
+  for (const [i, r] of roles.entries()) {
+    const seed = i + 1
+    const body = await contactBody(o, seed, r)
+    const res = await (await api()).post('/transmission/contacts').set(o.auth).send(body).expect(201)
+    out.push({ id: res.body.data.id as string, body, seed })
+  }
+  return out
+}
+
+async function activate(o: Owner, body: unknown) {
+  const su = await stepUp(o.accessToken, 'activate_transmission')
+  return (await api()).post('/transmission/activate').set(o.auth).set('X-Step-Up-Token', su).send(body)
+}
+
+describe('POST /transmission/activate', () => {
+  it('exige un step-up activate_transmission', async () => {
+    const o = await owner()
+    const cs = await contacts(o, [{ k1: true }, { k1: true }])
+    const r = await (await api()).post('/transmission/activate').set(o.auth).send(buildActivationBody(o.keys, cs)).expect(403)
+    expect(r.body.error.code).toBe('AUTH_STEPUP_REQUIRED')
+  })
+
+  it('refuse avec moins de deux contacts', async () => {
+    const o = await owner()
+    const cs = await contacts(o, [{ k1: true }])
+    const r = await activate(o, buildActivationBody(o.keys, cs, { n: 2, m: 2 }))
+    expect(r.status).toBe(409)
+    expect(r.body.error.code).toBe('TRANSMISSION_NOT_CONFIGURED')
+  })
+
+  it('refuse un schéma dont M dépasse le nombre de contacts', async () => {
+    const o = await owner()
+    const cs = await contacts(o, [{ k1: true }, { k1: true }])
+    const r = await activate(o, buildActivationBody(o.keys, cs, { n: 2, m: 3 }))
+    expect(r.status).toBe(409)
+    expect(r.body.error.code).toBe('TRANSMISSION_NOT_CONFIGURED')
+  })
+
+  it('refuse sans aucun détenteur du rôle K1 (comptes & accès)', async () => {
+    const o = await owner()
+    const cs = await contacts(o, [{ k2: true }, { k3: true }])
+    const r = await activate(o, buildActivationBody(o.keys, cs))
+    expect(r.status).toBe(409)
+    expect(r.body.error.code).toBe('TRANSMISSION_NOT_CONFIGURED')
+  })
+
+  it('refuse une part manquante pour un rôle détenu', async () => {
+    const o = await owner()
+    const cs = await contacts(o, [{ k1: true, k2: true }, { k1: true }])
+    const body = buildActivationBody(o.keys, cs)
+    body.contacts[0]!.shares.k2 = null
+    const r = await activate(o, body)
+    expect(r.status).toBe(400)
+    expect(r.body.error.code).toBe('VALIDATION_ERROR')
+    expect(JSON.stringify(r.body.error.details)).toContain(cs[0]!.id)
+  })
+
+  it('refuse une part pour un rôle non détenu', async () => {
+    const o = await owner()
+    const cs = await contacts(o, [{ k1: true }, { k1: true }])
+    const body = buildActivationBody(o.keys, cs)
+    const extra = buildShare(o.keys, 99)
+    body.contacts[1]!.shares.k3 = { enc: extra.enc, sig: extra.sig }
+    const r = await activate(o, body)
+    expect(r.status).toBe(400)
+    expect(r.body.error.code).toBe('VALIDATION_ERROR')
+  })
+
+  it('refuse un contact vivant absent du corps', async () => {
+    const o = await owner()
+    await prisma().users.update({ where: { id: o.userId }, data: { plan: 'premium' } })
+    const cs = await contacts(o, [{ k1: true }, { k1: true }, { k2: true }])
+    const r = await activate(o, buildActivationBody(o.keys, cs.slice(0, 2)))
+    expect(r.status).toBe(400)
+    expect(JSON.stringify(r.body.error.details)).toContain(cs[2]!.id)
+  })
+
+  it('DEC-29 : une seule signature de part invalide rejette toute l’activation, sans rien persister', async () => {
+    const o = await owner()
+    const cs = await contacts(o, [{ k1: true }, { k1: true, k2: true }])
+    const body = buildActivationBody(o.keys, cs)
+    const impostor = buildShare(generateDeviceKeys(), 22)
+    body.contacts[1]!.shares.k2 = { enc: body.contacts[1]!.shares.k2!.enc, sig: impostor.sig }
+    const r = await activate(o, body)
+    expect(r.status).toBe(401)
+    expect(r.body.error.code).toBe('AUTH_TOKEN_INVALID')
+
+    const cfg = await (await api()).get('/transmission/config').set(o.auth).expect(200)
+    expect(cfg.body.data.status).toBe('inactive')
+    expect(cfg.body.data.contacts.map((c: { shares: unknown }) => c.shares)).toEqual([
+      { k1: false, k2: false, k3: false },
+      { k1: false, k2: false, k3: false },
+    ])
+    expect(await objectStore().head(`shares/${o.userId}/${cs[0]!.id}/k1.enc`)).toBeNull()
+    expect(await prisma().email_log.count({ where: { email_type: 'transmission_contact' } })).toBe(0)
+  })
+
+  it('active : parts stockées et hachées, verify_token, statut, check-in planifié, contacts prévenus (DEC-30)', async () => {
+    const o = await owner()
+    const cs = await contacts(o, [{ k1: true, k2: true }, { k1: true, k3: true }])
+    const body = buildActivationBody(o.keys, cs, { silence: 6, frequency: 2 })
+    const before = Date.now()
+    const r = await activate(o, body)
+    expect(r.status).toBe(200)
+    expect(r.body.data).toEqual({ activated: true, contacts_notified: 2 })
+
+    const cfg = await (await api()).get('/transmission/config').set(o.auth).expect(200)
+    expect(cfg.body.data).toMatchObject({
+      status: 'active',
+      schema: { n: 2, m: 2 },
+      silence_duration_months: 6,
+      checkin_frequency_weeks: 2,
+    })
+    expect(Date.parse(cfg.body.data.activated_at)).toBeGreaterThanOrEqual(before - 1000)
+    expect(cfg.body.data.contacts[0].shares).toEqual({ k1: true, k2: true, k3: false })
+    expect(cfg.body.data.contacts[1].shares).toEqual({ k1: true, k2: false, k3: true })
+
+    // Chaque part est sur le stockage objet, à un chemin choisi par le serveur, et hachée en base
+    const row = await prisma().trusted_contacts.findUniqueOrThrow({ where: { id: cs[0]!.id } })
+    const k1 = Buffer.from(body.contacts[0]!.shares.k1!.enc, 'base64')
+    expect(row.storj_k1_path).toBe(`shares/${o.userId}/${cs[0]!.id}/k1.enc`)
+    expect(row.share_k1_hash).toBe(sha256Hex(k1))
+    expect(Buffer.from((await objectStore().get(row.storj_k1_path!))!)).toEqual(k1)
+    expect(row.storj_k3_path).toBeNull()
+    expect(Buffer.from(row.verify_token!).toString('base64')).toBe(body.contacts[0]!.verify_token)
+
+    // Le check-in démarre : prochaine échéance dans checkin_frequency_weeks
+    const tc = await prisma().transmission_configs.findUniqueOrThrow({ where: { user_id: o.userId } })
+    const weeks = (tc.next_checkin_due!.getTime() - before) / (7 * 24 * 3600 * 1000)
+    expect(weeks).toBeGreaterThan(1.99)
+    expect(weeks).toBeLessThan(2.01)
+    expect(tc.relance_count).toBe(0)
+
+    // DEC-30 : email direct à chaque contact, tracé sans l'adresse en clair
+    expect(lastEmailTo('contact1@example.cm')?.subject).toBeTruthy()
+    expect(lastEmailTo('contact2@example.cm')?.subject).toBeTruthy()
+    const logs = await prisma().email_log.findMany({ where: { email_type: 'transmission_contact' } })
+    expect(logs.map((l) => l.recipient_hash).sort()).toEqual(
+      [sha256Hex(Buffer.from('contact1@example.cm')), sha256Hex(Buffer.from('contact2@example.cm'))].sort(),
+    )
+    expect(logs.every((l) => l.user_id === o.userId && l.status === 'sent')).toBe(true)
+  })
+
+  it('refuse une seconde activation', async () => {
+    const o = await owner()
+    const cs = await contacts(o, [{ k1: true }, { k1: true }])
+    expect((await activate(o, buildActivationBody(o.keys, cs))).status).toBe(200)
+    const r = await activate(o, buildActivationBody(o.keys, cs))
+    expect(r.status).toBe(409)
+    expect(r.body.error.code).toBe('TRANSMISSION_ALREADY_ACTIVE')
+  })
+
+  it('une fois active, contacts et schéma sont figés (désactiver d’abord)', async () => {
+    const o = await owner()
+    const cs = await contacts(o, [{ k1: true }, { k1: true }])
+    expect((await activate(o, buildActivationBody(o.keys, cs))).status).toBe(200)
+
+    const add = await (await api()).post('/transmission/contacts').set(o.auth).send(await contactBody(o, 3)).expect(409)
+    expect(add.body.error.code).toBe('TRANSMISSION_ALREADY_ACTIVE')
+    const su1 = await stepUp(o.accessToken, 'edit_contacts')
+    await (await api()).put(`/transmission/contacts/${cs[0]!.id}`).set(o.auth).set('X-Step-Up-Token', su1).send(await contactBody(o, 3)).expect(409)
+    const su2 = await stepUp(o.accessToken, 'edit_contacts')
+    await (await api()).delete(`/transmission/contacts/${cs[0]!.id}`).set(o.auth).set('X-Step-Up-Token', su2).expect(409)
+    const su3 = await stepUp(o.accessToken, 'edit_contacts')
+    await (await api()).put('/transmission/schema').set(o.auth).set('X-Step-Up-Token', su3).send({ n: 2, m: 2 }).expect(409)
   })
 })

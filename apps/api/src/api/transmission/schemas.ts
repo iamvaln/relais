@@ -73,3 +73,62 @@ export interface ConfigBody {
   silence_duration_months: 1 | 3 | 6
   checkin_frequency_weeks: 1 | 2 | 4
 }
+
+const share = {
+  type: 'object',
+  required: ['enc', 'sig'],
+  additionalProperties: false,
+  properties: {
+    /** Si_enc = XChaCha20(K_i, S_i) — opaque pour le serveur. */
+    enc: { ...base64, maxLength: 4096 },
+    /** Ed25519.sign(SHA256(Si_enc), owner_sk) — DEC-29. */
+    sig: { ...base64, maxLength: 128 },
+  },
+} as const
+const shareOrNull = { anyOf: [share, { type: 'null' }] } as const
+export interface Share {
+  enc: string
+  sig: string
+}
+
+export const activateBody = {
+  type: 'object',
+  required: ['silence_duration_months', 'checkin_frequency_weeks', 'schema', 'contacts'],
+  additionalProperties: false,
+  properties: {
+    ...configBody.properties,
+    schema: schemaBody,
+    contacts: {
+      type: 'array',
+      minItems: 1,
+      maxItems: 10,
+      items: {
+        type: 'object',
+        required: [...contactBody.required, 'id', 'shares', 'verify_token'],
+        additionalProperties: false,
+        properties: {
+          ...contactBody.properties,
+          id: uuid,
+          /** Une part par rôle détenu, null sinon. Le serveur choisit le chemin Storj et calcule le hash. */
+          shares: {
+            type: 'object',
+            required: ['k1', 'k2', 'k3'],
+            additionalProperties: false,
+            properties: { k1: shareOrNull, k2: shareOrNull, k3: shareOrNull },
+          },
+          /** XChaCha20(K_i, 'RELAIS_VERIFY_OK_V1') — vérification annuelle. */
+          verify_token: { ...base64, maxLength: 256 },
+        },
+      },
+    },
+  },
+} as const
+export interface ActivateContact extends ContactBody {
+  id: string
+  shares: { k1: Share | null; k2: Share | null; k3: Share | null }
+  verify_token: string
+}
+export interface ActivateBody extends ConfigBody {
+  schema: SchemaBody
+  contacts: ActivateContact[]
+}
