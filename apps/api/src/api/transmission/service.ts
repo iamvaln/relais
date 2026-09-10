@@ -103,7 +103,9 @@ async function ensureConfig(userId: string): Promise<{ id: string }> {
 
 // --- Contacts ----------------------------------------------------------------------
 
-function decodeOrThrow(field: string, value: string): Uint8Array {
+// Prisma 6 attend Uint8Array<ArrayBuffer> pour les colonnes Bytes ; Buffer
+// est typé sur ArrayBufferLike — d'où la copie explicite.
+function decodeOrThrow(field: string, value: string): Uint8Array<ArrayBuffer> {
   const bytes = decodeBase64(value)
   if (!bytes || bytes.length === 0) throw new AppError('VALIDATION_ERROR', { details: { [field]: 'base64 invalide ou vide' } })
   return new Uint8Array(bytes)
