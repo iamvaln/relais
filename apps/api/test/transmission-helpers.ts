@@ -4,7 +4,7 @@
 
 import { createHash } from 'node:crypto'
 import sodium from '../src/lib/sodium.js'
-import { api, signWith, type DeviceKeys } from './helpers.js'
+import { api, generateDeviceKeys, registerUser, signWith, stepUp, type DeviceKeys } from './helpers.js'
 
 export async function sealToRelais(relaisPkBase64: string, payload: object): Promise<string> {
   await sodium.ready
@@ -103,4 +103,57 @@ export function buildActivationBody(
       }
     }),
   }
+}
+
+// --- Mise en place complète, pour les modules qui dépendent d'une transmission active
+
+export type Owner = Awaited<ReturnType<typeof registerUser>> & {
+  keys: DeviceKeys
+  auth: { Authorization: string }
+  relaisPk: string
+}
+
+/** Owner avec clé publique enregistrée + clé de Relais récupérée. */
+export async function makeOwner(email = 'adjoua@example.cm'): Promise<Owner> {
+  const u = await registerUser(email)
+  const keys = generateDeviceKeys()
+  const auth = { Authorization: `Bearer ${u.accessToken}` }
+  await (await api()).post('/auth/keys').set(auth).send({ ed25519_pk: keys.publicKeyBase64 }).expect(200)
+  return { ...u, keys, auth, relaisPk: await fetchRelaisKey() }
+}
+
+/** N questions secrètes valides (score ≥ 6, actives) prises dans le seed. */
+export async function secretQuestionIds(n: number): Promise<string[]> {
+  const { prisma } = await import('../src/lib/prisma.js')
+  const rows = await prisma().checkin_questions.findMany({
+    where: { usage_type: 'secret_question', status: 'active', reliability_score: { gte: 6 } },
+    orderBy: { text_fr: 'asc' },
+    take: n,
+    select: { id: true },
+  })
+  return rows.map((r) => r.id)
+}
+
+/** Deux contacts K1 créés puis transmission activée (2-of-2). */
+export async function activateTransmission(o: Owner, opts: { silence?: number; frequency?: number } = {}) {
+  const [q1, q2, q3] = (await secretQuestionIds(3)) as [string, string, string]
+  const contacts: ActivationContact[] = []
+  for (const seed of [1, 2]) {
+    const body = await buildContactBody(o.keys, o.relaisPk, {
+      notification: { email: `contact${seed}@example.cm`, phone: '+237699000000' },
+      roles: { k1: true },
+      question_ids: [q1, q2, q3],
+      secretSeed: seed,
+    })
+    const r = await (await api()).post('/transmission/contacts').set(o.auth).send(body).expect(201)
+    contacts.push({ id: r.body.data.id as string, body, seed })
+  }
+  const su = await stepUp(o.accessToken, 'activate_transmission')
+  await (await api())
+    .post('/transmission/activate')
+    .set(o.auth)
+    .set('X-Step-Up-Token', su)
+    .send(buildActivationBody(o.keys, contacts, opts))
+    .expect(200)
+  return contacts
 }
