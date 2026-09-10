@@ -4,6 +4,7 @@ import { afterAll, beforeEach, describe, expect, it } from 'vitest'
 import { trigger } from '../src/jobs/deadman.js'
 import { hmacToken } from '../src/lib/crypto.js'
 import { prisma } from '../src/lib/prisma.js'
+import { redis } from '../src/lib/redis.js'
 import { api, closeAll, lastEmailTo, mailbox, resetState } from './helpers.js'
 import { activateTransmission, makeOwner, opaque, type ActivationContact, type Owner } from './transmission-helpers.js'
 
@@ -145,5 +146,94 @@ describe('GET /relay/:token', () => {
     const r = await (await api()).get(`/relay/${tokens.contact1}`).expect(423)
     expect(r.body.error.code).toBe('RELAY_CONTACT_BLOCKED')
     await (await api()).get(`/relay/${tokens.contact2}`).expect(200)
+  })
+})
+
+// --- Réponses aux questions : escrow et tentatives ------------------------------------
+
+const share = (seed: number) => opaque(seed, 32).toString('base64')
+
+async function verify(token: string, body: unknown) {
+  return (await api()).post(`/relay/${token}/verify`).send(body)
+}
+
+describe('POST /relay/:token/verify — tentatives (E5-US02)', () => {
+  it('cinq échecs déclarés : quatre acceptés, le cinquième bloque 24 h, le lien répond 423', async () => {
+    const { tokens, contacts } = await opened()
+    for (let left = 4; left >= 1; left--) {
+      const r = await verify(tokens.contact1, { failed: true })
+      expect(r.status).toBe(200)
+      expect(r.body.data).toEqual({ accepted: false, attempts_left: left })
+    }
+    const fifth = await verify(tokens.contact1, { failed: true })
+    expect(fifth.status).toBe(429)
+    expect(fifth.body.error.code).toBe('RELAY_TOKEN_EXHAUSTED')
+
+    const row = await prisma().transmission_contacts.findFirstOrThrow({ where: { trusted_contact_id: contacts[0]!.id } })
+    expect(row).toMatchObject({ fail_count: 5, blocked: true, status: 'failed' })
+    const tc = await prisma().trusted_contacts.findUniqueOrThrow({ where: { id: contacts[0]!.id } })
+    expect(tc.blocked_until!.getTime() - Date.now()).toBeGreaterThan(23.9 * HOUR)
+    expect((await (await api()).get(`/relay/${tokens.contact1}`)).status).toBe(423)
+    expect((await verify(tokens.contact1, { failed: true })).status).toBe(423)
+  })
+
+  it('le blocage se lève seul après blocked_until, compteur remis à zéro', async () => {
+    const { tokens, contacts } = await opened()
+    for (let i = 0; i < 5; i++) await verify(tokens.contact1, { failed: true })
+    await prisma().trusted_contacts.update({ where: { id: contacts[0]!.id }, data: { blocked_until: new Date(Date.now() - 1000) } })
+    const r = await (await api()).get(`/relay/${tokens.contact1}`).expect(200)
+    expect(r.body.data.contact_status).toBe('notified')
+    const row = await prisma().transmission_contacts.findFirstOrThrow({ where: { trusted_contact_id: contacts[0]!.id } })
+    expect(row).toMatchObject({ fail_count: 0, blocked: false })
+  })
+
+  it('un envoi malformé compte comme une tentative : part manquante, part d’un rôle non détenu, mauvaise taille', async () => {
+    const { tokens, contacts } = await opened()
+    for (const bad of [{ shares: {} }, { shares: { k1: share(1), k2: share(2) } }, { shares: { k1: opaque(1, 16).toString('base64') } }, { shares: { k1: share(1) }, failed: true }]) {
+      const r = await verify(tokens.contact1, bad)
+      expect(r.status).toBe(400)
+      expect(r.body.error.code).toBe('VALIDATION_ERROR')
+    }
+    const row = await prisma().transmission_contacts.findFirstOrThrow({ where: { trusted_contact_id: contacts[0]!.id } })
+    expect(row.fail_count).toBe(4)
+  })
+})
+
+describe('POST /relay/:token/verify — parts en escrow (Techniques §6.7)', () => {
+  it('une part acceptée : escrow chiffré par une clé éphémère Redis, contact answered, transmission in_progress', async () => {
+    const { tokens, contacts } = await opened()
+    const r = await verify(tokens.contact1, { shares: { k1: share(11) } })
+    expect(r.status).toBe(200)
+    expect(r.body.data).toEqual({ accepted: true, answered: 1, needed: 2, unlocked: { k1: false, k2: false, k3: false } })
+
+    const tr = await prisma().transmissions.findFirstOrThrow({ include: { escrow_shares: true, transmission_contacts: true } })
+    expect(tr.status).toBe('in_progress')
+    expect(tr.k1_completed).toBe(false)
+    expect(tr.escrow_shares).toHaveLength(1)
+    const es = tr.escrow_shares[0]!
+    expect(es).toMatchObject({ key_category: 'k1', redis_key_id: `escrow:key:${tr.id}` })
+    expect(Buffer.from(es.share_tmp_enc).toString('base64')).not.toBe(share(11))
+    expect(Buffer.from(es.share_tmp_enc).includes(opaque(11, 32))).toBe(false)
+    expect(es.expires_at.toISOString()).toBe(tr.escrow_expires_at.toISOString())
+    const ttl = await redis().ttl(es.redis_key_id)
+    expect(ttl).toBeGreaterThan(71 * 3600)
+    const me = tr.transmission_contacts.find((c) => c.trusted_contact_id === contacts[0]!.id)!
+    expect(me).toMatchObject({ status: 'answered', relay_token_used: true })
+    expect(me.answered_at).not.toBeNull()
+
+    const again = await verify(tokens.contact1, { shares: { k1: share(11) } })
+    expect(again.status).toBe(409)
+    expect(again.body.error.code).toBe('RELAY_ALREADY_ANSWERED')
+  })
+
+  it('N parts pour une catégorie : elle est déverrouillée pour tous', async () => {
+    const { tokens } = await opened()
+    await verify(tokens.contact1, { shares: { k1: share(11) } })
+    const r = await verify(tokens.contact2, { shares: { k1: share(21) } })
+    expect(r.body.data).toEqual({ accepted: true, answered: 2, needed: 2, unlocked: { k1: true, k2: false, k3: false } })
+    const tr = await prisma().transmissions.findFirstOrThrow()
+    expect(tr.k1_completed).toBe(true)
+    const link = await (await api()).get(`/relay/${tokens.contact1}`).expect(200)
+    expect(link.body.data).toMatchObject({ status: 'in_progress', answered: 2, contact_status: 'answered' })
   })
 })

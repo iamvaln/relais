@@ -7,12 +7,15 @@
 
 import { env } from '../../config/env.js'
 import { configInt } from '../../lib/app-config.js'
-import { hmacToken, randomToken } from '../../lib/crypto.js'
+import { decodeBase64, hmacToken, randomToken } from '../../lib/crypto.js'
 import { AppError } from '../../lib/errors.js'
 import { prisma } from '../../lib/prisma.js'
+import { redis } from '../../lib/redis.js'
+import sodium from '../../lib/sodium.js'
 import { emailService } from '../../services/email/index.js'
 import { objectStore } from '../../services/storage/index.js'
 import { openNotification } from '../transmission/service.js'
+import type { VerifyBody } from './schemas.js'
 
 const HOUR_MS = 3600 * 1000
 const DEFAULT_ESCROW_TTL_HOURS = 72
@@ -113,11 +116,12 @@ export async function loadContact(token: string, now = new Date()): Promise<Load
     const until = c.trusted_contacts.blocked_until
     if (until && until > now) throw new AppError('RELAY_CONTACT_BLOCKED', { details: { blocked_until: until.toISOString() } })
     await prisma().$transaction([
-      prisma().transmission_contacts.update({ where: { id: c.id }, data: { blocked: false, fail_count: 0 } }),
+      prisma().transmission_contacts.update({ where: { id: c.id }, data: { blocked: false, fail_count: 0, status: 'notified' } }),
       prisma().trusted_contacts.update({ where: { id: c.trusted_contact_id }, data: { blocked_until: null, fail_count: 0 } }),
     ])
     c.blocked = false
     c.fail_count = 0
+    c.status = 'notified'
   }
   return c
 }
@@ -173,4 +177,131 @@ export async function readLink(token: string, now = new Date()): Promise<RelayLi
     expires_at: c.relay_token_expires_at.toISOString(),
     escrow_expires_at: c.transmissions.escrow_expires_at.toISOString(),
   }
+}
+
+// --- Réponses : tentatives et escrow (POST /relay/:token/verify) ------------------------
+
+const MAX_ATTEMPTS = 5 // chk fail_count <= 5, security.contact_max_fail
+const DEFAULT_LOCK_HOURS = 24
+const SHARE_BYTES = 32
+
+export type VerifyResult =
+  | { accepted: false; attempts_left: number }
+  | { accepted: true; answered: number; needed: number; unlocked: Record<KeySlot, boolean> }
+
+/** Une tentative de plus ; à la cinquième, blocage 24 h (E5-US02) et 429. */
+async function recordFailure(c: LoadedContact, now: Date): Promise<never | { attempts_left: number }> {
+  const count = c.fail_count + 1
+  if (count >= MAX_ATTEMPTS) {
+    const lockHours = await configInt('security.contact_lock_hrs', DEFAULT_LOCK_HOURS)
+    const until = new Date(now.getTime() + lockHours * HOUR_MS)
+    await prisma().$transaction([
+      prisma().transmission_contacts.update({ where: { id: c.id }, data: { fail_count: count, blocked: true, status: 'failed' } }),
+      prisma().trusted_contacts.update({ where: { id: c.trusted_contact_id }, data: { fail_count: count, blocked_until: until } }),
+    ])
+    throw new AppError('RELAY_TOKEN_EXHAUSTED', { details: { blocked_until: until.toISOString() } })
+  }
+  await prisma().$transaction([
+    prisma().transmission_contacts.update({ where: { id: c.id }, data: { fail_count: count } }),
+    prisma().trusted_contacts.update({ where: { id: c.trusted_contact_id }, data: { fail_count: count } }),
+  ])
+  return { attempts_left: MAX_ATTEMPTS - count }
+}
+
+/** Les parts attendues : exactement une par rôle détenu, 32 bytes chacune. */
+function decodeShares(c: LoadedContact, shares: VerifyBody['shares']): Map<KeySlot, Uint8Array> {
+  const held: Record<KeySlot, boolean> = { k1: c.trusted_contacts.has_k1_role, k2: c.trusted_contacts.has_k2_role, k3: c.trusted_contacts.has_k3_role }
+  const out = new Map<KeySlot, Uint8Array>()
+  for (const slot of KEY_SLOTS) {
+    const raw = shares?.[slot]
+    if (held[slot] !== (raw !== undefined)) {
+      throw new AppError('VALIDATION_ERROR', { details: { [`shares.${slot}`]: held[slot] ? 'part attendue pour ce rôle' : 'rôle non détenu' } })
+    }
+    if (raw === undefined) continue
+    const bytes = decodeBase64(raw)
+    if (!bytes || bytes.length !== SHARE_BYTES) {
+      throw new AppError('VALIDATION_ERROR', { details: { [`shares.${slot}`]: `${SHARE_BYTES} bytes attendus` } })
+    }
+    out.set(slot, new Uint8Array(bytes))
+  }
+  return out
+}
+
+function escrowKeyId(transmissionId: string): string {
+  return `escrow:key:${transmissionId}`
+}
+
+/** Clé éphémère de l'escrow : créée au premier dépôt, expire avec l'escrow (Redis fait le ménage). */
+async function escrowKey(transmissionId: string, expiresAt: Date, now: Date): Promise<Uint8Array> {
+  await sodium.ready
+  const id = escrowKeyId(transmissionId)
+  const existing = await redis().get(id)
+  if (existing) return new Uint8Array(Buffer.from(existing, 'hex'))
+  const key = sodium.randombytes_buf(sodium.crypto_secretbox_KEYBYTES)
+  const ttl = Math.max(1, Math.ceil((expiresAt.getTime() - now.getTime()) / 1000))
+  const stored = await redis().set(id, Buffer.from(key).toString('hex'), 'EX', ttl, 'NX')
+  if (stored === 'OK') return key
+  return new Uint8Array(Buffer.from((await redis().get(id))!, 'hex'))
+}
+
+/** XChaCha20-Poly1305 (secretbox) : nonce || ciphertext. */
+function sealShare(key: Uint8Array, share: Uint8Array): Uint8Array<ArrayBuffer> {
+  const nonce = sodium.randombytes_buf(sodium.crypto_secretbox_NONCEBYTES)
+  const boxed = sodium.crypto_secretbox_easy(share, nonce, key)
+  return new Uint8Array(Buffer.concat([Buffer.from(nonce), Buffer.from(boxed)]))
+}
+
+async function unlockedSlots(transmissionId: string, needed: number): Promise<Record<KeySlot, boolean>> {
+  const counts = await prisma().escrow_shares.groupBy({ by: ['key_category'], where: { transmission_id: transmissionId }, _count: { _all: true } })
+  const by = new Map(counts.map((r) => [r.key_category, r._count._all]))
+  return { k1: (by.get('k1') ?? 0) >= needed, k2: (by.get('k2') ?? 0) >= needed, k3: (by.get('k3') ?? 0) >= needed }
+}
+
+export async function verify(token: string, body: VerifyBody, now = new Date()): Promise<VerifyResult> {
+  const c = await loadContact(token, now)
+  if (c.status === 'answered' || c.status === 'confirmed') throw new AppError('RELAY_ALREADY_ANSWERED')
+
+  if (body.failed === true && body.shares === undefined) {
+    return { accepted: false, ...(await recordFailure(c, now)) }
+  }
+  if (body.failed !== undefined || body.shares === undefined) {
+    await recordFailure(c, now)
+    throw new AppError('VALIDATION_ERROR', { details: { body: 'soit { failed: true }, soit { shares }' } })
+  }
+
+  let shares: Map<KeySlot, Uint8Array>
+  try {
+    shares = decodeShares(c, body.shares)
+  } catch (err) {
+    await recordFailure(c, now)
+    throw err
+  }
+
+  const tr = c.transmissions
+  const key = await escrowKey(tr.id, tr.escrow_expires_at, now)
+  await prisma().$transaction([
+    ...[...shares].map(([slot, share]) =>
+      prisma().escrow_shares.upsert({
+        where: { transmission_contact_id_key_category: { transmission_contact_id: c.id, key_category: slot } },
+        create: {
+          transmission_id: tr.id,
+          transmission_contact_id: c.id,
+          key_category: slot,
+          share_tmp_enc: sealShare(key, share),
+          redis_key_id: escrowKeyId(tr.id),
+          expires_at: tr.escrow_expires_at,
+        },
+        update: { share_tmp_enc: sealShare(key, share) },
+      }),
+    ),
+    prisma().transmission_contacts.update({ where: { id: c.id }, data: { status: 'answered', answered_at: now, relay_token_used: true } }),
+  ])
+
+  const needed = tr.schema_n_snapshot
+  const unlocked = await unlockedSlots(tr.id, needed)
+  await prisma().transmissions.update({
+    where: { id: tr.id },
+    data: { status: 'in_progress', k1_completed: unlocked.k1, k2_completed: unlocked.k2, k3_completed: unlocked.k3 },
+  })
+  return { accepted: true, answered: await answeredCount(tr.id), needed, unlocked }
 }
