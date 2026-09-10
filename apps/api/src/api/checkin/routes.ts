@@ -4,7 +4,7 @@ import type { FastifyInstance } from 'fastify'
 import { ok } from '../../lib/errors.js'
 import { authenticate } from '../../middleware/authenticate.js'
 import { limits } from '../../plugins/rate-limit.js'
-import { answerBody, type AnswerBody } from './schemas.js'
+import { answerBody, completeBody, type AnswerBody, type CompleteBody } from './schemas.js'
 import * as checkin from './service.js'
 
 export async function checkinRoutes(app: FastifyInstance): Promise<void> {
@@ -18,4 +18,12 @@ export async function checkinRoutes(app: FastifyInstance): Promise<void> {
     { schema: { body: answerBody }, preHandler: [authenticate], config: { rateLimit: limits.checkinAnswer } },
     async (req) => ok(await checkin.answerGame(req.user!.id, req.user!.language, req.body.answer)),
   )
+
+  app.post<{ Body: CompleteBody }>(
+    '/complete',
+    { schema: { body: completeBody }, preHandler: [authenticate] },
+    async (req) => ok(await checkin.complete(req.user!.id, req.body.checkin_token, req.body.journal_entry_id)),
+  )
+
+  app.get('/streak', { preHandler: [authenticate] }, async (req) => ok(await checkin.getStreak(req.user!.id)))
 }

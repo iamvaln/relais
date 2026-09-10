@@ -8,6 +8,7 @@ import { keys, redis } from '../../lib/redis.js'
 import { GAMES, isCorrect, type Lang } from './games.js'
 
 const DAY_MS = 24 * 3600 * 1000
+const WEEK_MS = 7 * DAY_MS
 
 // --- Vues ------------------------------------------------------------------------
 
@@ -165,4 +166,116 @@ export async function answerGame(userId: string, lang: Lang, answer: string): Pr
   const payload: CheckinToken = { userId, game_type: game.type, attempts }
   await redis().multi().del(keys.checkinGame(userId)).set(keys.checkinToken(token), JSON.stringify(payload), 'EX', TOKEN_TTL_S).exec()
   return { correct: true, attempts, checkin_token: token }
+}
+
+// --- Validation du check-in (E4-US01, E4-US05) ---------------------------------------
+
+/** Badges : le tout premier check-in, puis les paliers de mois consécutifs. */
+const STREAK_BADGES: Record<number, string> = { 3: 'streak_3', 6: 'streak_6', 12: 'streak_12' }
+
+function previousMonth(month: Date): Date {
+  return new Date(Date.UTC(month.getUTCFullYear(), month.getUTCMonth() - 1, 1))
+}
+
+export interface CompleteResult {
+  checked_in: true
+  month: string
+  streak: number
+  badge_earned: string | null
+  already_this_month: boolean
+  next_checkin_due: string
+}
+
+async function consumeToken(userId: string, token: string): Promise<CheckinToken> {
+  const [[, raw]] = (await redis().multi().get(keys.checkinToken(token)).del(keys.checkinToken(token)).exec()) as [[null, string | null], unknown]
+  const payload = raw ? (JSON.parse(raw) as CheckinToken) : null
+  if (!payload || payload.userId !== userId) {
+    throw new AppError('AUTH_TOKEN_INVALID', { message: 'Jeton de check-in invalide ou expiré — rejouez.' })
+  }
+  return payload
+}
+
+export async function complete(userId: string, token: string, journalEntryId: string | undefined, now = new Date()): Promise<CompleteResult> {
+  const cfg = await requireActiveTransmission(userId)
+  const game = await consumeToken(userId, token)
+
+  if (journalEntryId) {
+    const entry = await prisma().journal_entries.findFirst({ where: { id: journalEntryId, user_id: userId }, select: { id: true } })
+    if (!entry) throw new AppError('NOT_FOUND', { message: 'Entrée de carnet introuvable.' })
+  }
+
+  const month = monthOf(now)
+  const existing = await prisma().checkin_log.findUnique({
+    where: { user_id_checkin_month: { user_id: userId, checkin_month: month } },
+    select: { streak_at_checkin: true },
+  })
+
+  let streak: number
+  let badge: string | null = null
+  if (existing) {
+    streak = existing.streak_at_checkin
+  } else {
+    const [prev, before] = await Promise.all([
+      prisma().checkin_log.findUnique({
+        where: { user_id_checkin_month: { user_id: userId, checkin_month: previousMonth(month) } },
+        select: { streak_at_checkin: true },
+      }),
+      prisma().checkin_log.count({ where: { user_id: userId } }),
+    ])
+    streak = prev ? prev.streak_at_checkin + 1 : 1
+    badge = before === 0 ? 'first_checkin' : (STREAK_BADGES[streak] ?? null)
+    await prisma().checkin_log.create({
+      data: {
+        user_id: userId,
+        transmission_id: cfg.id,
+        checkin_month: month,
+        game_type: game.game_type,
+        game_completed_at: now,
+        attempts: game.attempts,
+        streak_at_checkin: streak,
+        badge_earned: badge,
+        journal_entry_id: journalEntryId ?? null,
+      },
+    })
+  }
+
+  // Le check-in annule la procédure de relance en cours (§4.2) et repart pour un cycle.
+  const nextDue = new Date(now.getTime() + cfg.checkin_frequency_weeks * WEEK_MS)
+  await prisma().transmission_configs.update({
+    where: { id: cfg.id },
+    data: { last_checkin_at: now, next_checkin_due: nextDue, relance_count: 0, last_relance_at: null },
+  })
+
+  return {
+    checked_in: true,
+    month: month.toISOString().slice(0, 10),
+    streak,
+    badge_earned: badge,
+    already_this_month: existing !== null,
+    next_checkin_due: nextDue.toISOString(),
+  }
+}
+
+// --- Streak et badges (E4-US05) --------------------------------------------------------
+
+export interface StreakView {
+  current: number
+  longest: number
+  badges: string[]
+}
+
+export async function getStreak(userId: string, now = new Date()): Promise<StreakView> {
+  const rows = await prisma().checkin_log.findMany({
+    where: { user_id: userId },
+    orderBy: { checkin_month: 'asc' },
+    select: { checkin_month: true, streak_at_checkin: true, badge_earned: true },
+  })
+  const latest = rows.at(-1)
+  const month = monthOf(now).getTime()
+  const alive = latest && (latest.checkin_month.getTime() === month || latest.checkin_month.getTime() === previousMonth(monthOf(now)).getTime())
+  return {
+    current: alive ? latest.streak_at_checkin : 0,
+    longest: rows.reduce((m, r) => Math.max(m, r.streak_at_checkin), 0),
+    badges: [...new Set(rows.map((r) => r.badge_earned).filter((b): b is string => b !== null))],
+  }
 }
