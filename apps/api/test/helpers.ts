@@ -5,6 +5,7 @@ import { buildApp } from '../src/app.js'
 import { prisma, disconnectPrisma } from '../src/lib/prisma.js'
 import { redis, disconnectRedis } from '../src/lib/redis.js'
 import { ConsoleTransport, EmailService, setEmailServiceForTests } from '../src/services/email/index.js'
+import { objectStore } from '../src/services/storage/index.js'
 
 export const mailbox = new ConsoleTransport(true)
 setEmailServiceForTests(new EmailService(mailbox))
@@ -38,6 +39,7 @@ export async function resetState(): Promise<void> {
     RESTART IDENTITY CASCADE
   `)
   await redis().flushall()
+  await objectStore().deletePrefix('')
   mailbox.clear()
 }
 

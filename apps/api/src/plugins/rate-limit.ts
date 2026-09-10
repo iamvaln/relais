@@ -35,6 +35,10 @@ export const limits = {
   stepUp: { max: 10, timeWindow: '1 minute', keyGenerator: keyByUserOrIp },
   /** Restauration — 10 / 15 min / IP : chaque essai coûte un challenge */
   restore: { max: 10, timeWindow: '15 minutes', keyGenerator: (r: FastifyRequest) => `ip:${r.ip}` },
+  /** GET + PUT /vault/* — 60 / min / user */
+  vault: { max: 60, timeWindow: '1 minute', keyGenerator: keyByUserOrIp },
+  /** POST /vault/sync — 10 / h / user */
+  vaultSync: { max: 10, timeWindow: '1 hour', keyGenerator: keyByUserOrIp },
   /** GET /health — 60 / min / IP (§9.2) */
   health: { max: 60, timeWindow: '1 minute', keyGenerator: (r: FastifyRequest) => `ip:${r.ip}` },
 } as const

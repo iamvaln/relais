@@ -8,3 +8,4 @@ build/
 *.log
 apps/*/dist/
 coverage/
+.storage/

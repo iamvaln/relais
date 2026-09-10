@@ -40,6 +40,15 @@ const schema = z.object({
   SESSION_DAYS: z.coerce.number().int().positive().default(90),
   TOKEN_HMAC_SECRET: z.string().min(32, 'TOKEN_HMAC_SECRET : 32 caractères minimum'),
 
+  // Stockage objet des blobs chiffrés (P2, Si_enc) — Backend Specs §5.2.
+  //   memory : tests ; fs : dev local ; s3 : Storj (S3-compatible) en prod
+  STORAGE_BACKEND: z.enum(['memory', 'fs', 's3']).default('fs'),
+  STORAGE_FS_DIR: z.string().default('.storage'),
+  STORJ_ENDPOINT: z.string().url().default('https://gateway.storjshare.io'),
+  STORJ_ACCESS_KEY: z.string().optional(),
+  STORJ_SECRET_KEY: z.string().optional(),
+  STORJ_BUCKET: z.string().default('relais-payloads'),
+
   EMAIL_TRANSPORT: z.enum(['console', 'resend']).default('console'),
   RESEND_API_KEY: z.string().optional(),
   EMAIL_FROM: z.string().default('Relais <noreply@relais.app>'),
@@ -50,6 +59,9 @@ const schema = z.object({
   })
   .refine((e) => e.EMAIL_TRANSPORT !== 'resend' || Boolean(e.RESEND_API_KEY), {
     message: 'RESEND_API_KEY est requis quand EMAIL_TRANSPORT=resend',
+  })
+  .refine((e) => e.STORAGE_BACKEND !== 's3' || (Boolean(e.STORJ_ACCESS_KEY) && Boolean(e.STORJ_SECRET_KEY)), {
+    message: 'STORJ_ACCESS_KEY et STORJ_SECRET_KEY sont requis quand STORAGE_BACKEND=s3',
   })
 
 export type Env = z.infer<typeof schema>

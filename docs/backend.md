@@ -18,8 +18,10 @@ apps/api/
     plugins/                 enveloppe d'erreur, helmet/cors/cookie, rate limit
     middleware/              authenticate, requireStepUp
     services/email/          transports console/Resend, templates FR/EN, email_log
+    services/storage/        stockage objet : memory / fs / S3 (Storj)
     api/health/              GET /health
     api/auth/                schemas, service, routes
+    api/vault/               sync, sync-status, restore
   test/                      Vitest + Supertest sur PostgreSQL et Redis réels
 scripts/dev-services.sh      PostgreSQL 16 + Redis jetables, migrations + seed
 ```
@@ -29,7 +31,7 @@ Prisma 6 sur le schéma racine, ioredis, Vitest + Supertest, Pino.
 
 ## 2. Périmètre livré
 
-Tout le module **auth** de §3.1 v1.1, plus `/health` :
+Le module **auth** de §3.1 v1.1, le module **vault** de §3.3 v1.1, et `/health` :
 
 | Endpoint | Note |
 |---|---|
@@ -49,9 +51,12 @@ Tout le module **auth** de §3.1 v1.1, plus `/health` :
 | `GET /auth/restore/challenge` | DEC-06 |
 | `POST /auth/restore/verify` | DEC-06 |
 | `POST /auth/2fa/setup` · `verify` · `DELETE /auth/2fa` | E6-US02 |
+| `POST /vault/sync` | Blob chiffré + signature Ed25519 (DEC-07), taille plafonnée par `vault.max_size_mb` |
+| `GET /vault/sync-status` | Date et taille par catégorie, lues sur le stockage |
+| `POST /vault/restore` | Renvoie le blob tel quel |
 
-Non livré : `/user/*`, `/vault/*`, `/transmission/*`, `/checkin/*`,
-`/journal/*`, `/relay/*`, `/admin/*`, les jobs BullMQ.
+Non livré : `/user/*`, `/transmission/*`, `/checkin/*`, `/journal/*`,
+`/relay/*`, `/admin/*`, les jobs BullMQ.
 
 ## 3. Décisions et écarts par rapport aux specs
 
@@ -136,6 +141,50 @@ fallu soit ne pas envoyer ces emails, soit les envoyer sans les tracer
 (DEC-24). Ajoutés par la migration `20260425000000`, proposés pour la spec
 v1.4 — voir `docs/open-questions.md`.
 
+### Vault : la signature porte sur le blob envoyé
+
+DEC-07 écrit `hash = SHA256(P1)` puis `payload: base64(P1)` — d'avant DEC-16,
+quand HCV produisait P2 côté serveur. Backend Specs v1.1 §3.3 envoie
+`payload: base64(P2)` mais garde `signature: sign(SHA256(P1))` : le serveur
+n'a pas P1 et ne pourrait rien vérifier.
+
+La seule lecture cohérente : **la signature porte sur le SHA256 des octets
+reçus**. C'est ce qui est implémenté, et c'est ce que DEC-07 veut dire — que
+seul le détenteur de `ed25519_sk` puisse modifier le backup, même avec un
+access token volé. L'app signe le hash de ce qu'elle envoie ; le serveur
+recalcule et vérifie. Un blob altéré en route est refusé (testé).
+
+### Vault : aucune table, l'état vit dans le stockage
+
+DEC-21 : pas de table vault. `GET /vault/sync-status` ne lit donc rien en
+PostgreSQL — il fait un HEAD sur les trois clés et renvoie date et taille.
+`transmission_configs.storj_vault_path` est le seul pointeur, posé au premier
+sync (la ligne est créée `inactive` si elle n'existe pas encore).
+
+Le serveur sait qu'un utilisateur a un backup de telle taille à telle date,
+et rien d'autre : pas le nombre de comptes, pas les catégories réellement
+remplies (un blob peut être vide côté contenu), pas la fréquence des
+modifications au-delà du dernier upload.
+
+### Vault : sync synchrone, pas de job `storj:sync`
+
+Backend Specs §4.1 prévoit un job BullMQ `storj:sync` — « push P1 → HCV →
+P2 → Storj ». HCV a disparu (DEC-16) ; l'upload est un simple `put` et
+l'app a besoin de savoir tout de suite s'il a réussi. Il se fait donc dans
+la requête. Le job n'a plus de raison d'être.
+
+### Stockage : trois backends derrière une interface
+
+`ObjectStore` — `put` / `get` / `head` / `delete` / `deletePrefix` / `ping`.
+`memory` pour les tests, `fs` pour le dev local, `s3` pour Storj en
+production (§5.2, `@aws-sdk/client-s3`, `forcePathStyle`). Les clés sont
+validées contre un motif strict : pas de `..`, pas de `/` initial, jamais
+un segment vide — le layout `payloads/{user_id}/v1_{category}.enc` est
+imposé par le service vault, pas par l'appelant.
+
+`/health` rapporte `storj: unconfigured` tant que le backend n'est pas `s3`,
+plutôt que `ok` pour un dossier local.
+
 ### Codes de récupération 2FA : pas de table
 
 E6-US02 : « des codes de récupération d'urgence sont générés et affichés une
@@ -155,9 +204,9 @@ manque, perdre son authenticateur signifie passer par le support.
 
 ## 5. Vérifications
 
-28 tests d'intégration, sur PostgreSQL 16 et Redis réels, base reconstruite
+39 tests d'intégration, sur PostgreSQL 16 et Redis réels, base reconstruite
 depuis les migrations et le seed à chaque run. Chaque test repart d'une base
-vide. Ils couvrent notamment :
+et d'un stockage vides. Ils couvrent notamment :
 
 - rien en base avant l'OTP ; user + subscription après
 - attributs du cookie refresh (`Path`, `HttpOnly`, `SameSite=Strict`)
@@ -174,6 +223,12 @@ vide. Ils couvrent notamment :
 - reset avec clé : signature obligatoire, mauvaise signature n'entame pas l'OTP
 - 2FA : activation, login en deux temps, `temp_token` à usage unique, désactivation avec step-up
 - rate limit : en-têtes exposés, 429 dans l'enveloppe
+- vault : sync sans clé publique → `AUTH_KEY_NOT_SET` ; signature d'une
+  autre clé → refusé ; **blob modifié après signature → refusé** ;
+  `vault.max_size_mb` lu dans `app_config` et appliqué ; écrasement par
+  catégorie ; sync-status vide puis renseigné ; restore rend les octets
+  intacts ; catégorie absente → `NOT_FOUND` ; un utilisateur ne voit jamais
+  le backup d'un autre
 
 ```bash
 scripts/dev-services.sh start     # PostgreSQL + Redis jetables

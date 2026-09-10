@@ -9,6 +9,7 @@ import { securityPlugin } from './plugins/security.js'
 import { rateLimitPlugin } from './plugins/rate-limit.js'
 import { healthRoutes } from './api/health/routes.js'
 import { authRoutes } from './api/auth/routes.js'
+import { vaultRoutes } from './api/vault/routes.js'
 
 // Fastify logge par défaut une ligne à l'arrivée et une au départ de chaque
 // requête ; on les coupe et on écrit la nôtre dans onResponse (userId et IP
@@ -61,6 +62,7 @@ export async function buildApp(): Promise<FastifyInstance> {
 
   await app.register(healthRoutes)
   await app.register(authRoutes, { prefix: '/auth' })
+  await app.register(vaultRoutes, { prefix: '/vault' })
 
   return app
 }

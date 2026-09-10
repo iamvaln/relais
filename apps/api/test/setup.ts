@@ -8,4 +8,5 @@ process.env.JWT_ACCESS_SECRET ??= 'test-access-secret-0123456789abcdef0123456789
 process.env.JWT_STEPUP_SECRET ??= 'test-stepup-secret-0123456789abcdef0123456789'
 process.env.TOKEN_HMAC_SECRET ??= 'test-hmac-secret-0123456789abcdef0123456789ab'
 process.env.EMAIL_TRANSPORT = 'console'
+process.env.STORAGE_BACKEND = 'memory'
 process.env.FRONTEND_URL ??= 'http://localhost:3000'

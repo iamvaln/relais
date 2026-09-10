@@ -6,6 +6,7 @@ import { prisma } from '../../lib/prisma.js'
 import { redis } from '../../lib/redis.js'
 import { limits } from '../../plugins/rate-limit.js'
 import { env } from '../../config/env.js'
+import { objectStore } from '../../services/storage/index.js'
 
 type ServiceStatus = 'ok' | 'degraded' | 'down' | 'unconfigured'
 
@@ -22,18 +23,17 @@ async function probe(fn: () => Promise<unknown>): Promise<ServiceStatus> {
 
 export async function healthRoutes(app: FastifyInstance): Promise<void> {
   app.get('/health', { config: { rateLimit: limits.health } }, async (_req, reply) => {
-    const [postgres, redisStatus] = await Promise.all([
+    const [postgres, redisStatus, storage] = await Promise.all([
       probe(() => prisma().$queryRaw`SELECT 1`),
       probe(() => redis().ping()),
+      probe(() => objectStore().ping()),
     ])
 
     const services: Record<string, ServiceStatus> = {
       postgres,
       redis: redisStatus,
       email: env().EMAIL_TRANSPORT === 'resend' ? 'ok' : 'unconfigured',
-      // Intégrations à venir — déclarées pour que le back office (BO-06)
-      // les voie déjà, sans prétendre qu'elles tournent.
-      storj: 'unconfigured',
+      storj: env().STORAGE_BACKEND === 's3' ? storage : storage === 'ok' ? 'unconfigured' : storage,
     }
 
     const critical = [postgres, redisStatus]
