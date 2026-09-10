@@ -28,11 +28,13 @@
     "fastify": "^5.6.0",
     "ioredis": "^5.6.1",
     "jose": "^6.0.11",
+    "libsodium-wrappers": "^0.7.16",
     "otpauth": "^9.4.0",
     "resend": "^4.6.0",
     "zod": "^3.25.0"
   },
   "devDependencies": {
+    "@types/libsodium-wrappers": "^0.7.14",
     "@types/node": "^22.15.0",
     "@types/supertest": "^6.0.3",
     "eslint": "^9.30.0",

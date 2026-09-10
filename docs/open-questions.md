@@ -2,7 +2,7 @@
 
 Specs de référence : Schéma PostgreSQL **v1.3**, Specs Techniques v1.2,
 Backend Specs v1.1, Addendum Journal des Décisions v1.1 (DEC-20 à DEC-27),
-Back Office / User Stories / Frontend v1.0.
+patch DEC-28 à DEC-30 (avril 2026), Back Office / User Stories / Frontend v1.0.
 
 **Il ne reste aucun point ouvert bloquant.** Les huit constats de la première
 revue ont été tranchés par DEC-20 à DEC-27 ; les quatre durcissements proposés
@@ -32,7 +32,10 @@ décidé, et un seul rappel : la validation qui vit dans l'API, pas en base.
 | `amount_fcfa` nullable sans lien avec `event_type` | **Fix-12b** — `chk_amount_required`. | ✅ migration 4 |
 | Double source de vérité `email_log` / `checkin_relances` | **Fix-12c** — `checkin_relances.email_log_id` FK, colonnes de délivrance retirées. | ✅ migration 4 |
 | Ligne morte `security.pin_lockout_min` | **Fix-12d** — supprimée. | ✅ migration 4 |
-| Validation `usage_type` + score non exprimable en CHECK | **Note-01** — dans le handler `POST/PUT /transmission/contacts` ; trigger acceptable en alternative. | ⏳ API |
+| Validation `usage_type` + score non exprimable en CHECK | **Note-01** — dans le handler `POST/PUT /transmission/contacts` ; trigger acceptable en alternative. | ✅ API (`validateQuestions`, testé) |
+| Chiffrement de `notification_enc` | **DEC-28** — `crypto_box_seal` vers la clé X25519 de Relais, `GET /transmission/relais-key` public. | ✅ API |
+| Intégrité des parts Shamir | **DEC-29** — chaque Si_enc signée Ed25519 sur son SHA256, toutes vérifiées à l'activation. | ✅ API |
+| Qui lit la clé privée, qui envoie l'email | **DEC-30** — `services/secrets`, email envoyé dans le handler, tracé dans `email_log`. | ✅ API (HCV à brancher en prod) |
 
 Errata User Stories actés par l'addendum, à répercuter dans le document :
 E3-US04 (recipient externe), E1-US03 (blocage PIN), E3-US05 (« bimestriel »
@@ -74,17 +77,41 @@ place du code TOTP.
 
 ---
 
-## 3. 🟢 Contrainte non exprimable en SQL, à porter dans l'API (Note-01)
+## 3. ✅ Contrainte non exprimable en SQL, portée dans l'API (Note-01)
 
-Le Schéma v1.3 (Note-01) le note lui-même pour `trusted_contacts` : « uniquement des
-questions de type `secret_question` ou `both` — vérifié en application, pas de
-CHECK sur sous-select en PG standard ».
+Fait : `validateQuestions` dans `api/transmission/service.ts`, appliqué à
+`POST /contacts`, `PUT /contacts/:id` et `POST /activate` — existence,
+unicité, statut actif, `usage_type ≠ journal`, score ≥
+`vault.question_min_score` (lu dans `app_config`, défaut 6). Le trigger
+« ceinture et bretelles » reste possible ; non ajouté.
 
-Rien n'empêche donc, au niveau base, de rattacher à un contact une question de
-carnet de vie (`usage_type = 'journal'`), ou une question sous le seuil
-`vault.question_min_score = 6`. À valider dans le handler
-`POST/PUT /transmission/contacts` — module non encore écrit.
+---
 
-Note-01 donne le handler de référence (`validateContactQuestions`) et admet
-un trigger `BEFORE INSERT OR UPDATE` en alternative si l'équipe préfère la
-ceinture et les bretelles — à arbitrer quand l'API sera écrite.
+## 4. 🟡 Activation : pas d'enregistrement Arbitrum
+
+Backend §3.4 étape 5 : `contract.register()` pousse les hashes des parts
+on-chain. Aucun service blockchain dans ce lot (smart contract « reporté »
+au README). Les hashes sont calculés et stockés (`share_kN_hash`),
+`contract_registered` reste `false`. À brancher quand le contrat existera —
+idéalement comme un job idempotent qui relit les hashes en base, plutôt que
+dans le handler.
+
+---
+
+## 5. 🟡 Email de désignation des contacts : pas de type dédié
+
+DEC-30 prévient chaque contact à l'activation. `email_log.email_type` n'a
+qu'un type contact, `transmission_contact`, dont le texte parle de
+déclenchement. Il est réutilisé avec `link = FRONTEND_URL/contact`. Proposition
+v1.4 : type `contact_designated` avec un texte « X vous a désigné comme
+contact de confiance — rien à faire pour l'instant », et décider si l'owner
+peut joindre un prénom (aujourd'hui le serveur n'en a aucun).
+
+---
+
+## 6. 🟢 Deux écarts de contrat sur `POST /transmission/activate`
+
+Consignés dans `docs/backend.md` §3 : le client envoie les octets des parts
+(`shares.kN.{enc, sig}`) et non `storj_kN_path` + `share_kN_hash` ; les
+champs reprennent la forme de `POST /contacts` (`roles`, `question_ids`,
+`schema`). À répercuter dans la spec v1.4 si l'équipe les adopte.

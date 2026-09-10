@@ -9,4 +9,6 @@ process.env.JWT_STEPUP_SECRET ??= 'test-stepup-secret-0123456789abcdef0123456789
 process.env.TOKEN_HMAC_SECRET ??= 'test-hmac-secret-0123456789abcdef0123456789ab'
 process.env.EMAIL_TRANSPORT = 'console'
 process.env.STORAGE_BACKEND = 'memory'
+// 32 bytes fixes — la clé publique correspondante est dérivée par le serveur
+process.env.RELAIS_X25519_SK ??= Buffer.alloc(32, 7).toString('hex')
 process.env.FRONTEND_URL ??= 'http://localhost:3000'
