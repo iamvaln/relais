@@ -1,3 +1,4 @@
+\set ON_ERROR_STOP on
 -- Vérifie que la bibliothèque seedée respecte les règles des specs.
 -- Lecture seule — ne modifie rien.
 
@@ -8,18 +9,21 @@ BEGIN
     SELECT count(*) INTO n FROM checkin_questions;
     ASSERT n BETWEEN 50 AND 200, 'la bibliothèque devrait compter 50-200 questions, en compte ' || n;
 
-    -- vault.question_min_score = 6 : rien en dessous ne doit être proposable
+    -- vault.question_min_score = 6 : rien en dessous ne doit être proposable.
+    -- STRICT : si la clé de config manque, on échoue au lieu de comparer à
+    -- NULL, ce qui rendrait l'assertion vraie par défaut.
+    SELECT value::INT INTO STRICT m FROM app_config WHERE key = 'vault.question_min_score';
     SELECT count(*) INTO n FROM checkin_questions
     WHERE usage_type IN ('secret_question','both')
       AND status = 'active'
-      AND reliability_score < (SELECT value::INT FROM app_config WHERE key = 'vault.question_min_score');
-    ASSERT n = 0, n || ' question(s) secrète(s) active(s) sous le score minimum';
+      AND reliability_score < m;
+    ASSERT n = 0, n || ' question(s) secrète(s) active(s) sous le score minimum ' || m;
 
     -- vault.questions_per_contact = 3 : il faut de quoi choisir 3 questions
     -- distinctes, et largement plus pour que le choix ait un sens
     SELECT count(*) INTO n FROM checkin_questions
     WHERE usage_type IN ('secret_question','both') AND status = 'active';
-    SELECT value::INT INTO m FROM app_config WHERE key = 'vault.questions_per_contact';
+    SELECT value::INT INTO STRICT m FROM app_config WHERE key = 'vault.questions_per_contact';
     ASSERT n >= m, 'moins de ' || m || ' questions secrètes disponibles';
     ASSERT n >= 20, 'seulement ' || n || ' questions secrètes — choix trop pauvre';
 

@@ -40,8 +40,9 @@ sont pas exprimables en Prisma. `schema.prisma` en est un miroir généré, à n
 ```bash
 export DATABASE_URL="postgresql://user:pass@localhost:5432/relais"
 
-# Appliquer (dans cet ordre)
-for m in prisma/migrations/*/migration.sql; do psql "$DATABASE_URL" -f "$m"; done
+# Appliquer (dans cet ordre). Chaque migration est atomique et sort en
+# exit non nul au premier échec — la boucle s'arrête proprement.
+for m in prisma/migrations/*/migration.sql; do psql "$DATABASE_URL" -f "$m" || break; done
 
 # Seeder la bibliothèque de questions (obligatoire : sans elle, aucun
 # trusted contact ne peut être créé — question_*_id est NOT NULL)

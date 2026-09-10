@@ -1,3 +1,4 @@
+\set ON_ERROR_STOP on
 -- =============================================================================
 -- RELAIS — Schéma PostgreSQL v1.1 → v1.2
 -- Transcription de specs/Relais_Schema_PostgreSQL_v1.docx (v1.2)
@@ -13,6 +14,10 @@
 -- destinataire = trusted_contact, step-up en Redis, renommage d'endpoint).
 -- Fix-06 (collision idx_tc_status) est déjà appliqué dans la migration 1.
 -- =============================================================================
+
+-- Atomique : tout ou rien. Un échec en cours de route ne laisse pas la base
+-- à moitié migrée et le fichier reste rejouable.
+BEGIN;
 
 -- -----------------------------------------------------------------------------
 -- DEC-22 — silence_duration_months : DEFAULT 1 → 3
@@ -171,3 +176,5 @@ CREATE INDEX idx_pe_type ON payment_events(event_type, created_at);
 --   FROM payment_events
 --   WHERE event_type IN ('created', 'renewed')
 --     AND created_at >= NOW() - INTERVAL '30 days';
+
+COMMIT;

@@ -1,3 +1,4 @@
+\set ON_ERROR_STOP on
 -- =============================================================================
 -- RELAIS — Schéma PostgreSQL v1.1
 -- Transcription fidèle de specs/Relais_Schema_PostgreSQL_v1.docx
@@ -11,6 +12,10 @@
 -- Les Si_enc (parts Shamir) sont sur Storj. Seuls les hashes sont on-chain
 -- Arbitrum. relais_private_key est dans HCV Secrets Engine.
 -- =============================================================================
+
+-- Atomique : tout ou rien. Un échec en cours de route ne laisse pas la base
+-- à moitié migrée et le fichier reste rejouable.
+BEGIN;
 
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
@@ -703,3 +708,5 @@ CREATE TABLE support_tickets (
 CREATE INDEX idx_st_status   ON support_tickets(status);
 CREATE INDEX idx_st_priority ON support_tickets(priority, status);
 CREATE INDEX idx_st_user     ON support_tickets(user_id);
+
+COMMIT;

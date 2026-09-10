@@ -10,7 +10,7 @@ Ce document ne redécrit pas le schéma — il consigne comment il est mis en
 | Artefact | Rôle |
 |---|---|
 | `prisma/migrations/20260410000000_init/` | Les 20 tables de la v1.1. **Source de vérité.** |
-| `prisma/migrations/20260410000001_audit_writer_role/` | Rôle `audit_writer` + REVOKE |
+| `prisma/migrations/20260410000001_audit_writer_role/` | Trigger d'immuabilité + rôle `audit_writer` + REVOKE |
 | `prisma/migrations/20260415000000_v1_2_dec20_dec27/` | Delta v1.1 → v1.2 |
 | `prisma/schema.prisma` | Miroir généré par `prisma db pull`. Ne pas éditer. |
 | `prisma/seeds/001_checkin_questions.sql` | Bibliothèque de questions — 55 lignes, idempotent |
@@ -70,7 +70,8 @@ exprimer :
 - **FK différée** `fk_cl_journal` — `DEFERRABLE` n'existe pas dans le modèle
   Prisma. Sans elle, insérer un check-in avant son entrée de journal dans la
   même transaction échouerait.
-- **Rôle `audit_writer` + REVOKE** — hors du modèle Prisma par nature.
+- **Trigger d'immuabilité et rôle `audit_writer`** — hors du modèle Prisma
+  par nature.
 
 Sens de circulation : SQL → base → `prisma db pull` → client typé. Éditer
 `schema.prisma` à la main ferait diverger les deux silencieusement.
@@ -111,12 +112,42 @@ distinctes) → check-in → journal → DMS → relay tokens → escrow → abo
 - supprimer le user cascade sur toute la chaîne, `audit_logs` survit, et
   `email_log` survit avec `user_id` remis à NULL
 
-**Immuabilité de `audit_logs` testée pour de vrai** avec un rôle `app_user`
-réel : `INSERT` passe, `UPDATE` et `DELETE` sont refusés par PostgreSQL.
+**Immuabilité de `audit_logs`** — deux couches, testées séparément :
+
+- un trigger `BEFORE UPDATE OR DELETE` qui lève `restrict_violation`, quel que
+  soit le rôle. Vérifié **en superuser, sans qu'aucun rôle `app_user`
+  n'existe** : `UPDATE` et `DELETE` refusés, la ligne survit. C'est la garantie
+  de fond — elle ne dépend pas du nom que l'hébergeur donne au rôle applicatif ;
+- le rôle `audit_writer` + `REVOKE` de la spec, en défense en profondeur.
+  Vérifié avec un rôle `app_user` réel : `INSERT` passe, `UPDATE` et `DELETE`
+  refusés.
+
+**Les fichiers échouent bruyamment.** Migrations et tests commencent par
+`\set ON_ERROR_STOP on` : un `psql -f` nu, tel que le README l'écrit, sort en
+exit 3 au premier échec. Sans ça, un `ASSERT` raté abandonnait la transaction,
+le `ROLLBACK` final réussissait, et psql sortait en 0 — une CI aurait vu vert.
+
+**Les migrations sont atomiques.** Chacune est un bloc `BEGIN … COMMIT`.
+Vérifié sur la v1.2 avec un contact déjà en base : l'`ADD COLUMN … NOT NULL`
+échoue comme prévu, et **rien** de ce qui précède n'est commité — ni le
+`DEFAULT 3`, ni `pin_backoff_steps`, ni `fk_cl_journal`, ni les deux nouvelles
+tables. Après nettoyage, le même fichier se rejoue en exit 0. Sans le bloc, la
+base restait à moitié migrée et le fichier mourait au rejeu sur
+`email_log already exists`.
 
 **Contrôles négatifs** : en retirant `chk_distinct_questions` puis
 `fk_cl_journal`, la suite échoue bien (exit 3) au lieu de passer en silence.
-Les assertions ont donc des dents.
+`seed_checks` échoue aussi si la clé `vault.question_min_score` manque dans
+`app_config` (`INTO STRICT`), au lieu de comparer à NULL et de passer par
+défaut. Les assertions ont donc des dents.
+
+**Suppression RGPD = anonymisation, pas `DELETE`.** Plusieurs FK vers `users`
+sont en `NO ACTION` (`transmissions`, `payment_events`, `support_tickets`), donc
+un `DELETE FROM users` échoue dès qu'un historique existe. C'est cohérent avec
+la spec : `users` porte `deleted_at` / `deleted_by` / `deletion_reason`, et
+BO-02 conserve « un log minimal : user_id anonymisé ». Le flux RGPD écrase les
+PII en place et pose `deleted_at` ; il ne supprime pas la ligne. Le `DELETE`
+du smoke test n'est qu'un test de cascade, pas le flux métier.
 
 ---
 
@@ -159,8 +190,11 @@ et qu'on peut bien composer 3 questions valides pour un contact.
 
 - **Validation applicative** des questions rattachées à un contact
   (`usage_type` et score) — non exprimable en CHECK, cf. open-questions §3.
-- **Nom du rôle applicatif** : la migration 2 suppose `app_user`. À aligner
-  sur ce que crée l'hébergeur (Supabase ou Railway).
+- **Nom du rôle applicatif** : le `REVOKE` de la migration 2 suppose
+  `app_user`. À aligner sur ce que crée l'hébergeur (Supabase ou Railway) —
+  sans urgence, le trigger tient la garantie en attendant.
+- **Flux RGPD** : anonymisation en place (voir §4), à implémenter comme telle
+  dans `DELETE /admin/users/:id`.
 - **Jobs de nettoyage** : quatre sont décrits en commentaire dans le DDL
   (`sessions` quotidien, `email_otp` / `restore_challenges` / `escrow_shares`
   horaires), plus la rétention 90 jours d'`email_log`. Ils appartiennent à

@@ -1,4 +1,6 @@
--- Smoke test du schéma v1.1 : chaîne de FK complète + contraintes clés.
+\set ON_ERROR_STOP on
+-- Smoke test du schéma v1.2 : chaîne de FK complète + contraintes clés.
+-- Échoue au premier ASSERT raté (ON_ERROR_STOP) — exit non nul pour la CI.
 -- Tout est rollbacké — ne laisse rien en base.
 BEGIN;
 
@@ -167,6 +169,24 @@ BEGIN
     END;
 END $$;
 
+
+-- ---------------------------------------------------------------------------
+-- audit_logs est append-only par trigger — indépendamment du rôle.
+-- Ce test tourne en superuser : si ça échoue ici, ça échoue pour tout le monde.
+-- ---------------------------------------------------------------------------
+DO $$
+BEGIN
+    BEGIN
+        UPDATE audit_logs SET reason = 'falsifié';
+        RAISE EXCEPTION 'trg_audit_logs_immutable aurait dû refuser l''UPDATE';
+    EXCEPTION WHEN restrict_violation THEN NULL;
+    END;
+    BEGIN
+        DELETE FROM audit_logs;
+        RAISE EXCEPTION 'trg_audit_logs_immutable aurait dû refuser le DELETE';
+    EXCEPTION WHEN restrict_violation THEN NULL;
+    END;
+END $$;
 
 -- ---------------------------------------------------------------------------
 -- v1.2 — DEC-20 : les 3 questions d'un contact doivent être distinctes

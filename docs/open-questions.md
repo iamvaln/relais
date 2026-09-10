@@ -82,7 +82,25 @@ Sans effet sur le fonctionnement — d'où le 🟡 et non le 🔴.
 
 ---
 
-## 3. 🟢 Contrainte non exprimable en SQL, à porter dans l'API
+## 3. 🟡 Quatre durcissements du DDL à proposer en v1.3
+
+Relevés à la revue de code du schéma. Aucun n'empêche le fonctionnement ;
+tous ferment une porte que le DDL v1.2 laisse ouverte. Non appliqués ici
+parce qu'ils modifient la spec elle-même — à trancher pour la v1.3.
+
+| # | Table | Constat | Proposition |
+|---|---|---|---|
+| a | `checkin_questions` | Aucun `UNIQUE` sur `text_fr` / `text_en`. Un admin peut créer deux questions au libellé identique ; un owner les rattache toutes deux au même contact, `chk_distinct_questions` passe (ids différents), le contact n'a en réalité que deux questions. | `UNIQUE (text_fr)`, `UNIQUE (text_en)` |
+| b | `payment_events` | `amount_fcfa` est nullable sans lien avec `event_type`. Un `renewed` sans montant est accepté et disparaît silencieusement du MRR (`SUM` ignore les NULL). | `CHECK (event_type NOT IN ('created','renewed') OR amount_fcfa IS NOT NULL)` |
+| c | `email_log` / `checkin_relances` | Les deux tables tracent la délivrance des mêmes emails de relance (`provider_id`/`status` d'un côté, `email_provider_id`/`delivery_status` de l'autre). Un webhook Resend doit mettre les deux à jour ; celui qu'on oublie affiche `sent` quand l'autre dit `bounced`. | Faire pointer `checkin_relances` vers `email_log(id)` et retirer ses deux colonnes de délivrance |
+| d | `app_config` | `security.pin_lockout_min` subsiste alors que DEC-26 le remplace par `pin_backoff_steps`. BO-05 l'affiche comme éditable : un admin le modifie, rien ne se passe. | Supprimer la ligne |
+
+Le point (a) est le plus important : il rend contournable la seule contrainte
+qui garantit que trois questions sont bien trois questions.
+
+---
+
+## 4. 🟢 Contrainte non exprimable en SQL, à porter dans l'API
 
 Le Schéma v1.2 le note lui-même pour `trusted_contacts` : « uniquement des
 questions de type `secret_question` ou `both` — vérifié en application, pas de
