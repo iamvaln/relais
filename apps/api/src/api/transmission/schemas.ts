@@ -132,3 +132,25 @@ export interface ActivateBody extends ConfigBody {
   schema: SchemaBody
   contacts: ActivateContact[]
 }
+
+/** E4-US04 : 1 semaine / 1 mois / 3 mois, plafonné par dms.pause_max_months. */
+export const pauseBody = {
+  type: 'object',
+  required: ['duration_days'],
+  additionalProperties: false,
+  properties: { duration_days: { type: 'integer', enum: [7, 30, 90] } },
+} as const
+export interface PauseBody {
+  duration_days: 7 | 30 | 90
+}
+
+/** Vérification annuelle : Ed25519.sign(SHA256(verify_token), owner_sk). */
+export const verifyBody = {
+  type: 'object',
+  required: ['signature'],
+  additionalProperties: false,
+  properties: { signature: { ...base64, maxLength: 128 } },
+} as const
+export interface VerifyBody {
+  signature: string
+}

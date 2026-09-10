@@ -3,7 +3,7 @@ import { prisma } from '../src/lib/prisma.js'
 import sodium from '../src/lib/sodium.js'
 import { objectStore } from '../src/services/storage/index.js'
 import { api, closeAll, generateDeviceKeys, lastEmailTo, registerUser, resetState, signWith, stepUp, type DeviceKeys } from './helpers.js'
-import { buildActivationBody, buildContactBody, buildShare, fetchRelaisKey, sealToRelais, sha256Hex, type ActivationContact } from './transmission-helpers.js'
+import { buildActivationBody, buildContactBody, buildShare, fetchRelaisKey, sealToRelais, sha256Hex, signHash, type ActivationContact } from './transmission-helpers.js'
 
 /** Owner avec clé publique enregistrée + clé de Relais récupérée. */
 async function owner(email = 'adjoua@example.cm') {
@@ -524,5 +524,148 @@ describe('POST /transmission/activate', () => {
     await (await api()).delete(`/transmission/contacts/${cs[0]!.id}`).set(o.auth).set('X-Step-Up-Token', su2).expect(409)
     const su3 = await stepUp(o.accessToken, 'edit_contacts')
     await (await api()).put('/transmission/schema').set(o.auth).set('X-Step-Up-Token', su3).send({ n: 2, m: 2 }).expect(409)
+  })
+})
+
+// --- Pause, désactivation, vérification annuelle ------------------------------------
+
+const DAY = 24 * 3600 * 1000
+
+async function activated(o: Owner): Promise<ActivationContact[]> {
+  const cs = await contacts(o, [{ k1: true, k2: true }, { k1: true }])
+  const r = await activate(o, buildActivationBody(o.keys, cs))
+  expect(r.status).toBe(200)
+  return cs
+}
+
+async function withStepUp(o: Owner, action: string) {
+  const su = await stepUp(o.accessToken, action)
+  return { ...o.auth, 'X-Step-Up-Token': su }
+}
+
+describe('POST /transmission/pause (E4-US04)', () => {
+  it('suspend une transmission active pour 30 jours (step-up edit_transmission)', async () => {
+    const o = await owner()
+    await activated(o)
+    const before = Date.now()
+    const r = await (await api()).post('/transmission/pause').set(await withStepUp(o, 'edit_transmission')).send({ duration_days: 30 }).expect(200)
+    expect(r.body.data.status).toBe('paused')
+    const until = Date.parse(r.body.data.pause_until)
+    expect(until - before).toBeGreaterThan(29.99 * DAY)
+    expect(until - before).toBeLessThan(30.01 * DAY)
+  })
+
+  it('refuse une durée au-delà de dms.pause_max_months', async () => {
+    const o = await owner()
+    await activated(o)
+    await prisma().app_config.update({ where: { key: 'dms.pause_max_months' }, data: { value: '1' } })
+    try {
+      const r = await (await api()).post('/transmission/pause').set(await withStepUp(o, 'edit_transmission')).send({ duration_days: 90 }).expect(400)
+      expect(r.body.error.code).toBe('VALIDATION_ERROR')
+    } finally {
+      await prisma().app_config.update({ where: { key: 'dms.pause_max_months' }, data: { value: '3' } })
+    }
+  })
+
+  it('refuse si la transmission n’est pas active', async () => {
+    const o = await owner()
+    const r = await (await api()).post('/transmission/pause').set(await withStepUp(o, 'edit_transmission')).send({ duration_days: 7 }).expect(409)
+    expect(r.body.error.code).toBe('TRANSMISSION_NOT_CONFIGURED')
+  })
+})
+
+describe('DELETE /transmission/pause', () => {
+  it('reprend : statut active, pause effacée, prochain check-in replanifié', async () => {
+    const o = await owner()
+    await activated(o)
+    await (await api()).post('/transmission/pause').set(await withStepUp(o, 'edit_transmission')).send({ duration_days: 90 }).expect(200)
+    const before = Date.now()
+    const r = await (await api()).delete('/transmission/pause').set(o.auth).expect(200)
+    expect(r.body.data).toMatchObject({ status: 'active', pause_until: null })
+    const tc = await prisma().transmission_configs.findUniqueOrThrow({ where: { user_id: o.userId } })
+    expect(tc.paused_at).toBeNull()
+    expect(tc.next_checkin_due!.getTime() - before).toBeGreaterThan(27.99 * DAY)
+  })
+
+  it('refuse si la transmission n’est pas en pause', async () => {
+    const o = await owner()
+    await activated(o)
+    const r = await (await api()).delete('/transmission/pause').set(o.auth).expect(409)
+    expect(r.body.error.code).toBe('TRANSMISSION_NOT_CONFIGURED')
+  })
+})
+
+describe('DELETE /transmission', () => {
+  it('désactive (step-up delete_transmission) : parts purgées, contacts conservés et de nouveau modifiables', async () => {
+    const o = await owner()
+    const cs = await activated(o)
+    const path = `shares/${o.userId}/${cs[0]!.id}/k1.enc`
+    expect(await objectStore().head(path)).not.toBeNull()
+
+    const r = await (await api()).delete('/transmission').set(await withStepUp(o, 'delete_transmission')).expect(200)
+    expect(r.body.data).toEqual({ deactivated: true })
+
+    const cfg = await (await api()).get('/transmission/config').set(o.auth).expect(200)
+    expect(cfg.body.data).toMatchObject({ status: 'inactive', activated_at: null, pause_until: null })
+    expect(cfg.body.data.contacts).toHaveLength(2)
+    expect(cfg.body.data.contacts[0].shares).toEqual({ k1: false, k2: false, k3: false })
+    expect(await objectStore().head(path)).toBeNull()
+    const row = await prisma().trusted_contacts.findUniqueOrThrow({ where: { id: cs[0]!.id } })
+    expect(row.share_k1_hash).toBeNull()
+    expect(row.verify_token).toBeNull()
+    const tc = await prisma().transmission_configs.findUniqueOrThrow({ where: { user_id: o.userId } })
+    expect(tc.next_checkin_due).toBeNull()
+
+    await (await api()).post('/transmission/contacts').set(o.auth).send(await contactBody(o, 3)).expect(403) // plan free : 2 max
+    await (await api()).delete(`/transmission/contacts/${cs[1]!.id}`).set(await withStepUp(o, 'edit_contacts')).expect(200)
+  })
+
+  it('refuse si la transmission est inactive', async () => {
+    const o = await owner()
+    const r = await (await api()).delete('/transmission').set(await withStepUp(o, 'delete_transmission')).expect(409)
+    expect(r.body.error.code).toBe('TRANSMISSION_NOT_CONFIGURED')
+  })
+})
+
+describe('POST /transmission/contacts/:id/verify (Techniques §7.2)', () => {
+  it('la config expose verify_token ; la vérification signée par l’owner date verify_last_checked_at', async () => {
+    const o = await owner()
+    const cs = await activated(o)
+    const cfg = await (await api()).get('/transmission/config').set(o.auth).expect(200)
+    const token: string = cfg.body.data.contacts[0].verify_token
+    expect(token).toBe(buildActivationBody(o.keys, cs).contacts[0]!.verify_token)
+
+    const before = Date.now()
+    const r = await (await api())
+      .post(`/transmission/contacts/${cs[0]!.id}/verify`)
+      .set(o.auth)
+      .send({ signature: signHash(o.keys, Buffer.from(token, 'base64')) })
+      .expect(200)
+    expect(Date.parse(r.body.data.verify_last_checked_at)).toBeGreaterThanOrEqual(before - 1000)
+  })
+
+  it('refuse une signature d’une autre clé', async () => {
+    const o = await owner()
+    const cs = await activated(o)
+    const token = buildActivationBody(o.keys, cs).contacts[0]!.verify_token
+    const r = await (await api())
+      .post(`/transmission/contacts/${cs[0]!.id}/verify`)
+      .set(o.auth)
+      .send({ signature: signHash(generateDeviceKeys(), Buffer.from(token, 'base64')) })
+      .expect(401)
+    expect(r.body.error.code).toBe('AUTH_TOKEN_INVALID')
+    const row = await prisma().trusted_contacts.findUniqueOrThrow({ where: { id: cs[0]!.id } })
+    expect(row.verify_last_checked_at).toBeNull()
+  })
+
+  it('refuse avant activation (pas encore de verify_token)', async () => {
+    const o = await owner()
+    const id = await createContact(o)
+    const r = await (await api())
+      .post(`/transmission/contacts/${id}/verify`)
+      .set(o.auth)
+      .send({ signature: signHash(o.keys, Buffer.alloc(40)) })
+      .expect(409)
+    expect(r.body.error.code).toBe('TRANSMISSION_NOT_CONFIGURED')
   })
 })

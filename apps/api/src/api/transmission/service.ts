@@ -9,7 +9,7 @@ import { relaisKeypair } from '../../services/secrets/index.js'
 import { env } from '../../config/env.js'
 import { emailService } from '../../services/email/index.js'
 import { objectStore } from '../../services/storage/index.js'
-import type { ActivateBody, ActivateContact, ConfigBody, ContactBody, Roles, SchemaBody } from './schemas.js'
+import type { ActivateBody, ActivateContact, ConfigBody, ContactBody, PauseBody, Roles, SchemaBody } from './schemas.js'
 
 // --- Vues -----------------------------------------------------------------------
 
@@ -21,6 +21,8 @@ export interface ContactView {
   status: string
   /** Une part Shamir est-elle déposée pour chaque rôle ? (posé à l'activation) */
   shares: Roles
+  /** XChaCha20(K_i, 'RELAIS_VERIFY_OK_V1'), posé à l'activation — sert à la vérification annuelle côté app. */
+  verify_token: string | null
   verify_last_checked_at: string | null
 }
 
@@ -47,6 +49,7 @@ const contactSelect = {
   storj_k1_path: true,
   storj_k2_path: true,
   storj_k3_path: true,
+  verify_token: true,
   verify_last_checked_at: true,
 } as const
 
@@ -63,6 +66,7 @@ type ContactRow = {
   storj_k1_path: string | null
   storj_k2_path: string | null
   storj_k3_path: string | null
+  verify_token: Uint8Array | null
   verify_last_checked_at: Date | null
 }
 
@@ -74,6 +78,7 @@ function toContactView(c: ContactRow): ContactView {
     question_ids: [c.question_1_id, c.question_2_id, c.question_3_id],
     status: c.contact_status,
     shares: { k1: c.storj_k1_path !== null, k2: c.storj_k2_path !== null, k3: c.storj_k3_path !== null },
+    verify_token: c.verify_token ? Buffer.from(c.verify_token).toString('base64') : null,
     verify_last_checked_at: c.verify_last_checked_at?.toISOString() ?? null,
   }
 }
@@ -499,4 +504,121 @@ export async function activate(userId: string, body: ActivateBody): Promise<{ ac
 
 function notConfigured(why: string): never {
   throw new AppError('TRANSMISSION_NOT_CONFIGURED', { message: why })
+}
+
+// --- Pause, reprise, désactivation (E4-US04, Backend §3.4) ------------------------
+
+const WEEK_MS = 7 * 24 * 3600 * 1000
+const DAY_MS = 24 * 3600 * 1000
+
+async function configOrThrow(userId: string) {
+  const cfg = await prisma().transmission_configs.findUnique({ where: { user_id: userId } })
+  if (!cfg) notConfigured('Transmission non configurée.')
+  return cfg
+}
+
+export async function pause(userId: string, body: PauseBody): Promise<TransmissionConfigView> {
+  const cfg = await configOrThrow(userId)
+  if (cfg.status !== 'active') notConfigured('La transmission doit être active pour être mise en pause.')
+  const maxMonths = await configInt('dms.pause_max_months', 3)
+  if (body.duration_days > maxMonths * 30) {
+    throw new AppError('VALIDATION_ERROR', { details: { duration_days: `${maxMonths} mois maximum` } })
+  }
+  const now = new Date()
+  await prisma().transmission_configs.update({
+    where: { id: cfg.id },
+    data: { status: 'paused', paused_at: now, pause_until: new Date(now.getTime() + body.duration_days * DAY_MS) },
+  })
+  return getConfig(userId)
+}
+
+/** Fin de pause : le cycle de check-in repart de zéro, comme à l'activation. */
+export async function resume(userId: string): Promise<TransmissionConfigView> {
+  const cfg = await configOrThrow(userId)
+  if (cfg.status !== 'paused') notConfigured('La transmission n’est pas en pause.')
+  const now = new Date()
+  await prisma().transmission_configs.update({
+    where: { id: cfg.id },
+    data: {
+      status: 'active',
+      paused_at: null,
+      pause_until: null,
+      last_checkin_at: now,
+      next_checkin_due: new Date(now.getTime() + cfg.checkin_frequency_weeks * WEEK_MS),
+      relance_count: 0,
+      last_relance_at: null,
+    },
+  })
+  return getConfig(userId)
+}
+
+/**
+ * Désactivation : les parts Shamir sont purgées du stockage et de la base ;
+ * les contacts restent (et redeviennent modifiables), la config repasse
+ * inactive. Une transmission déclenchée ne se désactive pas.
+ */
+export async function deactivate(userId: string): Promise<{ deactivated: true }> {
+  const cfg = await configOrThrow(userId)
+  if (cfg.status !== 'active' && cfg.status !== 'paused') notConfigured('Aucune transmission active à désactiver.')
+
+  await objectStore().deletePrefix(`shares/${userId}/`)
+  await prisma().$transaction([
+    prisma().trusted_contacts.updateMany({
+      where: { transmission_id: cfg.id },
+      data: {
+        storj_k1_path: null,
+        storj_k2_path: null,
+        storj_k3_path: null,
+        share_k1_hash: null,
+        share_k2_hash: null,
+        share_k3_hash: null,
+        verify_token: null,
+        verify_last_checked_at: null,
+      },
+    }),
+    prisma().transmission_configs.update({
+      where: { id: cfg.id },
+      data: {
+        status: 'inactive',
+        activated_at: null,
+        paused_at: null,
+        pause_until: null,
+        last_checkin_at: null,
+        next_checkin_due: null,
+        relance_count: 0,
+        last_relance_at: null,
+        contract_registered: false,
+      },
+    }),
+  ])
+  return { deactivated: true }
+}
+
+// --- Vérification annuelle (Techniques §7.2) ----------------------------------------
+
+/**
+ * L'app rejoue les réponses, ouvre verify_token localement, puis atteste
+ * le succès en signant SHA256(verify_token) avec la clé de l'owner. Le
+ * serveur ne voit ni réponses ni K_i : il date l'attestation.
+ */
+export async function verifyContact(userId: string, id: string, signatureB64: string): Promise<ContactView> {
+  const contact = await prisma().trusted_contacts.findFirst({
+    where: { id, user_id: userId, contact_status: { not: 'removed' } },
+    select: { id: true, verify_token: true },
+  })
+  if (!contact) throw new AppError('NOT_FOUND', { message: 'Contact introuvable.' })
+  if (!contact.verify_token) notConfigured('Activez la transmission avant la vérification annuelle.')
+
+  const signature = decodeOrThrow('signature', signatureB64)
+  const { ed25519Pk } = await ownerKey(userId)
+  const digest = Buffer.from(sha256Hex(Buffer.from(contact.verify_token)), 'hex')
+  if (!ed25519Verify(ed25519Pk, digest, Buffer.from(signature))) {
+    throw new AppError('AUTH_TOKEN_INVALID', { message: 'Attestation de vérification invalide.' })
+  }
+  const row = await prisma().trusted_contacts.update({
+    where: { id },
+    data: { verify_last_checked_at: new Date() },
+    select: contactSelect,
+  })
+  return toContactView(row)
 }

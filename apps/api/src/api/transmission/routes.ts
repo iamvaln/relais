@@ -12,12 +12,16 @@ import {
   configBody,
   contactBody,
   contactParams,
+  pauseBody,
   schemaBody,
+  verifyBody,
   type ActivateBody,
   type ConfigBody,
   type ContactBody,
   type ContactParams,
+  type PauseBody,
   type SchemaBody,
+  type VerifyBody,
 } from './schemas.js'
 
 export async function transmissionRoutes(app: FastifyInstance): Promise<void> {
@@ -67,5 +71,23 @@ export async function transmissionRoutes(app: FastifyInstance): Promise<void> {
     '/activate',
     { schema: { body: activateBody }, preHandler: [authenticate, requireStepUp('activate_transmission')] },
     async (req) => ok(await transmission.activate(req.user!.id, req.body)),
+  )
+
+  app.post<{ Body: PauseBody }>(
+    '/pause',
+    { schema: { body: pauseBody }, preHandler: [authenticate, requireStepUp('edit_transmission')] },
+    async (req) => ok(await transmission.pause(req.user!.id, req.body)),
+  )
+
+  app.delete('/pause', { preHandler: [authenticate] }, async (req) => ok(await transmission.resume(req.user!.id)))
+
+  app.delete('/', { preHandler: [authenticate, requireStepUp('delete_transmission')] }, async (req) =>
+    ok(await transmission.deactivate(req.user!.id)),
+  )
+
+  app.post<{ Params: ContactParams; Body: VerifyBody }>(
+    '/contacts/:id/verify',
+    { schema: { params: contactParams, body: verifyBody }, preHandler: [authenticate] },
+    async (req) => ok(await transmission.verifyContact(req.user!.id, req.params.id, req.body.signature)),
   )
 }
