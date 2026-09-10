@@ -25,6 +25,8 @@ export function durationToSeconds(value: string): number {
 
 const schema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
+  /** Démarre le worker BullMQ (deadman:checkin) dans ce processus. */
+  JOBS_ENABLED: z.enum(['true', 'false']).default('false'),
   PORT: z.coerce.number().int().positive().default(3000),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
   APP_URL: z.string().url().default('http://localhost:3000'),
