@@ -1,0 +1,1141 @@
+// =============================================================================
+// RELAIS — Schéma PostgreSQL
+// Version 1.0 — dérivé de Specs Techniques v1, Backend Specs v1,
+//               Journal des Décisions v1, Back Office Specs v1, User Stories v1
+// =============================================================================
+//
+// PRINCIPE ZERO-KNOWLEDGE
+// -----------------------
+// Tout champ suffixé `Enc` est un blob chiffré côté client. Le serveur le
+// stocke et le restitue sans jamais le déchiffrer. Une seule exception,
+// documentée comme telle : `TrustedContact.notificationEnc`, chiffré avec
+// `relais_public_key` et déchiffrable par le backend via `relais_private_key`
+// (HCV Secrets Engine, DEC-15) dans le seul but d'envoyer les notifications.
+//
+// Format des blobs XChaCha20-Poly1305 : [nonce(24)] + [ciphertext] + [tag(16)]
+// (Frontend Specs §5.2).
+//
+// CE QUI N'EST JAMAIS EN BASE
+// ---------------------------
+//   - le seed BIP39 et les 12 mots           (device uniquement)
+//   - K1 / K2 / K3, K_login, K_A..K_M         (mémoire vive uniquement)
+//   - le PIN et ses dérivés                   (SecureStore device, DEC-02)
+//   - les réponses aux questions secrètes     (jamais stockées, nulle part)
+//   - les données D en clair                  (mémoire vive uniquement)
+//
+// =============================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// =============================================================================
+// ENUMS
+// =============================================================================
+
+enum Language {
+  FR
+  EN
+}
+
+enum Plan {
+  FREE
+  PREMIUM
+}
+
+enum UserStatus {
+  PENDING_VERIFICATION // compte créé, OTP email non validé
+  ACTIVE
+  SUSPENDED // suspendu par un admin — données conservées
+  DELETED // anonymisé (RGPD) — seul le log de suppression subsiste
+}
+
+/// Les trois catégories de données, chacune chiffrée par sa clé Ki
+/// dérivée indépendamment du seed (Specs Techniques §3).
+enum VaultCategory {
+  ACCOUNTS // K1 — comptes & accès
+  MESSAGES // K2 — messages personnels, carnet de vie, capsule temps
+  FINANCES // K3 — données financières
+}
+
+enum UrgencyLevel {
+  IMMEDIATE
+  WITHIN_30_DAYS
+  DISCRETION
+}
+
+enum SyncStatus {
+  PENDING
+  SYNCED
+  FAILED
+}
+
+/// Rôles des trusted contacts (E3-US02). Un contact peut en cumuler plusieurs
+/// et reçoit alors une part Shamir par catégorie correspondante.
+enum ContactRole {
+  PRACTICAL_MANAGER // Gestionnaire pratique   → ACCOUNTS
+  MEMORY_KEEPER // Gardien du souvenir     → MESSAGES
+  FINANCIAL_EXECUTOR // Exécuteur financier     → FINANCES
+}
+
+enum TransmissionConfigStatus {
+  NOT_CONFIGURED
+  ACTIVE
+  PAUSED // mode Voyage (E4-US04) — max 3 mois
+  TRIGGERED // dead man's switch parti, voir TransmissionRun
+  CANCELLED
+}
+
+enum TransmissionRunStatus {
+  TRIGGERED // contacts notifiés, aucune confirmation
+  IN_PROGRESS // au moins 1 contact a déposé une part en escrow
+  UNLOCKED // N parts atteintes pour au moins une catégorie
+  COMPLETED // un contact a confirmé « J'ai terminé » → purge effectuée
+  CANCELLED // annulée (owner revenu, ou action admin)
+  EXPIRED // escrow expiré sans atteindre N
+}
+
+enum ContactStatus {
+  ACTIVE
+  BLOCKED // 5 échecs aux questions → 24h (config contact_lockout_hours)
+}
+
+enum OtpPurpose {
+  EMAIL_VERIFICATION
+  EMAIL_CHANGE
+  PHONE_CHANGE
+}
+
+enum CheckinMethod {
+  GAME // mini-jeu / énigme résolu
+  ACTIVITY // simple ouverture + navigation dans l'app (E4-US01)
+  MANUAL_ADMIN // débloqué par le support
+}
+
+enum GameType {
+  RIDDLE
+  MINI_GAME
+}
+
+enum QuestionCategory {
+  CHILDHOOD
+  PLACES
+  EVENTS
+  PEOPLE
+  HABITS
+  OTHER
+}
+
+enum QuestionStatus {
+  ACTIVE
+  ARCHIVED
+  UNDER_REVIEW
+}
+
+enum AdminRole {
+  SUPER_ADMIN
+  ADMIN
+  SUPPORT
+  FINANCE
+}
+
+enum ActorType {
+  USER
+  ADMIN
+  CONTACT
+  SYSTEM
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  GRACE // expiré, dans la période de grâce (défaut 7j)
+  EXPIRED
+  CANCELLED
+}
+
+enum PaymentStatus {
+  PENDING
+  SUCCEEDED
+  FAILED
+  REFUNDED
+}
+
+enum EmailStatus {
+  QUEUED
+  SENT
+  DELIVERED
+  BOUNCED
+  FAILED
+}
+
+// =============================================================================
+// 1 — UTILISATEUR & AUTHENTIFICATION
+// =============================================================================
+
+model User {
+  id String @id @default(uuid()) @db.Uuid
+
+  // --- Identité (Specs Techniques §7.1) ---------------------------------
+  firstName String  @db.VarChar(80)
+  lastName  String  @db.VarChar(80)
+  email     String  @unique @db.VarChar(255)
+  /// Collecté dès V1 pour le 2FA SMS en V2. Non vérifié en V1.
+  phone     String? @db.VarChar(32)
+
+  /// Argon2id. Sert UNIQUEMENT à l'authentification serveur.
+  /// Aucun rôle cryptographique côté client (DEC-02).
+  passwordHash String @db.VarChar(255)
+
+  /// Clé publique Ed25519 (32 bytes) dérivée du seed (DEC-05).
+  /// Vérifie les signatures de sync vault et le challenge de restauration.
+  /// Destinée à être publiée on-chain Arbitrum (DEC-10) — hors périmètre V1.
+  ed25519PublicKey Bytes?
+
+  language Language   @default(FR)
+  plan     Plan       @default(FREE)
+  status   UserStatus @default(PENDING_VERIFICATION)
+
+  // --- Onboarding : avertissements non-passables (Specs Techniques §7.1) --
+  seedWordsAcknowledgedAt DateTime?
+  contactsWarningAckAt    DateTime?
+  /// GET /auth/seed-words est autorisé une seule fois (step-up `view_seed`).
+  seedWordsRevealedAt     DateTime?
+
+  emailVerifiedAt DateTime?
+  lastActiveAt    DateTime?
+  suspendedAt     DateTime?
+  /// Anonymisation RGPD. Les lignes restent pour l'intégrité référentielle
+  /// des logs, tous les champs personnels sont écrasés.
+  deletedAt       DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // --- Relations ---------------------------------------------------------
+  twoFactor          TwoFactor?
+  transmissionConfig TransmissionConfig?
+  checkinState       CheckinState?
+  subscription       Subscription?
+  sessions           Session[]
+  emailOtps          EmailOtp[]
+  passwordResets     PasswordReset[]
+  vaultSyncs         VaultSync[]
+  vaultItems         VaultItem[]
+  trustedContacts    TrustedContact[]
+  dataRecipients     DataRecipient[]
+  checkinRecords     CheckinRecord[]
+  reminders          Reminder[]
+  journalEntries     JournalEntry[]
+  wrappeds           Wrapped[]
+  transmissionRuns   TransmissionRun[]
+  emailLogs          EmailLog[]
+  supportTickets     SupportTicket[]
+
+  @@index([status, plan])
+  @@index([createdAt])
+  @@index([lastActiveAt])
+  @@map("users")
+}
+
+/// Sessions = refresh tokens. L'access token (15 min) est stateless et
+/// n'existe jamais en base (Backend Specs §2.1).
+model Session {
+  id     String @id @default(uuid()) @db.Uuid
+  userId String @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// SHA-256 du refresh token. Le token en clair n'est jamais stocké.
+  refreshTokenHash String  @unique @db.Char(64)
+  deviceLabel      String? @db.VarChar(120)
+  /// IP hashée pour conformité RGPD (Backend Specs §9.1).
+  ipHash           String? @db.Char(64)
+  userAgent        String? @db.VarChar(255)
+
+  /// createdAt + 90 jours. Cohérent avec la déconnexion après 3 mois
+  /// d'inactivité (Specs Techniques §7.3).
+  expiresAt  DateTime
+  lastUsedAt DateTime  @default(now())
+  revokedAt  DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([userId, revokedAt])
+  @@index([expiresAt])
+  @@map("sessions")
+}
+
+model TwoFactor {
+  userId String @id @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// Secret TOTP chiffré au repos par le backend (clé applicative, pas HCV).
+  totpSecretEnc Bytes
+  enabled       Boolean   @default(false)
+  activatedAt   DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  recoveryCodes TwoFactorRecoveryCode[]
+
+  @@map("two_factors")
+}
+
+/// Codes de récupération d'urgence (E6-US02), affichés une seule fois,
+/// stockés hashés et consommables une fois.
+model TwoFactorRecoveryCode {
+  id     String    @id @default(uuid()) @db.Uuid
+  userId String    @db.Uuid
+  twoFa  TwoFactor @relation(fields: [userId], references: [userId], onDelete: Cascade)
+
+  codeHash   String    @db.Char(64)
+  consumedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@unique([userId, codeHash])
+  @@map("two_factor_recovery_codes")
+}
+
+/// OTP email à 6 chiffres, validité 10 min (config `otp_validity_minutes`).
+model EmailOtp {
+  id     String @id @default(uuid()) @db.Uuid
+  userId String @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  purpose      OtpPurpose
+  /// Argon2id du code. Le code en clair n'est jamais stocké.
+  codeHash     String     @db.VarChar(255)
+  /// Pour EMAIL_CHANGE / PHONE_CHANGE : la valeur cible en attente.
+  pendingValue String?    @db.VarChar(255)
+
+  attempts   Int       @default(0)
+  expiresAt  DateTime
+  consumedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([userId, purpose, consumedAt])
+  @@index([expiresAt])
+  @@map("email_otps")
+}
+
+/// POST /auth/password/reset-request. La réinitialisation exige aussi les
+/// 12 mots côté client — ce token n'autorise que le canal email (E1-US05).
+model PasswordReset {
+  id     String @id @default(uuid()) @db.Uuid
+  userId String @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  tokenHash  String    @unique @db.Char(64)
+  expiresAt  DateTime
+  consumedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([expiresAt])
+  @@map("password_resets")
+}
+
+/// Challenge Ed25519 pour vérifier les 12 mots sans les transmettre (DEC-06).
+model RestoreChallenge {
+  id     String @id @default(uuid()) @db.Uuid
+  /// Pas de FK : le challenge est demandé avant que l'identité soit établie.
+  userId String @db.Uuid
+
+  nonce      Bytes
+  expiresAt  DateTime
+  consumedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([userId, consumedAt])
+  @@index([expiresAt])
+  @@map("restore_challenges")
+}
+
+// =============================================================================
+// 2 — VAULT
+// =============================================================================
+
+/// État du backup chiffré par catégorie. Une ligne par (user, catégorie).
+///
+/// Le pipeline exact P1 → P2 dépend d'une décision encore ouverte :
+///   - Specs Techniques §4.4 : P1 → HCV Transit → P2 → Storj
+///   - DEC-16/17            : P2 = P1 (XChaCha20 côté client seul), HCV retiré
+/// Le schéma est neutre : `hcvKeyVersion` reste NULL si HCV n'est pas utilisé.
+model VaultSync {
+  id     String @id @default(uuid()) @db.Uuid
+  userId String @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  category VaultCategory
+
+  /// Clé objet Storj : payloads/{user_id}/v{n}_{category}.enc
+  storjKey  String? @db.VarChar(255)
+  /// Incrémenté à chaque sync réussie — détecte les writes concurrents.
+  version   Int     @default(0)
+  sizeBytes Int     @default(0)
+
+  /// SHA-256 de P1, signé par l'owner (DEC-07). Le serveur vérifie
+  /// `payloadSignature` avec `ed25519PublicKey` avant d'accepter la sync.
+  payloadHash      Bytes?
+  payloadSignature Bytes?
+
+  /// Version de clé HCV Transit ayant produit P2. NULL si DEC-16 s'applique.
+  hcvKeyVersion Int?
+
+  status        SyncStatus @default(PENDING)
+  failureReason String?    @db.VarChar(255)
+  lastSyncedAt  DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, category])
+  @@index([status])
+  @@map("vault_syncs")
+}
+
+/// Miroir serveur des items du vault (Backend Specs §3.3).
+/// La source de vérité reste le SQLite chiffré du device (Frontend Specs §6).
+/// Le serveur ne détient que le blob chiffré + le strict métadonnée nécessaire
+/// au comptage et aux limites de plan — jamais le nom du service en clair.
+model VaultItem {
+  id     String @id @default(uuid()) @db.Uuid
+  userId String @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  category VaultCategory
+
+  /// XChaCha20-Poly1305(Ki, {service, login, password, instructions, notes}).
+  contentEnc Bytes
+  /// Niveau d'urgence : non sensible, sert au tri côté contact en post-mortem
+  /// (E5-US04) sans avoir à déchiffrer l'ensemble du vault.
+  urgency    UrgencyLevel @default(DISCRETION)
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  /// Suppression définitive, pas de corbeille (E2-US04). Renseigné le temps
+  /// d'un cycle de sync, puis la ligne est physiquement supprimée.
+  deletedAt DateTime?
+
+  @@index([userId, category, deletedAt])
+  @@map("vault_items")
+}
+
+// =============================================================================
+// 3 — TRANSMISSION : CONFIGURATION
+// =============================================================================
+
+model TransmissionConfig {
+  id     String @id @default(uuid()) @db.Uuid
+  userId String @unique @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  status TransmissionConfigStatus @default(NOT_CONFIGURED)
+
+  // --- Schéma Shamir N-of-M (Specs Techniques §4) ------------------------
+  /// N — parts nécessaires. Minimum absolu 2, contrainte de design.
+  threshold   Int @default(2)
+  /// M — contacts créés. 2 en plan gratuit, jusqu'à 5 en premium.
+  totalShares Int @default(2)
+
+  // --- Dead man's switch (E3-US05, config BO-05 §5.1) --------------------
+  /// Durée du silence avant déclenchement, en mois : 1 / 3 / 6.
+  silenceDurationMonths Int @default(3)
+  /// Fréquence des check-ins, en semaines : 1 / 2 / 4.
+  checkinFrequencyWeeks Int @default(4)
+
+  // --- Mode pause / Voyage (E4-US04) -------------------------------------
+  pausedAt    DateTime?
+  /// Jamais indéfini — plafonné par `pause_max_months` (défaut 3).
+  pauseEndsAt DateTime?
+
+  activatedAt   DateTime?
+  deactivatedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status, pauseEndsAt])
+  @@map("transmission_configs")
+}
+
+/// Trusted contact. Deux niveaux de données strictement séparés (DEC-12).
+model TrustedContact {
+  id     String @id @default(uuid()) @db.Uuid
+  userId String @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// Position stable dans la liste — sert d'index de part Shamir.
+  position Int
+
+  // --- NIVEAU 1 — Relais peut lire, ne peut pas modifier (DEC-12) --------
+  /// XChaCha20(relais_public_key, { email, phone }).
+  /// Déchiffré par le backend avec relais_private_key (HCV) au seul moment
+  /// d'envoyer une notification.
+  notificationEnc Bytes
+  /// Ed25519.sign(notificationEnc, owner_sk). Toute modification serveur
+  /// invalide la signature et est donc détectable.
+  notificationSig Bytes
+
+  // --- NIVEAU 2 — Relais ne peut ni lire ni modifier (DEC-12) -----------
+  /// XChaCha20(K2_owner, { nom, message_personnel, notes }).
+  /// Déchiffré uniquement sur le device de l'owner.
+  secretEnc Bytes
+
+  /// Rôles cumulables. Déterminent quelles catégories Ki sont partagées
+  /// avec ce contact (E3-US02).
+  roles ContactRole[]
+
+  /// XChaCha20(K_i, "RELAIS_VERIFY_OK_V1") — ~40 bytes.
+  /// Permet à l'owner de vérifier annuellement qu'il se souvient encore de
+  /// ses propres réponses, sans déchiffrer le vault (Specs Techniques §7.2).
+  verifyToken         Bytes?
+  verifyLastCheckedAt DateTime?
+
+  status         ContactStatus @default(ACTIVE)
+  /// 5 échecs aux questions → blocage 24h (config `contact_lockout_hours`).
+  failedAttempts Int           @default(0)
+  blockedUntil   DateTime?
+
+  notifiedAt DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  questions      TrustedContactQuestion[]
+  shares         TrustedContactShare[]
+  relayTokens    RelayToken[]
+  escrowShares   EscrowShare[]
+  dataRecipients DataRecipient[]
+
+  @@unique([userId, position])
+  @@index([userId, status])
+  @@map("trusted_contacts")
+}
+
+/// Rattachement d'une question de la bibliothèque à un contact.
+///
+/// Les questions sont des références à `SecretQuestion` : leur texte est
+/// public et administré (BO-04 — l'utilisateur choisit dans la bibliothèque,
+/// il n'invente pas ses questions). Elles doivent rester lisibles par le
+/// backend pour être présentées au contact en post-mortem (T6), ce que le
+/// niveau 2 `secretEnc` interdirait.
+/// LES RÉPONSES NE SONT JAMAIS STOCKÉES — elles ne servent qu'à dériver K_i.
+model TrustedContactQuestion {
+  id        String         @id @default(uuid()) @db.Uuid
+  contactId String         @db.Uuid
+  contact   TrustedContact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  questionId String         @db.Uuid
+  question   SecretQuestion @relation(fields: [questionId], references: [id])
+
+  /// 1..3 — l'ordre de concaténation des réponses pour dériver K_i.
+  /// Toute modification impose de recréer verifyToken et toutes les parts.
+  position Int
+
+  createdAt DateTime @default(now())
+
+  @@unique([contactId, position])
+  @@index([questionId])
+  @@map("trusted_contact_questions")
+}
+
+/// Part Shamir chiffrée : S_j_i_enc = XChaCha20(K_i, S_j_i).
+/// Une ligne par (contact, catégorie) pour laquelle le contact a le rôle.
+/// K_i = Argon2id(réponses concaténées) — éphémère, détruite immédiatement.
+model TrustedContactShare {
+  id        String         @id @default(uuid()) @db.Uuid
+  contactId String         @db.Uuid
+  contact   TrustedContact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  category   VaultCategory
+  /// Index de la part dans le découpage Shamir (aligné sur contact.position).
+  shareIndex Int
+  /// ~32 bytes + nonce + tag.
+  shareEnc   Bytes
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([contactId, category])
+  @@index([category])
+  @@map("trusted_contact_shares")
+}
+
+/// Qui reçoit quoi, par catégorie (E3-US04). Le destinataire final peut être
+/// un trusted contact, ou une personne extérieure connue par email seul.
+model DataRecipient {
+  id     String @id @default(uuid()) @db.Uuid
+  userId String @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  category VaultCategory
+
+  /// Cas 1 — le destinataire est un trusted contact.
+  contactId String?         @db.Uuid
+  contact   TrustedContact? @relation(fields: [contactId], references: [id], onDelete: SetNull)
+
+  /// Cas 2 — personne extérieure. Même protection que notificationEnc :
+  /// XChaCha20(relais_public_key, { email }) + signature owner.
+  externalEmailEnc Bytes?
+  externalEmailSig Bytes?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, category])
+  @@map("data_recipients")
+}
+
+// =============================================================================
+// 4 — CHECK-IN & DEAD MAN'S SWITCH
+// =============================================================================
+
+model CheckinState {
+  userId String @id @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  lastCheckinAt DateTime?
+  /// Recalculé à chaque check-in validé. Colonne pilotant le job quotidien
+  /// `deadman:checkin` (Backend Specs §4.2).
+  nextDueAt     DateTime
+
+  /// 0..3 — remis à zéro dès que l'utilisateur répond.
+  remindersCount Int       @default(0)
+  lastReminderAt DateTime?
+
+  currentStreak Int @default(0)
+  longestStreak Int @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([nextDueAt])
+  @@map("checkin_states")
+}
+
+model CheckinRecord {
+  id     String @id @default(uuid()) @db.Uuid
+  userId String @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  method      CheckinMethod
+  gameId      String?       @db.Uuid
+  game        CheckinGame?  @relation(fields: [gameId], references: [id], onDelete: SetNull)
+  /// Nombre d'essais avant la bonne réponse. Le mini-jeu est illimité en
+  /// tentatives par design (E4-US01).
+  attempts    Int           @default(1)
+  completedAt DateTime      @default(now())
+
+  @@index([userId, completedAt])
+  @@map("checkin_records")
+}
+
+/// Bibliothèque d'énigmes / mini-jeux administrée. Ne porte jamais sur le
+/// contenu du vault, pour des raisons de sécurité (E4-US01).
+model CheckinGame {
+  id   String   @id @default(uuid()) @db.Uuid
+  type GameType
+
+  promptFr   String @db.Text
+  promptEn   String @db.Text
+  /// Argon2id de la réponse normalisée (minuscules, accents et espaces
+  /// superflus retirés). Réponse en clair jamais stockée.
+  answerHash String @db.VarChar(255)
+  /// Payload libre selon le type de jeu (grille, options, indices…).
+  payload    Json?
+
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  records CheckinRecord[]
+
+  @@index([active, type])
+  @@map("checkin_games")
+}
+
+/// Relances progressives J+7 / J+14 / J+21 (E4-US02).
+model Reminder {
+  id     String @id @default(uuid()) @db.Uuid
+  userId String @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// 1, 2 ou 3.
+  level    Int
+  sentAt   DateTime @default(now())
+  /// Notification push et/ou email selon le niveau.
+  viaPush  Boolean  @default(false)
+  viaEmail Boolean  @default(true)
+
+  @@index([userId, sentAt])
+  @@map("reminders")
+}
+
+// =============================================================================
+// 5 — CARNET DE VIE & WRAPPED
+// =============================================================================
+
+/// Question du mois, administrée. Texte public, non sensible.
+model JournalQuestion {
+  id        String  @id @default(uuid()) @db.Uuid
+  textFr    String  @db.Text
+  textEn    String  @db.Text
+  /// Mois de rotation (1-12), ou NULL pour une question hors calendrier.
+  monthSlot Int?
+  active    Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  entries JournalEntry[]
+
+  @@index([active, monthSlot])
+  @@map("journal_questions")
+}
+
+model JournalEntry {
+  id     String @id @default(uuid()) @db.Uuid
+  userId String @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  questionId String?          @db.Uuid
+  question   JournalQuestion? @relation(fields: [questionId], references: [id], onDelete: SetNull)
+
+  /// Format YYYY-MM — une entrée par mois et par question.
+  month String @db.Char(7)
+  /// Mode de saisie côté app (texte libre, réponse guidée, …).
+  mode  String @db.VarChar(32)
+
+  /// XChaCha20-Poly1305(K2, contenu). Transmis au Gardien du souvenir.
+  contentEnc      Bytes
+  /// Approximatif, pour le Wrapped. Aucune information exploitable.
+  wordCountApprox Int   @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId, month])
+  @@map("journal_entries")
+}
+
+/// Wrapped annuel. Généré côté client (K2 requis) ; le serveur ne conserve
+/// que les métadonnées permettant de le retrouver et de l'exporter.
+model Wrapped {
+  id     String @id @default(uuid()) @db.Uuid
+  userId String @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  year        Int
+  /// XChaCha20(K2, statistiques agrégées).
+  summaryEnc  Bytes?
+  generatedAt DateTime @default(now())
+
+  @@unique([userId, year])
+  @@map("wrappeds")
+}
+
+// =============================================================================
+// 6 — TRANSMISSION POST-MORTEM
+// =============================================================================
+
+/// Une exécution du dead man's switch. Distincte de TransmissionConfig :
+/// la config est permanente, le run est l'événement.
+model TransmissionRun {
+  id     String @id @default(uuid()) @db.Uuid
+  userId String @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  status TransmissionRunStatus @default(TRIGGERED)
+
+  /// Photographie du schéma au moment du déclenchement — la config peut
+  /// changer ensuite, le run doit rester cohérent.
+  threshold        Int
+  totalShares      Int
+  contactsNotified Int @default(0)
+
+  triggeredAt      DateTime  @default(now())
+  /// TTL escrow, défaut 72h (config `escrow_ttl_hours`).
+  escrowExpiresAt  DateTime
+  /// Nombre d'extensions admin accordées — plafonné à 2 (BO-03).
+  escrowExtensions Int       @default(0)
+  /// L'accès des contacts expire 30 jours après déverrouillage (E5-US04).
+  unlockedAt       DateTime?
+  accessExpiresAt  DateTime?
+  completedAt      DateTime?
+  cancelledAt      DateTime?
+  cancelReason     String?   @db.VarChar(255)
+
+  relayTokens    RelayToken[]
+  escrowShares   EscrowShare[]
+  categoryStates TransmissionCategoryState[]
+  taskProgress   RelayTaskProgress[]
+
+  @@index([status, escrowExpiresAt])
+  @@index([userId, triggeredAt])
+  @@map("transmission_runs")
+}
+
+/// Avancement par catégorie : chaque Kj est reconstituée indépendamment
+/// (Specs Techniques §4.7-4.8), donc le nettoyage l'est aussi.
+model TransmissionCategoryState {
+  id    String          @id @default(uuid()) @db.Uuid
+  runId String          @db.Uuid
+  run   TransmissionRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  category VaultCategory
+
+  sharesCollected Int       @default(0)
+  unlockedAt      DateTime?
+  /// Purge effective : P2 supprimé de Storj, parts et escrow supprimés.
+  purgedAt        DateTime?
+
+  @@unique([runId, category])
+  @@map("transmission_category_states")
+}
+
+/// Lien à usage unique envoyé par email au contact (Backend Specs §3.7).
+/// Aucun compte n'est requis côté trusted contact.
+model RelayToken {
+  id    String          @id @default(uuid()) @db.Uuid
+  runId String          @db.Uuid
+  run   TransmissionRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  contactId String         @db.Uuid
+  contact   TrustedContact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  /// SHA-256 du token. Le token en clair n'existe que dans l'email.
+  tokenHash String @unique @db.Char(64)
+
+  /// Max 5 tentatives de réponses par token (Backend Specs §3.7).
+  /// Relais ne vérifie pas les réponses : il ne compte que les échecs de
+  /// déchiffrement rapportés par le device du contact (DEC-13).
+  attempts    Int       @default(0)
+  verifiedAt  DateTime?
+  /// Renseigné quand le contact clique « J'ai terminé » (E5-US05).
+  confirmedAt DateTime?
+
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@unique([runId, contactId])
+  @@index([expiresAt])
+  @@map("relay_tokens")
+}
+
+/// Escrow temporaire (TTL 72h). Contient S_j_i re-chiffré avec une clé de
+/// session éphémère, le temps que N parts soient réunies pour la catégorie j.
+/// Vidé immédiatement après reconstitution.
+model EscrowShare {
+  id    String          @id @default(uuid()) @db.Uuid
+  runId String          @db.Uuid
+  run   TransmissionRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  contactId String         @db.Uuid
+  contact   TrustedContact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  category     VaultCategory
+  shareIndex   Int
+  /// XChaCha20(clé de session, S_j_i).
+  shareTmpEnc  Bytes
+  /// Identifiant de la clé de session, négociée pour ce run.
+  sessionKeyId String        @db.VarChar(64)
+
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@unique([runId, contactId, category])
+  @@index([expiresAt])
+  @@index([runId, category])
+  @@map("escrow_shares")
+}
+
+/// Progression de la checklist côté contact (E5-US04). `itemRef` est l'ID
+/// opaque de l'item du vault : le serveur ne sait pas à quoi il correspond.
+model RelayTaskProgress {
+  id    String          @id @default(uuid()) @db.Uuid
+  runId String          @db.Uuid
+  run   TransmissionRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  itemRef String   @db.VarChar(64)
+  doneAt  DateTime @default(now())
+
+  @@unique([runId, itemRef])
+  @@map("relay_task_progress")
+}
+
+/// Preuve légale conservée après la purge complète (E5-US05).
+/// Ne contient aucune donnée personnelle ni aucun contenu.
+model TransmissionLog {
+  id      String @id @default(uuid()) @db.Uuid
+  runId   String @db.Uuid
+  /// Hash du user_id — l'utilisateur peut avoir été supprimé depuis.
+  userRef String @db.Char(64)
+
+  category   VaultCategory?
+  event      String         @db.VarChar(64)
+  occurredAt DateTime       @default(now())
+  metadata   Json?
+
+  @@index([runId, occurredAt])
+  @@map("transmission_logs")
+}
+
+// =============================================================================
+// 7 — BIBLIOTHÈQUE DE QUESTIONS SECRÈTES (BO-04)
+// =============================================================================
+
+model SecretQuestion {
+  id       String           @id @default(uuid()) @db.Uuid
+  textFr   String           @db.Text
+  textEn   String           @db.Text
+  category QuestionCategory
+
+  /// 1-10. Seules les questions >= `question_min_score` (défaut 6) sont
+  /// proposées aux utilisateurs.
+  reliabilityScore Int            @default(6)
+  status           QuestionStatus @default(ACTIVE)
+  /// Notes internes sur les risques identifiés — jamais exposées à l'app.
+  riskNotes        String?        @db.Text
+
+  /// Dénormalisé pour le back office. Recalculé par un job.
+  usageCount Int @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  contactQuestions TrustedContactQuestion[]
+
+  @@index([status, reliabilityScore])
+  @@index([category])
+  @@map("secret_questions")
+}
+
+// =============================================================================
+// 8 — BACK OFFICE
+// =============================================================================
+
+model AdminUser {
+  id    String @id @default(uuid()) @db.Uuid
+  email String @unique @db.VarChar(255)
+  name  String @db.VarChar(160)
+
+  passwordHash  String  @db.VarChar(255)
+  /// TOTP obligatoire pour tout admin (Backend Specs §3.8).
+  totpSecretEnc Bytes
+  totpEnabled   Boolean @default(false)
+
+  role     AdminRole
+  disabled Boolean   @default(false)
+
+  lastLoginAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  sessions      AdminSession[]
+  auditLogs     AuditLog[]
+  configChanges AppConfig[]
+  ticketsOwned  SupportTicket[]
+
+  @@index([role, disabled])
+  @@map("admin_users")
+}
+
+model AdminSession {
+  id      String    @id @default(uuid()) @db.Uuid
+  adminId String    @db.Uuid
+  admin   AdminUser @relation(fields: [adminId], references: [id], onDelete: Cascade)
+
+  refreshTokenHash String    @unique @db.Char(64)
+  ipHash           String?   @db.Char(64)
+  expiresAt        DateTime
+  revokedAt        DateTime?
+  createdAt        DateTime  @default(now())
+
+  @@index([adminId, revokedAt])
+  @@map("admin_sessions")
+}
+
+/// Journal immuable. Aucun UPDATE ni DELETE applicatif : à verrouiller par
+/// une politique PostgreSQL (REVOKE UPDATE, DELETE) sur le rôle applicatif.
+model AuditLog {
+  id String @id @default(uuid()) @db.Uuid
+
+  actorType ActorType
+  /// user_id / admin_id / contact_id selon actorType. NULL pour SYSTEM.
+  actorId   String?    @db.Uuid
+  adminId   String?    @db.Uuid
+  admin     AdminUser? @relation(fields: [adminId], references: [id], onDelete: SetNull)
+
+  action     String  @db.VarChar(80)
+  targetType String? @db.VarChar(40)
+  targetId   String? @db.VarChar(64)
+
+  /// Valeurs avant/après pour les modifications de configuration (BO-06.3).
+  /// Ne doit jamais contenir de blob chiffré ni de donnée personnelle.
+  beforeValue Json?
+  afterValue  Json?
+
+  ipHash    String?  @db.Char(64)
+  createdAt DateTime @default(now())
+
+  @@index([actorType, actorId, createdAt])
+  @@index([action, createdAt])
+  @@index([targetType, targetId])
+  @@map("audit_logs")
+}
+
+/// Paramètres système modifiables sans redéploiement (BO-05).
+/// Ne contient JAMAIS de secret — ceux-ci vivent en variables
+/// d'environnement ou dans HCV Secrets Engine (DEC-18).
+model AppConfig {
+  key   String @id @db.VarChar(64)
+  value Json
+
+  description String? @db.VarChar(255)
+  /// Exige une double confirmation dans le back office.
+  critical    Boolean @default(false)
+
+  updatedById String?    @db.Uuid
+  updatedBy   AdminUser? @relation(fields: [updatedById], references: [id], onDelete: SetNull)
+  updatedAt   DateTime   @updatedAt
+
+  @@map("app_config")
+}
+
+model SupportTicket {
+  id String @id @default(uuid()) @db.Uuid
+
+  userId       String? @db.Uuid
+  user         User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+  /// Email de contact quand l'auteur n'a pas de compte.
+  contactEmail String? @db.VarChar(255)
+
+  subject  String @db.VarChar(200)
+  body     String @db.Text
+  /// open / pending / resolved / closed
+  status   String @db.VarChar(24)
+  priority String @db.VarChar(16)
+
+  assignedToId String?    @db.Uuid
+  assignedTo   AdminUser? @relation(fields: [assignedToId], references: [id], onDelete: SetNull)
+
+  resolvedAt DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  @@index([status, priority, createdAt])
+  @@map("support_tickets")
+}
+
+// =============================================================================
+// 9 — FACTURATION (BO-07)
+// =============================================================================
+
+model Subscription {
+  id     String @id @default(uuid()) @db.Uuid
+  userId String @unique @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  plan   Plan               @default(FREE)
+  status SubscriptionStatus @default(ACTIVE)
+
+  startedAt   DateTime  @default(now())
+  /// NULL pour le plan gratuit.
+  expiresAt   DateTime?
+  /// expiresAt + `grace_period_days` (défaut 7).
+  graceEndsAt DateTime?
+  renewedAt   DateTime?
+  cancelledAt DateTime?
+
+  provider    String? @db.VarChar(40)
+  providerRef String? @db.VarChar(120)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  payments Payment[]
+
+  @@index([status, expiresAt])
+  @@map("subscriptions")
+}
+
+model Payment {
+  id             String       @id @default(uuid()) @db.Uuid
+  subscriptionId String       @db.Uuid
+  subscription   Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+
+  /// Montant en unité mineure de la devise. XAF n'a pas de décimales :
+  /// 10 000 FCFA = 10000.
+  amount   Int
+  currency String        @default("XAF") @db.Char(3)
+  status   PaymentStatus @default(PENDING)
+
+  provider         String? @db.VarChar(40)
+  providerRef      String? @db.VarChar(120)
+  /// Geste commercial / extension admin — pas de paiement réel.
+  grantedByAdminId String? @db.Uuid
+  grantReason      String? @db.VarChar(255)
+
+  paidAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([subscriptionId, createdAt])
+  @@index([status, paidAt])
+  @@map("payments")
+}
+
+// =============================================================================
+// 10 — OBSERVABILITÉ
+// =============================================================================
+
+/// Journal d'envoi email, consulté par le support (BO-02, cas 2).
+/// Ne contient jamais le corps de l'email.
+model EmailLog {
+  id String @id @default(uuid()) @db.Uuid
+
+  userId    String? @db.Uuid
+  user      User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+  /// Destinataire trusted contact — l'adresse n'est pas stockée en clair,
+  /// seul l'identifiant du contact l'est.
+  contactId String? @db.Uuid
+
+  template String      @db.VarChar(64)
+  locale   Language
+  status   EmailStatus @default(QUEUED)
+
+  providerMessageId String? @db.VarChar(120)
+  error             String? @db.VarChar(255)
+  attempts          Int     @default(0)
+
+  sentAt      DateTime?
+  deliveredAt DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@index([userId, createdAt])
+  @@index([status, createdAt])
+  @@index([template, createdAt])
+  @@map("email_logs")
+}
+
+/// Alertes actives du dashboard back office (BO-01). Persistent jusqu'à
+/// résolution manuelle ou automatique.
+model SystemAlert {
+  id       String @id @default(uuid()) @db.Uuid
+  type     String @db.VarChar(64)
+  /// critical / high / medium / low
+  severity String @db.VarChar(16)
+
+  message  String @db.VarChar(500)
+  metadata Json?
+
+  resolvedAt        DateTime?
+  resolvedByAdminId String?   @db.Uuid
+  createdAt         DateTime  @default(now())
+
+  @@index([resolvedAt, severity])
+  @@index([type, createdAt])
+  @@map("system_alerts")
+}
