@@ -1,14 +1,15 @@
 // =============================================================================
-// RELAIS — miroir Prisma du schéma PostgreSQL v1.1
+// RELAIS — miroir Prisma du schéma PostgreSQL v1.2
 //
 // NE PAS ÉDITER À LA MAIN. Ce fichier est produit par `prisma db pull` depuis
 // une base où les migrations SQL ont été appliquées. La SOURCE DE VÉRITÉ est
-// prisma/migrations/ — les CHECK constraints, index partiels et le rôle
-// audit_writer ne sont pas exprimables ici.
+// prisma/migrations/ — les CHECK constraints, index partiels, FK différées et
+// le rôle audit_writer ne sont pas exprimables ici.
 //
 // Pour régénérer :
 //   psql "$DATABASE_URL" -f prisma/migrations/20260410000000_init/migration.sql
 //   psql "$DATABASE_URL" -f prisma/migrations/20260410000001_audit_writer_role/migration.sql
+//   psql "$DATABASE_URL" -f prisma/migrations/20260415000000_v1_2_dec20_dec27/migration.sql
 //   npx prisma db pull
 // =============================================================================
 
@@ -97,6 +98,7 @@ model audit_logs {
 }
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model has constraints using non-default deferring rules and requires additional setup for migrations. Visit https://pris.ly/d/constraint-deferring for more info.
 model checkin_log {
   id                   String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   user_id              String               @db.Uuid
@@ -114,6 +116,7 @@ model checkin_log {
   checkin_questions    checkin_questions?   @relation(fields: [question_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   transmission_configs transmission_configs @relation(fields: [transmission_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
   users                users                @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  journal_entries      journal_entries?     @relation(fields: [journal_entry_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_cl_journal")
 
   @@unique([user_id, checkin_month], map: "idx_cl_user_month")
   @@index([checkin_month], map: "idx_cl_month")
@@ -122,23 +125,26 @@ model checkin_log {
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
 model checkin_questions {
-  id                String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  text_fr           String
-  text_en           String
-  category          String
-  usage_type        String            @default("both")
-  reliability_score Int               @default(7)
-  failure_rate      Decimal           @default(0) @db.Decimal(5, 2)
-  block_rate        Decimal           @default(0) @db.Decimal(5, 2)
-  avg_attempts      Decimal           @default(1) @db.Decimal(4, 2)
-  cycle_month       Int?
-  mode_target       String?           @default("all")
-  status            String            @default("active")
-  usage_count       Int               @default(0)
-  created_at        DateTime          @default(now()) @db.Timestamptz(6)
-  updated_at        DateTime          @default(now()) @db.Timestamptz(6)
-  checkin_log       checkin_log[]
-  journal_entries   journal_entries[]
+  id                                                                 String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  text_fr                                                            String
+  text_en                                                            String
+  category                                                           String
+  usage_type                                                         String             @default("both")
+  reliability_score                                                  Int                @default(7)
+  failure_rate                                                       Decimal            @default(0) @db.Decimal(5, 2)
+  block_rate                                                         Decimal            @default(0) @db.Decimal(5, 2)
+  avg_attempts                                                       Decimal            @default(1) @db.Decimal(4, 2)
+  cycle_month                                                        Int?
+  mode_target                                                        String?            @default("all")
+  status                                                             String             @default("active")
+  usage_count                                                        Int                @default(0)
+  created_at                                                         DateTime           @default(now()) @db.Timestamptz(6)
+  updated_at                                                         DateTime           @default(now()) @db.Timestamptz(6)
+  checkin_log                                                        checkin_log[]
+  journal_entries                                                    journal_entries[]
+  trusted_contacts_trusted_contacts_question_1_idTocheckin_questions trusted_contacts[] @relation("trusted_contacts_question_1_idTocheckin_questions")
+  trusted_contacts_trusted_contacts_question_2_idTocheckin_questions trusted_contacts[] @relation("trusted_contacts_question_2_idTocheckin_questions")
+  trusted_contacts_trusted_contacts_question_3_idTocheckin_questions trusted_contacts[] @relation("trusted_contacts_question_3_idTocheckin_questions")
 
   @@index([category], map: "idx_cq_category")
   @@index([status], map: "idx_cq_status")
@@ -159,6 +165,24 @@ model checkin_relances {
 
   @@index([transmission_id], map: "idx_cr_transmission")
   @@index([user_id], map: "idx_cr_user")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model email_log {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id        String?  @db.Uuid
+  recipient_hash String
+  email_type     String
+  provider_id    String?
+  status         String   @default("sent")
+  error_message  String?
+  sent_at        DateTime @default(now()) @db.Timestamptz(6)
+  updated_at     DateTime @default(now()) @db.Timestamptz(6)
+  users          users?   @relation(fields: [user_id], references: [id], onUpdate: NoAction)
+
+  @@index([sent_at], map: "idx_el_sent_at")
+  @@index([email_type, status], map: "idx_el_type")
+  @@index([user_id], map: "idx_el_user")
 }
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
@@ -207,12 +231,31 @@ model journal_entries {
   word_count_approx Int?
   created_at        DateTime           @default(now()) @db.Timestamptz(6)
   updated_at        DateTime           @default(now()) @db.Timestamptz(6)
+  checkin_log       checkin_log[]
   checkin_questions checkin_questions? @relation(fields: [question_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   users             users              @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@unique([user_id, entry_month], map: "idx_je_user_month")
   @@index([entry_month], map: "idx_je_month")
   @@index([user_id], map: "idx_je_user")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model payment_events {
+  id              String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id         String        @db.Uuid
+  subscription_id String        @db.Uuid
+  event_type      String
+  amount_fcfa     Int?
+  currency        String        @default("XAF")
+  provider_ref    String?
+  notes           String?
+  created_at      DateTime      @default(now()) @db.Timestamptz(6)
+  subscriptions   subscriptions @relation(fields: [subscription_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users           users         @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([event_type, created_at], map: "idx_pe_type")
+  @@index([user_id], map: "idx_pe_user")
 }
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
@@ -259,25 +302,26 @@ model sessions {
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
 model subscriptions {
-  id               String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  user_id          String       @unique @db.Uuid
-  plan             String       @default("free")
-  status           String       @default("active")
-  started_at       DateTime     @default(now()) @db.Timestamptz(6)
-  expires_at       DateTime?    @db.Timestamptz(6)
-  grace_until      DateTime?    @db.Timestamptz(6)
-  cancelled_at     DateTime?    @db.Timestamptz(6)
+  id               String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id          String           @unique @db.Uuid
+  plan             String           @default("free")
+  status           String           @default("active")
+  started_at       DateTime         @default(now()) @db.Timestamptz(6)
+  expires_at       DateTime?        @db.Timestamptz(6)
+  grace_until      DateTime?        @db.Timestamptz(6)
+  cancelled_at     DateTime?        @db.Timestamptz(6)
   price_fcfa       Int?
-  currency         String       @default("XAF")
-  auto_renew       Boolean      @default(true)
-  extended_count   Int          @default(0)
-  last_extended_by String?      @db.Uuid
-  last_extended_at DateTime?    @db.Timestamptz(6)
+  currency         String           @default("XAF")
+  auto_renew       Boolean          @default(true)
+  extended_count   Int              @default(0)
+  last_extended_by String?          @db.Uuid
+  last_extended_at DateTime?        @db.Timestamptz(6)
   extension_reason String?
-  created_at       DateTime     @default(now()) @db.Timestamptz(6)
-  updated_at       DateTime     @default(now()) @db.Timestamptz(6)
-  admin_users      admin_users? @relation(fields: [last_extended_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  users            users        @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  created_at       DateTime         @default(now()) @db.Timestamptz(6)
+  updated_at       DateTime         @default(now()) @db.Timestamptz(6)
+  payment_events   payment_events[]
+  admin_users      admin_users?     @relation(fields: [last_extended_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users            users            @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 }
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
@@ -308,7 +352,7 @@ model transmission_configs {
   id                      String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   user_id                 String             @unique @db.Uuid
   status                  String             @default("inactive")
-  silence_duration_months Int                @default(1)
+  silence_duration_months Int                @default(3)
   checkin_frequency_weeks Int                @default(4)
   schema_n                Int                @default(2)
   schema_m                Int                @default(2)
@@ -387,35 +431,44 @@ model transmissions {
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
 model trusted_contacts {
-  id                     String                  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  transmission_id        String                  @db.Uuid
-  user_id                String                  @db.Uuid
-  contact_order          Int
-  notification_enc       Bytes
-  notification_sig       Bytes
-  notification_hash      String
-  secret_enc             Bytes
-  has_k1_role            Boolean                 @default(false)
-  has_k2_role            Boolean                 @default(false)
-  has_k3_role            Boolean                 @default(false)
-  storj_k1_path          String?
-  storj_k2_path          String?
-  storj_k3_path          String?
-  share_k1_hash          String?
-  share_k2_hash          String?
-  share_k3_hash          String?
-  verify_token           Bytes?
-  verify_last_checked_at DateTime?               @db.Timestamptz(6)
-  contact_status         String                  @default("active")
-  fail_count             Int                     @default(0)
-  blocked_until          DateTime?               @db.Timestamptz(6)
-  created_at             DateTime                @default(now()) @db.Timestamptz(6)
-  updated_at             DateTime                @default(now()) @db.Timestamptz(6)
-  transmission_contacts  transmission_contacts[]
-  transmission_configs   transmission_configs    @relation(fields: [transmission_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
-  users                  users                   @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  id                                                                  String                  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  transmission_id                                                     String                  @db.Uuid
+  user_id                                                             String                  @db.Uuid
+  contact_order                                                       Int
+  notification_enc                                                    Bytes
+  notification_sig                                                    Bytes
+  notification_hash                                                   String
+  secret_enc                                                          Bytes
+  has_k1_role                                                         Boolean                 @default(false)
+  has_k2_role                                                         Boolean                 @default(false)
+  has_k3_role                                                         Boolean                 @default(false)
+  storj_k1_path                                                       String?
+  storj_k2_path                                                       String?
+  storj_k3_path                                                       String?
+  share_k1_hash                                                       String?
+  share_k2_hash                                                       String?
+  share_k3_hash                                                       String?
+  verify_token                                                        Bytes?
+  verify_last_checked_at                                              DateTime?               @db.Timestamptz(6)
+  contact_status                                                      String                  @default("active")
+  fail_count                                                          Int                     @default(0)
+  blocked_until                                                       DateTime?               @db.Timestamptz(6)
+  created_at                                                          DateTime                @default(now()) @db.Timestamptz(6)
+  updated_at                                                          DateTime                @default(now()) @db.Timestamptz(6)
+  question_1_id                                                       String                  @db.Uuid
+  question_2_id                                                       String                  @db.Uuid
+  question_3_id                                                       String                  @db.Uuid
+  transmission_contacts                                               transmission_contacts[]
+  checkin_questions_trusted_contacts_question_1_idTocheckin_questions checkin_questions       @relation("trusted_contacts_question_1_idTocheckin_questions", fields: [question_1_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  checkin_questions_trusted_contacts_question_2_idTocheckin_questions checkin_questions       @relation("trusted_contacts_question_2_idTocheckin_questions", fields: [question_2_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  checkin_questions_trusted_contacts_question_3_idTocheckin_questions checkin_questions       @relation("trusted_contacts_question_3_idTocheckin_questions", fields: [question_3_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  transmission_configs                                                transmission_configs    @relation(fields: [transmission_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  users                                                               users                   @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@unique([transmission_id, contact_order], map: "uq_contact_order")
+  @@index([question_1_id], map: "idx_tcon_q1")
+  @@index([question_2_id], map: "idx_tcon_q2")
+  @@index([question_3_id], map: "idx_tcon_q3")
   @@index([transmission_id], map: "idx_tcon_transmission")
   @@index([user_id], map: "idx_tcon_user")
 }
@@ -447,8 +500,10 @@ model users {
   annual_wrappeds      annual_wrappeds[]
   checkin_log          checkin_log[]
   checkin_relances     checkin_relances[]
+  email_log            email_log[]
   email_otp            email_otp[]
   journal_entries      journal_entries[]
+  payment_events       payment_events[]
   push_tokens          push_tokens[]
   restore_challenges   restore_challenges[]
   sessions             sessions[]
