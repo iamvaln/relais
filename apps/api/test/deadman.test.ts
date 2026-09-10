@@ -3,9 +3,10 @@
 // d'attente ici ; le câblage BullMQ est testé à part.
 
 import { afterAll, beforeEach, describe, expect, it } from 'vitest'
-import { sweep } from '../src/jobs/deadman.js'
+import { runDeadman, sweep } from '../src/jobs/deadman.js'
 import { prisma } from '../src/lib/prisma.js'
 import { closeAll, lastEmailTo, mailbox, resetState } from './helpers.js'
+
 import { activateTransmission, makeOwner } from './transmission-helpers.js'
 
 const DAY = 24 * 3600 * 1000
@@ -118,5 +119,17 @@ describe('sweep — déclenchement après le silence configuré', () => {
     await overdueBy(o.userId, 31, { relance_count: 2, last_relance_at: new Date(NOW.getTime() - 17 * DAY) })
     expect(await sweep(NOW)).toEqual({ relances: 1, triggered: 0 })
     expect((await config(o.userId)).status).toBe('active')
+  })
+})
+
+describe('runDeadman — le job quotidien enchaîne balayage et ouverture', () => {
+  it('silence écoulé → triggered → transmission ouverte et contacts prévenus dans le même passage', async () => {
+    const o = await makeOwner()
+    await activateTransmission(o, { silence: 1 })
+    await overdueBy(o.userId, 31, { relance_count: 3, last_relance_at: new Date(NOW.getTime() - 10 * DAY) })
+    mailbox.clear()
+    expect(await runDeadman(NOW)).toEqual({ relances: 0, triggered: 1, transmissions: 1, contacts_notified: 2 })
+    expect(await prisma().transmissions.count({ where: { user_id: o.userId } })).toBe(1)
+    expect(lastEmailTo('contact1@example.cm')?.text).toContain('/relay/')
   })
 })

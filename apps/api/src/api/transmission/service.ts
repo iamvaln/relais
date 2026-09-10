@@ -1,6 +1,7 @@
 // Transmission — configuration du dead man's switch et des trusted contacts
 // (Backend Specs §3.4, Specs Techniques §4.3, DEC-12, DEC-20, DEC-23).
 
+import { configInt } from '../../lib/app-config.js'
 import { decodeBase64, ed25519Verify, sha256Hex } from '../../lib/crypto.js'
 import { AppError } from '../../lib/errors.js'
 import { prisma } from '../../lib/prisma.js'
@@ -124,12 +125,6 @@ function assertEditable(status: string): void {
 
 const DEFAULT_QUESTION_MIN_SCORE = 6
 
-async function configInt(key: string, fallback: number): Promise<number> {
-  const row = await prisma().app_config.findUnique({ where: { key }, select: { value: true } })
-  const n = row ? Number.parseInt(row.value, 10) : Number.NaN
-  return Number.isFinite(n) ? n : fallback
-}
-
 /**
  * Note-01 : les trois questions doivent exister, être distinctes, actives, de
  * type secret_question ou both, et scorer ≥ vault.question_min_score. La
@@ -205,7 +200,7 @@ function verifyNotificationSig(ed25519Pk: Buffer, notificationEnc: Uint8Array, s
   }
 }
 
-interface Notification {
+export interface Notification {
   email: string
   phone: string | null
 }
@@ -217,7 +212,7 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
  * email — sinon, le moment venu, personne ne pourra prévenir ce contact. Le
  * clair n'est jamais conservé ni loggé ; il ne sert qu'à envoyer l'email.
  */
-async function openNotification(notificationEnc: Uint8Array): Promise<Notification> {
+export async function openNotification(notificationEnc: Uint8Array): Promise<Notification> {
   await sodium.ready
   const { publicKey, privateKey } = await relaisKeypair()
   const reject = (why: string): never => {

@@ -131,3 +131,33 @@ Tranchés avec le fondateur, consignés dans `docs/backend.md` §3 :
 À répercuter dans la spec v1.4. Reste à écrire : `deadman:trigger` (module
 relay) et un texte d'énigmes plus fourni — la bibliothèque compte 13 défis,
 suffisant pour tester, pas pour un an d'usage.
+
+---
+
+## 8. 🟡 Relay : une part déposée n'est pas vérifiable par le serveur
+
+Les réponses restent sur le device (E5-US02) : l'app dépose les parts Si
+déchiffrées. Le serveur n'a aucun moyen de savoir qu'une part est
+authentique — une part fausse (bug, contact malveillant) ne se voit qu'au
+déchiffrement final, quand l'escrow est déjà consommé.
+
+Proposition v1.4 : à l'activation, l'app envoie aussi `SHA256(Si)` par rôle
+(colonne `share_kN_plain_hash` ou table dédiée), signé comme le reste
+(DEC-29). `POST /relay/:token/verify` compare avant de mettre en escrow ;
+une part fausse compte comme un échec. Coût : 32 bytes par part, aucune
+information sur Si.
+
+---
+
+## 9. 🟢 Relay : deux choix tranchés, deux manques de la spec
+
+| Point | Décision |
+|---|---|
+| Tentatives | L'app déclare ses échecs (`{ failed: true }`) ; le serveur tient le compteur (5 → 24 h). |
+| Fin de transmission | Quand chaque contact ayant répondu a confirmé, ou 30 jours après l'escrow (E5-US04). |
+| Email de déclenchement | Sans message personnel (dans `secret_enc`, illisible côté serveur) — E5-US01 à amender. |
+| Notification à l'autre contact (blocage, E5-US02 ; confirmation, E5-US03) | Aucun type `email_log` ne la couvre : non envoyée. Proposer `contact_progress` en v1.4. |
+
+Le redémarrage après escrow expiré (E5-US03) est implémenté sans plafond :
+à chaque expiration, nouveaux liens et nouveaux emails. Un maximum (3 ?)
+puis une alerte admin (BO-03) serait raisonnable.

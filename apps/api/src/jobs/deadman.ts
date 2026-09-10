@@ -13,6 +13,7 @@
 import { env } from '../config/env.js'
 import { prisma } from '../lib/prisma.js'
 import { emailService, type EmailType } from '../services/email/index.js'
+import { startTransmission } from '../api/relay/service.js'
 
 const DAY_MS = 24 * 3600 * 1000
 const MONTH_DAYS = 30
@@ -89,4 +90,32 @@ async function sendRelance(
     }),
     prisma().transmission_configs.update({ where: { id: cfg.id }, data: { relance_count: number, last_relance_at: now } }),
   ])
+}
+
+// --- Déclenchement : ouvrir les transmissions des configs 'triggered' ------------
+
+export interface TriggerResult {
+  transmissions: number
+  contacts_notified: number
+}
+
+/** Une config 'triggered' sans ligne `transmissions` est une transmission à ouvrir. Idempotent. */
+export async function trigger(now = new Date()): Promise<TriggerResult> {
+  const pending = await prisma().transmission_configs.findMany({
+    where: { status: 'triggered', transmissions: { none: {} } },
+    select: { id: true },
+  })
+  const result: TriggerResult = { transmissions: 0, contacts_notified: 0 }
+  for (const cfg of pending) {
+    result.contacts_notified += await startTransmission(cfg.id, now)
+    result.transmissions++
+  }
+  return result
+}
+
+/** Le job quotidien : relances et déclenchements, puis ouverture des transmissions. */
+export async function runDeadman(now = new Date()): Promise<SweepResult & TriggerResult> {
+  const swept = await sweep(now)
+  const opened = await trigger(now)
+  return { ...swept, ...opened }
 }

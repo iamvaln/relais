@@ -27,8 +27,10 @@ apps/api/
     api/vault/               sync, sync-status, restore
     api/transmission/        contacts, schéma, activation, pause, vérification annuelle
     api/checkin/             statut, mini-jeu (games.ts), validation, streak
+    api/relay/               côté contact : lien, réponses/escrow, données, confirmation
+    jobs/relay-cleanup.ts    escrows expirés, fin d'accès à 30 jours
     jobs/deadman.ts          balayage quotidien : relances, déclenchement
-    jobs/queue.ts            BullMQ — job planifié deadman:checkin
+    jobs/queue.ts            BullMQ — jobs planifiés deadman:checkin, relay:cleanup
   test/                      Vitest + Supertest sur PostgreSQL et Redis réels
 scripts/dev-services.sh      PostgreSQL 16 + Redis jetables, migrations + seed
 ```
@@ -77,15 +79,22 @@ Le module **auth** de §3.1 v1.1, le module **vault** de §3.3 v1.1, le module
 | `GET /checkin/game` · `POST /checkin/game/answer` | Défi côté serveur, 10 réponses/h/user (§7.1) — voir §3 |
 | `POST /checkin/complete` | Consomme le jeton du jeu ; ligne du mois, streak, badge ; replanifie l'échéance |
 | `GET /checkin/history` · `GET /checkin/streak` | Log des mois validés ; streak courant, record, badges |
+| `GET /relay/:token` | **Public** (token du lien), 30/min/IP : questions, rôles, `verify_token`, Si_enc, `secret_enc`, état |
+| `POST /relay/:token/verify` | `{ failed: true }` ou `{ shares }` ; 5 tentatives puis blocage 24 h ; parts en escrow — voir §3 |
+| `GET /relay/:token/status` | Répondu / requis / total, catégories déverrouillées |
+| `GET /relay/:token/data` | Une fois N parts réunies : parts de l'escrow + P2 + `secret_enc`, par rôle détenu |
+| `POST /relay/:token/confirm` | 3/min/IP ; termine et purge quand chaque contact ayant répondu a confirmé |
 
-Jobs (§4) : `deadman:checkin` quotidien à 09:00 UTC via BullMQ, worker dans
-le processus API derrière `JOBS_ENABLED=true`. Il envoie les relances et
-marque `triggered` ; voir §3.
+Jobs (§4), BullMQ, worker dans le processus API derrière `JOBS_ENABLED=true` :
+
+| Job | Quand | Fait |
+|---|---|---|
+| `deadman:checkin` | 09:00 UTC | Relances J+7/14/21, passage `triggered`, puis ouverture des transmissions : ligne `transmissions`, un token de relay par contact, emails |
+| `relay:cleanup` | toutes les heures (h+30) | Escrows expirés → `expired` + nouveaux liens ; accès déverrouillé depuis plus de 30 jours → purge |
 
 Non livré : `/user/*`, `PUT /transmission/recipients` (sans objet depuis
-DEC-23), `/journal/*`, `/relay/*`, `/admin/*`, `deadman:trigger` (tokens et
-emails aux contacts — module relay), `storj:cleanup`, l'enregistrement
-Arbitrum (voir §3).
+DEC-23), `/journal/*`, `/admin/*`, `storj:cleanup` (la purge est faite
+directement, voir §3), l'enregistrement Arbitrum (voir §3).
 
 ## 3. Décisions et écarts par rapport aux specs
 
@@ -347,6 +356,60 @@ E4-US03) sans effet. Ici :
 `sweep(now)` reçoit son horloge : les tests le pilotent jour par jour sans
 attendre ni mocker. BullMQ ne fait que l'appeler.
 
+### Relay : les réponses ne quittent pas l'app, les parts si
+
+E5-US02 : « le process est entièrement local — les réponses ne transitent
+pas sur le réseau ». Le serveur ne reçoit donc jamais les réponses ni K_i.
+`GET /relay/:token` donne à l'app tout ce qu'il faut pour travailler seule
+(questions, `verify_token`, ses Si_enc) ; l'app dérive K_i, vérifie ses
+réponses avec `verify_token`, déchiffre ses parts, et dépose **les parts
+Si** (`POST /verify { shares }`), 32 bytes par rôle détenu. Elles vont en
+`escrow_shares`, scellées (secretbox) par une clé éphémère Redis
+(`escrow:key:{transmission}`) qui expire avec l'escrow — c'est l'escrow de
+Techniques §6.7, ni plus ni moins : le serveur détient les parts le temps
+que N contacts répondent, et ne les combine jamais. `GET /data` rend les N
+parts et P2 au contact déverrouillé ; Shamir et le déchiffrement final se
+font sur son device (§6.8).
+
+**Conséquence assumée** : le serveur ne peut pas vérifier qu'une part
+déposée est authentique. Une part fausse ne se détecte qu'à la fin, sur le
+device, quand P2 refuse de s'ouvrir. Consigné dans
+`docs/open-questions.md` avec une proposition (hash de Si à l'activation).
+
+### Relay : « 5 tentatives puis blocage 24 h », tenu par le serveur sur déclaration de l'app
+
+Puisque les réponses ne passent pas par le serveur, il ne voit pas les
+échecs — sauf si l'app les déclare : `POST /verify { failed: true }`. Chaque
+échec déclaré et chaque envoi malformé incrémentent `fail_count` ; au
+cinquième, 429 `RELAY_TOKEN_EXHAUSTED`, contact bloqué (`blocked` +
+`trusted_contacts.blocked_until` = 24 h, `security.contact_lock_hrs`), le
+lien répond 423 puis se rouvre seul, compteur à zéro. Le vrai frein contre
+la force brute reste Argon2id sur le device ; le serveur tient le compteur
+que la spec lui demande. La « notification à l'autre contact » lors d'un
+blocage n'a pas de type `email_log` : non envoyée, point ouvert.
+
+### Relay : fin de transmission et purge
+
+E5-US05 lu avec E5-US04 : un K1 et un K3 ont chacun leurs données. La
+transmission se termine quand **chaque contact ayant répondu** a confirmé,
+ou 30 jours après l'escrow pour un accès déverrouillé (job `relay:cleanup`).
+Alors : P2 (`payloads/{user}/`), Si_enc (`shares/{user}/`), lignes
+`escrow_shares` et clé Redis sont supprimés ; `transmissions` et
+`transmission_configs` passent `completed` ; seul le log reste. Pas de job
+`storj:cleanup` séparé : la purge est faite dans le même geste.
+
+Escrow expiré sans catégorie déverrouillée : transmission `expired`, escrow
+vidé, et le process repart — nouvelle ligne `transmissions`, nouveaux tokens,
+nouveaux emails (E5-US03). Sans plafond : tant que le config reste
+`triggered`, les contacts sont relancés à chaque expiration.
+
+### Relay : l'email de déclenchement ne contient pas le message personnel
+
+E5-US01 veut « le message personnel écrit par l'user » dans l'email. Il est
+dans `secret_enc`, chiffré par K2 : le serveur ne peut pas le lire. L'email
+(`transmission_contact`) porte le nom de l'owner et le lien ; le message
+personnel s'affiche dans l'app, une fois K2 reconstituée.
+
 ### Codes de récupération 2FA : pas de table
 
 E6-US02 : « des codes de récupération d'urgence sont générés et affichés une
@@ -367,10 +430,13 @@ manque, perdre son authenticateur signifie passer par le support.
 | Parts Shamir, `secret_enc`, `verify_token` | blobs opaques ; le serveur n'en connaît que la taille et le hash |
 | Réponses aux questions secrètes, K_i | jamais transmis — la vérification annuelle est une attestation signée |
 | Réponse au mini-jeu | comparée en mémoire, jamais stockée ; seul le nombre de tentatives est conservé |
+| Réponses des contacts, K_i | jamais transmis (E5-US02) ; l'app dépose les parts Si, pas ce qui les ouvre |
+| Parts Si en escrow | scellées par une clé éphémère Redis ; jamais combinées par le serveur ; supprimées à la fin |
+| Tokens de relay | HMAC en base, le token clair ne vit que dans l'email |
 
 ## 5. Vérifications
 
-113 tests d'intégration, sur PostgreSQL 16 et Redis réels, base reconstruite
+136 tests d'intégration, sur PostgreSQL 16 et Redis réels, base reconstruite
 depuis les migrations et le seed à chaque run. Chaque test repart d'une base
 et d'un stockage vides. Ils couvrent notamment :
 
@@ -423,7 +489,20 @@ et d'un stockage vides. Ils couvrent notamment :
   lus dans `app_config` ; pause ignorée ; trois relances sans silence écoulé
   → rien ; silence écoulé + trois relances → `triggered`, puis plus balayé ;
   silence écoulé mais relances incomplètes → relance d'abord ; BullMQ :
-  un seul job planifié `0 9 * * *`, démarrage idempotent, arrêt propre
+  deux jobs planifiés (`0 9 * * *`, `30 * * * *`), démarrage idempotent,
+  arrêt propre
+- relay (23 tests, test-first) : ouverture au déclenchement (ligne
+  `transmissions`, escrow = `dms.escrow_ttl_hours`, un token HMAC par
+  contact, emails, idempotent ; le job quotidien enchaîne balayage et
+  ouverture) ; lien inconnu / expiré / clos → 404, bloqué → 423, aucune
+  fuite (ni id owner ni email) ; cinq échecs → 429 puis 423, déblocage
+  automatique ; envois malformés comptés ; part acceptée → escrow scellé,
+  clé Redis avec TTL, `answered`, `in_progress`, `RELAY_ALREADY_ANSWERED` ;
+  N parts → catégorie déverrouillée, clé prolongée à 30 jours ; `data`
+  refusé avant déverrouillage ou sans réponse, puis parts + P2 +
+  `secret_enc`, escrow expiré → 409 ; `confirm` : refusé sans réponse,
+  purge totale au dernier confirmé, lien clos, 3/min/IP ; cleanup : rien
+  avant l'échéance, expiré → nouveaux liens, accès à 30 jours puis purge
 
 ```bash
 scripts/dev-services.sh start     # PostgreSQL + Redis jetables
