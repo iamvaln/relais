@@ -1,6 +1,11 @@
 // Check-in — preuve de vie mensuelle (Backend Specs §3.5, E4-US01 à E4-US05).
 
+import { randomInt } from 'node:crypto'
+import { randomToken } from '../../lib/crypto.js'
+import { AppError } from '../../lib/errors.js'
 import { prisma } from '../../lib/prisma.js'
+import { keys, redis } from '../../lib/redis.js'
+import { GAMES, isCorrect, type Lang } from './games.js'
 
 const DAY_MS = 24 * 3600 * 1000
 
@@ -82,3 +87,82 @@ export async function getHistory(userId: string, limit = 24): Promise<CheckinLog
   return rows.map(toLogView)
 }
 
+
+// --- Mini-jeu (E4-US01) ----------------------------------------------------------
+
+const GAME_TTL_S = 24 * 3600
+const TOKEN_TTL_S = 15 * 60
+
+export interface GameView {
+  game_id: string
+  game_type: string
+  prompt: string
+  choices: string[] | null
+  attempts: number
+}
+
+interface PendingGame {
+  id: string
+  attempts: number
+}
+
+interface CheckinToken {
+  userId: string
+  game_type: string
+  attempts: number
+}
+
+/** Le check-in n'a de sens que pour une transmission active (ou en pause). */
+async function requireActiveTransmission(userId: string) {
+  const cfg = await prisma().transmission_configs.findUnique({ where: { user_id: userId } })
+  if (!cfg || (cfg.status !== 'active' && cfg.status !== 'paused')) {
+    throw new AppError('TRANSMISSION_NOT_CONFIGURED', { message: 'Activez la transmission pour faire vos check-ins.' })
+  }
+  return cfg
+}
+
+async function pendingGame(userId: string): Promise<PendingGame | null> {
+  const raw = await redis().get(keys.checkinGame(userId))
+  return raw ? (JSON.parse(raw) as PendingGame) : null
+}
+
+export async function getGame(userId: string, lang: Lang): Promise<GameView> {
+  await requireActiveTransmission(userId)
+  let pending = await pendingGame(userId)
+  if (!pending) {
+    pending = { id: GAMES[randomInt(GAMES.length)]!.id, attempts: 0 }
+    await redis().set(keys.checkinGame(userId), JSON.stringify(pending), 'EX', GAME_TTL_S)
+  }
+  const game = GAMES.find((g) => g.id === pending.id)!
+  return {
+    game_id: game.id,
+    game_type: game.type,
+    prompt: game.prompt[lang],
+    choices: game.choices?.[lang] ?? null,
+    attempts: pending.attempts,
+  }
+}
+
+export interface AnswerResult {
+  correct: boolean
+  attempts: number
+  checkin_token?: string
+}
+
+export async function answerGame(userId: string, lang: Lang, answer: string): Promise<AnswerResult> {
+  await requireActiveTransmission(userId)
+  const pending = await pendingGame(userId)
+  if (!pending) throw new AppError('NOT_FOUND', { message: 'Aucun défi en cours — demandez-en un.' })
+  const game = GAMES.find((g) => g.id === pending.id)!
+  const attempts = pending.attempts + 1
+
+  if (!isCorrect(game, lang, answer)) {
+    await redis().set(keys.checkinGame(userId), JSON.stringify({ ...pending, attempts }), 'EX', GAME_TTL_S)
+    return { correct: false, attempts }
+  }
+
+  const token = randomToken(32)
+  const payload: CheckinToken = { userId, game_type: game.type, attempts }
+  await redis().multi().del(keys.checkinGame(userId)).set(keys.checkinToken(token), JSON.stringify(payload), 'EX', TOKEN_TTL_S).exec()
+  return { correct: true, attempts, checkin_token: token }
+}
