@@ -1,2 +1,67 @@
-# relais
-# relais
+# Relais
+
+> Passe le relais, pas le chaos.
+
+Transmission du patrimoine numérique : coffre chiffré côté client, contacts
+de confiance, et déclenchement automatique par dead man's switch.
+
+## État du projet
+
+Phase de conception. Le schéma PostgreSQL est la première brique
+d'implémentation.
+
+| Livrable | État |
+|---|---|
+| Specs produit, techniques, backend, frontend, back office | ✅ v1 (`docs/specs/`) |
+| Schéma PostgreSQL v1.2 | ✅ Implémenté et testé (`prisma/`) |
+| API backend | ⬜ Non démarré |
+| App mobile | ⬜ Non démarré |
+| Back office | ⬜ Non démarré |
+| Smart contract Arbitrum | ⬜ Reporté |
+
+## Documentation
+
+- [`docs/schema-postgresql.md`](docs/schema-postgresql.md) — notes
+  d'implémentation du schéma : l'écart trouvé dans la spec, les vérifications
+  passées, ce qui reste à faire
+- [`docs/open-questions.md`](docs/open-questions.md) — contradictions relevées
+  entre les specs, à trancher avant d'implémenter
+- [`docs/specs/`](docs/specs/) — les 8 documents de spec convertis en markdown
+  (sources `.docx` dans `specs/`)
+
+## Schéma
+
+La spec `specs/Relais_Schema_PostgreSQL_v1.docx` (v1.2) fait foi. Elle est
+implémentée en SQL — **le DDL est la source de vérité**, parce que les CHECK
+constraints, les index partiels, la FK différée et le rôle `audit_writer` ne
+sont pas exprimables en Prisma. `schema.prisma` en est un miroir généré, à ne pas
+éditer à la main.
+
+```bash
+export DATABASE_URL="postgresql://user:pass@localhost:5432/relais"
+
+# Appliquer (dans cet ordre). Chaque migration est atomique et sort en
+# exit non nul au premier échec — la boucle s'arrête proprement.
+for m in prisma/migrations/*/migration.sql; do psql "$DATABASE_URL" -f "$m" || break; done
+
+# Seeder la bibliothèque de questions (obligatoire : sans elle, aucun
+# trusted contact ne peut être créé — question_*_id est NOT NULL)
+psql "$DATABASE_URL" -f prisma/seeds/001_checkin_questions.sql
+
+# Vérifier
+psql "$DATABASE_URL" -f prisma/tests/smoke.sql        # tout est rollbacké
+psql "$DATABASE_URL" -f prisma/tests/seed_checks.sql  # lecture seule
+
+# Régénérer le client typé
+npx prisma db pull && npx prisma generate
+```
+
+22 tables, 86 index, 66 CHECK constraints, 1 FK différée, 24 lignes
+`app_config` et 55 questions seedées.
+
+## Principe non négociable
+
+PostgreSQL ne contient que des métadonnées et des blobs opaques. Aucune clé,
+aucun mot de passe utilisateur, aucune réponse aux questions secrètes, aucune
+donnée du coffre en clair. Toute contribution qui ajoute une colonne lisible
+contenant de la donnée utilisateur doit être justifiée explicitement.
