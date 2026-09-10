@@ -26,6 +26,9 @@ apps/api/
     api/auth/                schemas, service, routes
     api/vault/               sync, sync-status, restore
     api/transmission/        contacts, schéma, activation, pause, vérification annuelle
+    api/checkin/             statut, mini-jeu (games.ts), validation, streak
+    jobs/deadman.ts          balayage quotidien : relances, déclenchement
+    jobs/queue.ts            BullMQ — job planifié deadman:checkin
   test/                      Vitest + Supertest sur PostgreSQL et Redis réels
 scripts/dev-services.sh      PostgreSQL 16 + Redis jetables, migrations + seed
 ```
@@ -70,10 +73,19 @@ Le module **auth** de §3.1 v1.1, le module **vault** de §3.3 v1.1, le module
 | `POST /transmission/pause` · `DELETE /transmission/pause` | E4-US04, 7 / 30 / 90 jours, plafond `dms.pause_max_months` |
 | `DELETE /transmission` | Step-up `delete_transmission`, parts purgées |
 | `POST /transmission/contacts/:id/verify` | Vérification annuelle — attestation signée, voir §3 |
+| `GET /checkin/status` | Échéance, retard en jours, relances, « validé ce mois » |
+| `GET /checkin/game` · `POST /checkin/game/answer` | Défi côté serveur, 10 réponses/h/user (§7.1) — voir §3 |
+| `POST /checkin/complete` | Consomme le jeton du jeu ; ligne du mois, streak, badge ; replanifie l'échéance |
+| `GET /checkin/history` · `GET /checkin/streak` | Log des mois validés ; streak courant, record, badges |
+
+Jobs (§4) : `deadman:checkin` quotidien à 09:00 UTC via BullMQ, worker dans
+le processus API derrière `JOBS_ENABLED=true`. Il envoie les relances et
+marque `triggered` ; voir §3.
 
 Non livré : `/user/*`, `PUT /transmission/recipients` (sans objet depuis
-DEC-23), `/checkin/*`, `/journal/*`, `/relay/*`, `/admin/*`, les jobs BullMQ,
-l'enregistrement Arbitrum (voir §3).
+DEC-23), `/journal/*`, `/relay/*`, `/admin/*`, `deadman:trigger` (tokens et
+emails aux contacts — module relay), `storj:cleanup`, l'enregistrement
+Arbitrum (voir §3).
 
 ## 3. Décisions et écarts par rapport aux specs
 
@@ -289,6 +301,52 @@ DEC-25 ne liste pas d'action pour la pause ; E4-US04 exige le PIN.
 `POST /pause` utilise `edit_transmission`. La reprise (`DELETE /pause`) ne
 demande pas de PIN — elle ne fait que réarmer le check-in.
 
+### Check-in : le jeu vit côté serveur, la preuve de vie aussi
+
+E4-US01 demande un mini-jeu « fun, < 60 s, jamais un quiz sur le coffre »,
+sans dire qui le fournit. Si le client validait seul, un script pourrait
+« checker » sans personne derrière — le dead man's switch perdrait son sens.
+Le serveur tire donc un défi dans une bibliothèque intégrée
+(`api/checkin/games.ts` : énigmes FR/EN, suites logiques, tri), garde la
+référence 24 h dans Redis, compte les tentatives (sans pénalité, E4-US01),
+normalise la réponse (casse, accents, ponctuation) et rend un
+`checkin_token` à usage unique (15 min) que `POST /complete` consomme. Le
+critère « validé par simple ouverture de l'app » n'est pas retenu côté API :
+une ouverture ne prouve rien au serveur.
+
+### Check-in : un mois calendaire, un streak, quatre badges
+
+`checkin_log` est unique par (user, mois). Le premier check-in du mois crée
+la ligne (`game_type`, `attempts`, `streak_at_checkin`, `badge_earned`) ; les
+suivants du même mois ne font que replanifier `next_checkin_due` et remettre
+les relances à zéro. Le streak compte les mois calendaires consécutifs ; les
+badges sont `first_checkin`, `streak_3`, `streak_6`, `streak_12`.
+`GET /checkin/streak` considère le streak vivant si le dernier mois validé
+est le mois courant ou le précédent. Une fréquence hebdomadaire produit donc
+plusieurs check-ins par mois et une seule ligne — voulu.
+
+`journal_entry_id` est accepté et vérifié (entrée de l'utilisateur), pour
+que le carnet de vie puisse rattacher la réponse du mois (E2-US07) ; le
+module journal remplira le reste.
+
+### Dead man's switch : relances à J+7/14/21, déclenchement après le silence
+
+Le pseudo-code du job §4.2 déclenche à « relance 3 + 21 jours », ce qui
+rendrait `silence_duration_months` (1, 3, 6 — choisi par l'utilisateur,
+E4-US03) sans effet. Ici :
+
+- relance N quand l'échéance est dépassée de `dms.relance_intervals_days[N-1]`
+  jours (7, 14, 21), au plus une par balayage, tracée dans
+  `checkin_relances` (FK `email_log_id`, Fix-12c) ;
+- déclenchement quand les trois relances sont parties **et** que l'échéance
+  est dépassée de `silence_duration_months × 30` jours : la config passe
+  `triggered`. Les tokens des contacts, la ligne `transmissions` et les
+  emails `/relay` sont le travail du module relay, qui reprendra les configs
+  `triggered` sans ligne `transmissions`.
+
+`sweep(now)` reçoit son horloge : les tests le pilotent jour par jour sans
+attendre ni mocker. BullMQ ne fait que l'appeler.
+
 ### Codes de récupération 2FA : pas de table
 
 E6-US02 : « des codes de récupération d'urgence sont générés et affichés une
@@ -308,10 +366,11 @@ manque, perdre son authenticateur signifie passer par le support.
 | Email et téléphone des contacts | scellés vers la clé de Relais (DEC-28) ; ouverts en mémoire à la création (forme) et à l'activation (envoi), jamais stockés en clair, jamais loggés |
 | Parts Shamir, `secret_enc`, `verify_token` | blobs opaques ; le serveur n'en connaît que la taille et le hash |
 | Réponses aux questions secrètes, K_i | jamais transmis — la vérification annuelle est une attestation signée |
+| Réponse au mini-jeu | comparée en mémoire, jamais stockée ; seul le nombre de tentatives est conservé |
 
 ## 5. Vérifications
 
-85 tests d'intégration, sur PostgreSQL 16 et Redis réels, base reconstruite
+113 tests d'intégration, sur PostgreSQL 16 et Redis réels, base reconstruite
 depuis les migrations et le seed à chaque run. Chaque test repart d'une base
 et d'un stockage vides. Ils couvrent notamment :
 
@@ -351,6 +410,20 @@ et d'un stockage vides. Ils couvrent notamment :
   pause 30 jours, plafond `dms.pause_max_months`, reprise réarme le
   check-in ; désactivation purge les parts et rend les contacts modifiables ;
   vérification annuelle signée, mauvaise clé → 401, avant activation → 409
+- check-in (19 tests, test-first) : statut inactif / actif / en retard ;
+  jeu refusé sans transmission active, défi sans la réponse, identique tant
+  qu'il est en cours, mauvaise réponse comptée sans pénalité, bonne réponse
+  → jeton, casse/accents/espaces tolérés, 11ᵉ réponse → 429 ; jeton inconnu
+  ou rejoué → 401 ; premier check-in → ligne, streak 1, `first_checkin`,
+  échéance replanifiée, relances à zéro ; second du même mois → pas de
+  ligne ; streak prolongé → `streak_3` ; mois sauté → 1 ; entrée de carnet
+  inconnue → 404 ; streak courant / record / badges ; historique trié
+- dead man's switch (9 tests) : rien avant J+7 ; J+7 → relance 1 tracée,
+  pas de doublon le lendemain ; J+14 et J+21 → relances 2 et 3 ; intervalles
+  lus dans `app_config` ; pause ignorée ; trois relances sans silence écoulé
+  → rien ; silence écoulé + trois relances → `triggered`, puis plus balayé ;
+  silence écoulé mais relances incomplètes → relance d'abord ; BullMQ :
+  un seul job planifié `0 9 * * *`, démarrage idempotent, arrêt propre
 
 ```bash
 scripts/dev-services.sh start     # PostgreSQL + Redis jetables
