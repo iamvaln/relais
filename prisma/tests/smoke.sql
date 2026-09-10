@@ -8,20 +8,22 @@ INSERT INTO admin_users (email, full_name, password_hash, role)
 VALUES ('valentine@relais.cm', 'Valentine', '$argon2id$dummy', 'super_admin');
 
 -- 3 questions secrètes distinctes (DEC-20) + 1 question de carnet de vie
+-- Libellés préfixés [smoke] : depuis la v1.3, text_fr et text_en sont uniques
+-- (idx_cq_text_fr / idx_cq_text_en) — ne jamais entrer en collision avec le seed.
 INSERT INTO checkin_questions (text_fr, text_en, category, usage_type, reliability_score)
-VALUES ('Quel surnom vous donnait votre grand-mère maternelle ?',
-        'What nickname did your maternal grandmother give you?',
+VALUES ('[smoke] Quel surnom vous donnait votre grand-mère maternelle ?',
+        '[smoke] What nickname did your maternal grandmother give you?',
         'childhood', 'secret_question', 9),
-       ('Dans quelle rue habitait votre oncle maternel quand vous étiez enfant ?',
-        'What street did your maternal uncle live on when you were a child?',
+       ('[smoke] Dans quelle rue habitait votre oncle maternel ?',
+        '[smoke] What street did your maternal uncle live on?',
         'places', 'secret_question', 8),
-       ('Quel film regardiez-vous en boucle avec votre père ?',
-        'What film did you watch on repeat with your father?',
-        'events', 'secret_question', 9);
+       ('[smoke] Quel surnom donnez-vous à cette personne ?',
+        '[smoke] What nickname do you use for this person?',
+        'shared_memory', 'secret_question', 10);
 
 INSERT INTO checkin_questions (text_fr, text_en, category, usage_type, cycle_month)
-VALUES ('Quel est ton meilleur souvenir de ce mois ?',
-        'What is your best memory of this month?',
+VALUES ('[smoke] Quel est ton meilleur souvenir de ce mois ?',
+        '[smoke] What is your best memory of this month?',
         'month_memory', 'journal', 1);
 
 -- Trois questions secrètes distinctes, choisies de façon déterministe.
@@ -291,6 +293,84 @@ BEGIN
     WHERE event_type IN ('created', 'renewed')
       AND created_at >= NOW() - INTERVAL '30 days';
     ASSERT mrr > 0, 'le MRR devrait être positif';
+END $$;
+
+-- ---------------------------------------------------------------------------
+-- v1.3 — Fix-12a : deux questions actives au même libellé sont refusées
+-- ---------------------------------------------------------------------------
+DO $$
+BEGIN
+    BEGIN
+        INSERT INTO checkin_questions (text_fr, text_en, category, usage_type)
+        VALUES ('[smoke] Quel surnom vous donnait votre grand-mère maternelle ?',
+                '[smoke] doublon EN', 'childhood', 'secret_question');
+        RAISE EXCEPTION 'idx_cq_text_fr aurait dû rejeter un libellé FR en double';
+    EXCEPTION WHEN unique_violation THEN NULL;
+    END;
+END $$;
+
+-- …mais une question archivée peut garder le libellé de sa remplaçante
+DO $$
+DECLARE archived_id UUID;
+BEGIN
+    INSERT INTO checkin_questions (text_fr, text_en, category, usage_type, status)
+    VALUES ('[smoke] ancienne formulation', '[smoke] old wording', 'other', 'secret_question', 'archived')
+    RETURNING id INTO archived_id;
+    INSERT INTO checkin_questions (text_fr, text_en, category, usage_type)
+    VALUES ('[smoke] ancienne formulation', '[smoke] old wording', 'other', 'secret_question');
+    -- Fix-11 : 'other' et risk_notes existent
+    UPDATE checkin_questions SET risk_notes = 'test' WHERE id = archived_id;
+END $$;
+
+-- ---------------------------------------------------------------------------
+-- v1.3 — Fix-12b : un événement générateur de revenu sans montant est refusé
+-- ---------------------------------------------------------------------------
+DO $$
+BEGIN
+    BEGIN
+        INSERT INTO payment_events (user_id, subscription_id, event_type)
+        SELECT s.user_id, s.id, 'renewed' FROM subscriptions s;
+        RAISE EXCEPTION 'chk_amount_required aurait dû rejeter un renewed sans montant';
+    EXCEPTION WHEN check_violation THEN NULL;
+    END;
+END $$;
+
+-- ---------------------------------------------------------------------------
+-- v1.3 — Fix-12c : une relance pointe vers son email_log, et survit à sa purge
+-- ---------------------------------------------------------------------------
+DO $$
+DECLARE log_id UUID; n INT;
+BEGIN
+    INSERT INTO email_log (user_id, recipient_hash, email_type, provider_id, status)
+    SELECT id, encode(sha256(email::bytea), 'hex'), 'checkin_relance_1', 're_rel1', 'sent'
+    FROM users RETURNING id INTO log_id;
+
+    INSERT INTO checkin_relances (user_id, transmission_id, relance_number, email_log_id)
+    SELECT u.id, tc.id, 1, log_id
+    FROM users u JOIN transmission_configs tc ON tc.user_id = u.id;
+
+    -- Le webhook ne met à jour QUE email_log : la relance lit le statut par la FK
+    UPDATE email_log SET status = 'bounced' WHERE id = log_id;
+    SELECT count(*) INTO n FROM checkin_relances r JOIN email_log e ON e.id = r.email_log_id
+    WHERE e.status = 'bounced';
+    ASSERT n = 1, 'la relance devrait lire bounced via email_log';
+
+    -- Purge du log (rétention 90j) : la relance reste, email_log_id passe à NULL
+    DELETE FROM email_log WHERE id = log_id;
+    SELECT count(*) INTO n FROM checkin_relances WHERE email_log_id IS NULL;
+    ASSERT n = 1, 'checkin_relances.email_log_id devrait être NULL après purge';
+END $$;
+
+-- ---------------------------------------------------------------------------
+-- v1.3 — Fix-12d : la clé morte a disparu, la clé DEC-26 est là
+-- ---------------------------------------------------------------------------
+DO $$
+DECLARE n INT;
+BEGIN
+    SELECT count(*) INTO n FROM app_config WHERE key = 'security.pin_lockout_min';
+    ASSERT n = 0, 'security.pin_lockout_min devrait avoir été supprimée';
+    SELECT count(*) INTO n FROM app_config WHERE key = 'security.pin_backoff_steps';
+    ASSERT n = 1, 'security.pin_backoff_steps devrait exister';
 END $$;
 
 -- ---------------------------------------------------------------------------

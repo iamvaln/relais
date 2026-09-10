@@ -10,7 +10,8 @@
 --
 -- Idempotent : chaque ligne est insérée uniquement si son text_fr est absent.
 -- Rejouer ce fichier est sans effet ; y ajouter des questions et le rejouer
--- n'insère que les nouvelles.
+-- n'insère que les nouvelles. Depuis la v1.3, idx_cq_text_fr garantit en plus
+-- qu'aucun doublon ne peut passer, seed ou back office.
 -- =============================================================================
 
 -- -----------------------------------------------------------------------------
@@ -28,10 +29,8 @@
 -- officiels.
 --
 -- Les questions de mémoire partagée sont les plus solides : seuls l'owner et
--- ce contact précis connaissent la réponse. BO-04 prévoyait une catégorie
--- « Autres » pour les accueillir, mais le CHECK du schéma ne l'autorise pas
--- (voir docs/open-questions.md) — elles sont donc réparties dans les
--- catégories existantes selon la nature de la réponse attendue.
+-- ce contact précis connaissent la réponse. Elles ont leur catégorie depuis
+-- la v1.3 du schéma (Fix-11 : 'shared_memory').
 -- -----------------------------------------------------------------------------
 
 INSERT INTO checkin_questions (text_fr, text_en, category, usage_type, reliability_score)
@@ -100,17 +99,16 @@ FROM (VALUES
      'What was your daily commute ten years ago?', 'habits', 7),
 
     -- Mémoire partagée avec le contact — les plus solides -------------------
-    -- (rangées en people/events/habits/places faute de catégorie 'other')
     ('Quel surnom donnez-vous à cette personne, que personne d''autre n''utilise ?',
-     'What nickname do you use for this person that nobody else uses?', 'people', 10),
+     'What nickname do you use for this person that nobody else uses?', 'shared_memory', 10),
     ('Quel est le premier voyage que vous avez fait tous les deux ?',
-     'What was the first trip the two of you took together?', 'events', 9),
+     'What was the first trip the two of you took together?', 'shared_memory', 9),
     ('Quel plat avez-vous partagé le plus souvent avec cette personne ?',
-     'What dish have you shared most often with this person?', 'habits', 9),
+     'What dish have you shared most often with this person?', 'shared_memory', 9),
     ('Quel objet cette personne vous a-t-elle offert et que vous avez gardé ?',
-     'What object did this person give you that you kept?', 'events', 8),
+     'What object did this person give you that you kept?', 'shared_memory', 8),
     ('Dans quelle ville vous êtes-vous vus pour la dernière fois avant aujourd''hui ?',
-     'In what city did you last see each other?', 'places', 7)
+     'In what city did you last see each other?', 'shared_memory', 7)
 ) AS v(text_fr, text_en, category, score)
 WHERE NOT EXISTS (
     SELECT 1 FROM checkin_questions q WHERE q.text_fr = v.text_fr

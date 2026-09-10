@@ -1,15 +1,16 @@
 // =============================================================================
-// RELAIS — miroir Prisma du schéma PostgreSQL v1.2
+// RELAIS — miroir Prisma du schéma PostgreSQL v1.3
 //
 // NE PAS ÉDITER À LA MAIN. Ce fichier est produit par `prisma db pull` depuis
 // une base où les migrations SQL ont été appliquées. La SOURCE DE VÉRITÉ est
 // prisma/migrations/ — les CHECK constraints, index partiels, FK différées et
-// le rôle audit_writer ne sont pas exprimables ici.
+// le trigger d'immuabilité ne sont pas exprimables ici.
 //
 // Pour régénérer :
 //   psql "$DATABASE_URL" -f prisma/migrations/20260410000000_init/migration.sql
 //   psql "$DATABASE_URL" -f prisma/migrations/20260410000001_audit_writer_role/migration.sql
 //   psql "$DATABASE_URL" -f prisma/migrations/20260415000000_v1_2_dec20_dec27/migration.sql
+//   psql "$DATABASE_URL" -f prisma/migrations/20260420000000_v1_3_fix10_fix12/migration.sql
 //   npx prisma db pull
 // =============================================================================
 
@@ -124,6 +125,7 @@ model checkin_log {
 }
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
 model checkin_questions {
   id                                                                 String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   text_fr                                                            String
@@ -140,6 +142,7 @@ model checkin_questions {
   usage_count                                                        Int                @default(0)
   created_at                                                         DateTime           @default(now()) @db.Timestamptz(6)
   updated_at                                                         DateTime           @default(now()) @db.Timestamptz(6)
+  risk_notes                                                         String?
   checkin_log                                                        checkin_log[]
   journal_entries                                                    journal_entries[]
   trusted_contacts_trusted_contacts_question_1_idTocheckin_questions trusted_contacts[] @relation("trusted_contacts_question_1_idTocheckin_questions")
@@ -158,8 +161,8 @@ model checkin_relances {
   transmission_id      String               @db.Uuid
   relance_number       Int
   sent_at              DateTime             @default(now()) @db.Timestamptz(6)
-  email_provider_id    String?
-  delivery_status      String               @default("sent")
+  email_log_id         String?              @db.Uuid
+  email_log            email_log?           @relation(fields: [email_log_id], references: [id], onUpdate: NoAction)
   transmission_configs transmission_configs @relation(fields: [transmission_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
   users                users                @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
@@ -169,16 +172,17 @@ model checkin_relances {
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
 model email_log {
-  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  user_id        String?  @db.Uuid
-  recipient_hash String
-  email_type     String
-  provider_id    String?
-  status         String   @default("sent")
-  error_message  String?
-  sent_at        DateTime @default(now()) @db.Timestamptz(6)
-  updated_at     DateTime @default(now()) @db.Timestamptz(6)
-  users          users?   @relation(fields: [user_id], references: [id], onUpdate: NoAction)
+  id               String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id          String?            @db.Uuid
+  recipient_hash   String
+  email_type       String
+  provider_id      String?
+  status           String             @default("sent")
+  error_message    String?
+  sent_at          DateTime           @default(now()) @db.Timestamptz(6)
+  updated_at       DateTime           @default(now()) @db.Timestamptz(6)
+  checkin_relances checkin_relances[]
+  users            users?             @relation(fields: [user_id], references: [id], onUpdate: NoAction)
 
   @@index([sent_at], map: "idx_el_sent_at")
   @@index([email_type, status], map: "idx_el_type")
