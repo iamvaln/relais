@@ -43,6 +43,10 @@ export const limits = {
   checkinAnswer: { max: 10, timeWindow: '1 hour', keyGenerator: keyByUserOrIp },
   /** GET /transmission/relais-key — 60 / min / IP, public (DEC-28) */
   relaisKey: { max: 60, timeWindow: '1 minute', keyGenerator: (r: FastifyRequest) => `ip:${r.ip}` },
+  /** GET /relay/:token/* — lecture côté contact, 30 / min / IP (public) */
+  relayRead: { max: 30, timeWindow: '1 minute', keyGenerator: (r: FastifyRequest) => `ip:${r.ip}` },
+  /** POST /relay/:token/* — 3 / min / IP (§7.1) */
+  relayWrite: { max: 3, timeWindow: '1 minute', keyGenerator: (r: FastifyRequest) => `ip:${r.ip}` },
   /** GET /health — 60 / min / IP (§9.2) */
   health: { max: 60, timeWindow: '1 minute', keyGenerator: (r: FastifyRequest) => `ip:${r.ip}` },
 } as const

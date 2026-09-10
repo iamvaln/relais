@@ -4,8 +4,8 @@ import { afterAll, beforeEach, describe, expect, it } from 'vitest'
 import { trigger } from '../src/jobs/deadman.js'
 import { hmacToken } from '../src/lib/crypto.js'
 import { prisma } from '../src/lib/prisma.js'
-import { closeAll, lastEmailTo, mailbox, resetState } from './helpers.js'
-import { activateTransmission, makeOwner, type Owner } from './transmission-helpers.js'
+import { api, closeAll, lastEmailTo, mailbox, resetState } from './helpers.js'
+import { activateTransmission, makeOwner, opaque, type ActivationContact, type Owner } from './transmission-helpers.js'
 
 const HOUR = 3600 * 1000
 const NOW = new Date('2026-09-10T09:00:00Z')
@@ -75,5 +75,75 @@ describe('deadman trigger — ouverture de la transmission', () => {
     } finally {
       await prisma().app_config.update({ where: { key: 'dms.escrow_ttl_hours' }, data: { value: '72' } })
     }
+  })
+})
+
+// --- Côté contact : lecture du lien ---------------------------------------------------
+
+interface Opened {
+  o: Owner
+  contacts: ActivationContact[]
+  tokens: Record<string, string>
+}
+
+/** Transmission activée, déclenchée, ouverte : un token par contact (contact1@, contact2@). */
+async function opened(): Promise<Opened> {
+  const o = await makeOwner()
+  const contacts = await activateTransmission(o)
+  await markTriggered(o)
+  mailbox.clear()
+  await trigger(new Date())
+  return {
+    o,
+    contacts,
+    tokens: { contact1: tokenFromEmail('contact1@example.cm'), contact2: tokenFromEmail('contact2@example.cm') },
+  }
+}
+
+describe('GET /relay/:token', () => {
+  it('lien inconnu → 404 RELAY_TOKEN_INVALID', async () => {
+    const r = await (await api()).get(`/relay/${'a'.repeat(43)}`).expect(404)
+    expect(r.body.error.code).toBe('RELAY_TOKEN_INVALID')
+  })
+
+  it('rend au contact ce dont l’app a besoin : questions, rôles, verify_token, parts chiffrées, statut', async () => {
+    const { o, contacts, tokens } = await opened()
+    const r = await (await api()).get(`/relay/${tokens.contact1}`).expect(200)
+    const d = r.body.data
+    expect(d).toMatchObject({
+      owner_name: 'Adjoua Ngo',
+      status: 'triggered',
+      contact_status: 'notified',
+      schema: { n: 2, m: 2 },
+      answered: 0,
+      roles: { k1: true, k2: false, k3: false },
+      shares_enc: { k2: null, k3: null },
+    })
+    expect(d.questions).toHaveLength(3)
+    expect(d.questions.map((q: { id: string }) => q.id)).toEqual(contacts[0]!.body.question_ids)
+    expect(d.questions[0].text_fr).toBeTypeOf('string')
+    expect(d.questions[0].text_en).toBeTypeOf('string')
+    expect(d.verify_token).toBe(opaque(100, 40).toString('base64'))
+    expect(d.shares_enc.k1).toBe(opaque(11, 32).toString('base64'))
+    expect(d.secret_enc).toBe(contacts[0]!.body.secret_enc)
+    expect(Date.parse(d.escrow_expires_at)).toBeGreaterThan(Date.now())
+    expect(JSON.stringify(d)).not.toContain(o.userId)
+    expect(JSON.stringify(d)).not.toContain('example.cm')
+  })
+
+  it('lien expiré → 404', async () => {
+    const { tokens } = await opened()
+    await prisma().transmission_contacts.updateMany({ data: { relay_token_expires_at: new Date(Date.now() - 1000) } })
+    const r = await (await api()).get(`/relay/${tokens.contact1}`).expect(404)
+    expect(r.body.error.code).toBe('RELAY_TOKEN_INVALID')
+  })
+
+  it('contact bloqué → 423 RELAY_CONTACT_BLOCKED', async () => {
+    const { tokens, contacts } = await opened()
+    await prisma().transmission_contacts.updateMany({ where: { trusted_contact_id: contacts[0]!.id }, data: { blocked: true } })
+    await prisma().trusted_contacts.update({ where: { id: contacts[0]!.id }, data: { blocked_until: new Date(Date.now() + 3600 * 1000) } })
+    const r = await (await api()).get(`/relay/${tokens.contact1}`).expect(423)
+    expect(r.body.error.code).toBe('RELAY_CONTACT_BLOCKED')
+    await (await api()).get(`/relay/${tokens.contact2}`).expect(200)
   })
 })
