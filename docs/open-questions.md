@@ -40,7 +40,41 @@ E3-US04 (recipient externe), E1-US03 (blocage PIN), E3-US05 (« bimestriel »
 
 ---
 
-## 1. 🟢 Contrainte non exprimable en SQL, à porter dans l'API (Note-01)
+## 1. 🟡 `email_log.email_type` ne couvre pas les notifications des user stories
+
+Le CHECK v1.3 liste 11 types. Cinq emails exigés ailleurs n'y figurent pas :
+
+| Email | Exigé par |
+|---|---|
+| Compte verrouillé après 5 échecs | Backend Specs §2.5 — « Email de notification » |
+| Mot de passe changé | E6-US03 |
+| Coffre restauré sur un nouvel appareil | E6-US01 |
+| 2FA activée | E6-US02 |
+| 2FA désactivée | E6-US02 |
+
+Sans eux, l'API devait soit ne pas envoyer ces emails, soit les envoyer sans
+les tracer — ce que DEC-24 interdit. **Comblé par la migration
+`20260425000000_email_types_notifications`** (`account_locked`,
+`password_changed`, `restore_succeeded`, `two_factor_enabled`,
+`two_factor_disabled`). À reporter dans la spec v1.4.
+
+---
+
+## 2. 🟡 Codes de récupération 2FA : aucune table
+
+E6-US02 : « Des codes de récupération d'urgence sont générés et affichés une
+fois. » Le schéma n'a ni table ni colonne pour les stocker (hashés, à usage
+unique). Le TOTP est implémenté sans eux : perdre son authenticateur signifie
+passer par le support (BO-02, déblocage manuel).
+
+Proposition v1.4 : table `two_factor_recovery_codes (id, user_id, code_hash
+CHAR(64), used_at, created_at)` avec `UNIQUE (user_id, code_hash)`, 8 codes
+générés à l'activation, consommés par `POST /auth/2fa/verify` en lieu et
+place du code TOTP.
+
+---
+
+## 3. 🟢 Contrainte non exprimable en SQL, à porter dans l'API (Note-01)
 
 Le Schéma v1.3 (Note-01) le note lui-même pour `trusted_contacts` : « uniquement des
 questions de type `secret_question` ou `both` — vérifié en application, pas de
@@ -49,7 +83,7 @@ CHECK sur sous-select en PG standard ».
 Rien n'empêche donc, au niveau base, de rattacher à un contact une question de
 carnet de vie (`usage_type = 'journal'`), ou une question sous le seuil
 `vault.question_min_score = 6`. À valider dans le handler
-`POST/PUT /transmission/contacts`.
+`POST/PUT /transmission/contacts` — module non encore écrit.
 
 Note-01 donne le handler de référence (`validateContactQuestions`) et admet
 un trigger `BEFORE INSERT OR UPDATE` en alternative si l'équipe préfère la

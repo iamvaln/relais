@@ -20,6 +20,9 @@
 
 BEGIN;
 
+-- Le DROP … IF EXISTS ci-dessous émet un NOTICE sur base vierge ; inutile.
+SET LOCAL client_min_messages = warning;
+
 -- -----------------------------------------------------------------------------
 -- 1. Trigger — append-only garanti par la base
 -- -----------------------------------------------------------------------------

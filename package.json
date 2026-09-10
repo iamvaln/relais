@@ -1,0 +1,24 @@
+{
+  "name": "relais",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Relais — passe le relais, pas le chaos.",
+  "workspaces": [
+    "apps/*"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "api": "npm run --workspace apps/api",
+    "dev": "npm run dev --workspace apps/api",
+    "build": "npm run build --workspaces",
+    "test": "npm run test --workspaces",
+    "typecheck": "npm run typecheck --workspaces",
+    "lint": "npm run lint --workspaces",
+    "db:generate": "prisma generate --schema prisma/schema.prisma"
+  },
+  "devDependencies": {
+    "prisma": "^6.19.0"
+  }
+}
