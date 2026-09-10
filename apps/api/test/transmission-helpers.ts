@@ -13,9 +13,9 @@ export async function sealToRelais(relaisPkBase64: string, payload: object): Pro
   return Buffer.from(sealed).toString('base64')
 }
 
-export async function fetchRelaisKey(accessToken: string): Promise<string> {
-  const r = await (await api()).get('/transmission/relais-key').set('Authorization', `Bearer ${accessToken}`).expect(200)
-  return r.body.data.x25519_pk as string
+export async function fetchRelaisKey(): Promise<string> {
+  const r = await (await api()).get('/transmission/relais-key').expect(200)
+  return r.body.data.relais_x25519_pk as string
 }
 
 /** Un blob « chiffré » déterministe de `size` octets, pour les parts et secret_enc. */

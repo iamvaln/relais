@@ -39,6 +39,8 @@ export const limits = {
   vault: { max: 60, timeWindow: '1 minute', keyGenerator: keyByUserOrIp },
   /** POST /vault/sync — 10 / h / user */
   vaultSync: { max: 10, timeWindow: '1 hour', keyGenerator: keyByUserOrIp },
+  /** GET /transmission/relais-key — 60 / min / IP, public (DEC-28) */
+  relaisKey: { max: 60, timeWindow: '1 minute', keyGenerator: (r: FastifyRequest) => `ip:${r.ip}` },
   /** GET /health — 60 / min / IP (§9.2) */
   health: { max: 60, timeWindow: '1 minute', keyGenerator: (r: FastifyRequest) => `ip:${r.ip}` },
 } as const

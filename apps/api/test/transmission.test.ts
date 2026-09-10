@@ -9,7 +9,7 @@ async function owner(email = 'adjoua@example.cm') {
   const keys: DeviceKeys = generateDeviceKeys()
   const auth = { Authorization: `Bearer ${u.accessToken}` }
   await (await api()).post('/auth/keys').set(auth).send({ ed25519_pk: keys.publicKeyBase64 }).expect(200)
-  const relaisPk = await fetchRelaisKey(u.accessToken)
+  const relaisPk = await fetchRelaisKey()
   return { ...u, keys, auth, relaisPk }
 }
 
@@ -43,15 +43,16 @@ describe('GET /transmission/config', () => {
   })
 })
 
-describe('GET /transmission/relais-key', () => {
-  it('expose la clé publique X25519 de Relais (32 bytes) pour sceller notification_enc', async () => {
-    const { accessToken } = await registerUser('adjoua@example.cm')
-    const r = await (await api()).get('/transmission/relais-key').set('Authorization', `Bearer ${accessToken}`).expect(200)
-    const pk = Buffer.from(r.body.data.x25519_pk, 'base64')
+describe('GET /transmission/relais-key (DEC-28)', () => {
+  it('est public, expose relais_x25519_pk (32 bytes) + key_version, et se met en cache un jour', async () => {
+    const r = await (await api()).get('/transmission/relais-key').expect(200)
+    const pk = Buffer.from(r.body.data.relais_x25519_pk, 'base64')
     expect(pk).toHaveLength(32)
-    // Dérivée de RELAIS_PRIVATE_KEY : stable d'un appel à l'autre
-    const again = await (await api()).get('/transmission/relais-key').set('Authorization', `Bearer ${accessToken}`).expect(200)
-    expect(again.body.data.x25519_pk).toBe(r.body.data.x25519_pk)
+    expect(r.body.data.key_version).toMatch(/^[0-9a-f]{8,}$/)
+    expect(r.headers['cache-control']).toBe('public, max-age=86400')
+    // Dérivée de RELAIS_X25519_SK : stable d'un appel à l'autre
+    const again = await (await api()).get('/transmission/relais-key').expect(200)
+    expect(again.body.data).toEqual(r.body.data)
   })
 })
 
