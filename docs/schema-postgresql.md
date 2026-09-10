@@ -1,6 +1,6 @@
 # RELAIS — Schéma PostgreSQL : notes d'implémentation
 
-**La spec fait foi** : `specs/Relais_Schema_PostgreSQL_v1.docx` (**v1.2**,
+**La spec fait foi** : `specs/Relais_Schema_PostgreSQL_v1.docx` (**v1.3**,
 22 tables), complétée par l'Addendum Journal des Décisions v1.1 (DEC-20 à
 DEC-27). Extraites en [`docs/specs/`](specs/).
 
@@ -12,6 +12,7 @@ Ce document ne redécrit pas le schéma — il consigne comment il est mis en
 | `prisma/migrations/20260410000000_init/` | Les 20 tables de la v1.1. **Source de vérité.** |
 | `prisma/migrations/20260410000001_audit_writer_role/` | Trigger d'immuabilité + rôle `audit_writer` + REVOKE |
 | `prisma/migrations/20260415000000_v1_2_dec20_dec27/` | Delta v1.1 → v1.2 |
+| `prisma/migrations/20260420000000_v1_3_fix10_fix12/` | Delta v1.2 → v1.3 |
 | `prisma/schema.prisma` | Miroir généré par `prisma db pull`. Ne pas éditer. |
 | `prisma/seeds/001_checkin_questions.sql` | Bibliothèque de questions — 55 lignes, idempotent |
 | `prisma/tests/smoke.sql` | Test de bout en bout, rollbacké |
@@ -52,8 +53,29 @@ migration échoue bruyamment si des contacts existent déjà, plutôt que de leu
 inventer des questions. C'est le comportement voulu — il n'existe pas de
 question par défaut acceptable pour un mécanisme d'identité.
 
-Une instruction de la spec n'est **pas** appliquée, délibérément : voir
-[`docs/open-questions.md`](open-questions.md) §1.
+Une instruction de la spec v1.2 n'a **pas** été appliquée, délibérément
+(l'`UPDATE` sur `dms.durations_available`) ; la v1.3 l'a retirée (Fix-10).
+
+---
+
+## 2b. Ce que fait la migration v1.3
+
+Un patch : la spec v1.3 intègre les six points relevés à la revue de code et
+au seed.
+
+| Fix | Effet en base |
+|---|---|
+| **Fix-11** | `checkin_questions` : `'shared_memory'` et `'other'` dans le CHECK, colonne `risk_notes` |
+| **Fix-12a** | Index uniques partiels `idx_cq_text_fr` / `idx_cq_text_en` — `WHERE status != 'archived'`, pour qu'une reformulation puisse remplacer une question archivée au même libellé |
+| **Fix-12b** | `payment_events` : `chk_amount_required` — montant obligatoire pour `created` / `renewed` |
+| **Fix-12c** | `checkin_relances` : `email_log_id` FK `ON DELETE SET NULL`, `email_provider_id` et `delivery_status` retirés |
+| **Fix-12d** | `app_config` : `security.pin_lockout_min` supprimée |
+| Fix-10, Note-01 | Aucun effet en base |
+
+Effet de bord voulu sur le seed : les cinq questions de mémoire partagée
+rejoignent `shared_memory`, leur vraie catégorie. Les libellés du smoke test
+sont préfixés `[smoke]` : ils ne peuvent plus heurter le seed maintenant que
+`text_fr` est unique.
 
 ---
 
@@ -80,17 +102,18 @@ Sens de circulation : SQL → base → `prisma db pull` → client typé. Édite
 
 ## 4. Vérifications passées
 
-Cluster PostgreSQL 16 local, les trois migrations appliquées à froid.
+Cluster PostgreSQL 16 local, les quatre migrations appliquées à froid.
 
 | Contrôle | Résultat |
 |---|---|
-| Les trois migrations s'appliquent sans erreur | ✅ |
-| Tables | **22** — conforme à l'en-tête v1.2 |
-| Index | 86 |
+| Les quatre migrations s'appliquent sans erreur | ✅ |
+| Tables | **22** — conforme à l'en-tête v1.3 |
+| Index | 89 |
 | CHECK constraints | 66 |
 | FK différées | 1 (`fk_cl_journal`) |
-| Lignes `app_config` | 24 |
+| Lignes `app_config` | 23 — `pin_lockout_min` retirée |
 | `dms.durations_available` | `[1,3,6]` — intact |
+| `checkin_relances` | plus aucune colonne de délivrance |
 
 `prisma/tests/smoke.sql` construit une chaîne complète — admin → questions →
 user → config → 2 contacts (dont un cumulant K1+K2, chacun avec 3 questions
@@ -109,6 +132,12 @@ distinctes) → check-in → journal → DMS → relay tokens → escrow → abo
   et rejette quand même un `journal_entry_id` inexistant en fin de
   transaction *(v1.2)*
 - le calcul MRR de BO-07 tourne sur `payment_events` *(v1.2)*
+- `idx_cq_text_fr` rejette deux questions actives au même libellé, mais
+  accepte qu'une archivée le partage avec sa remplaçante *(v1.3)*
+- `chk_amount_required` rejette un `renewed` sans montant *(v1.3)*
+- une relance lit son statut de délivrance via `email_log`, et survit à la
+  purge du log avec `email_log_id` remis à NULL *(v1.3)*
+- `security.pin_lockout_min` a disparu, `pin_backoff_steps` est là *(v1.3)*
 - supprimer le user cascade sur toute la chaîne, `audit_logs` survit, et
   `email_log` survit avec `user_id` remis à NULL
 
@@ -135,8 +164,9 @@ tables. Après nettoyage, le même fichier se rejoue en exit 0. Sans le bloc, la
 base restait à moitié migrée et le fichier mourait au rejeu sur
 `email_log already exists`.
 
-**Contrôles négatifs** : en retirant `chk_distinct_questions` puis
-`fk_cl_journal`, la suite échoue bien (exit 3) au lieu de passer en silence.
+**Contrôles négatifs** : en retirant `chk_distinct_questions`,
+`fk_cl_journal`, `idx_cq_text_fr`, `chk_amount_required` ou la colonne
+`email_log_id`, la suite échoue bien (exit 3) au lieu de passer en silence.
 `seed_checks` échoue aussi si la clé `vault.question_min_score` manque dans
 `app_config` (`INTO STRICT`), au lieu de comparer à NULL et de passer par
 défaut. Les assertions ont donc des dents.
@@ -161,7 +191,7 @@ donc une dépendance de démarrage, pas un confort.
 
 | Jeu | Volume | Détail |
 |---|---|---|
-| `secret_question` | 31 | Scores 6 à 10, 5 catégories. Rien sous `vault.question_min_score`. |
+| `secret_question` | 31 | Scores 6 à 10, 6 catégories dont `shared_memory`. Rien sous `vault.question_min_score`. |
 | `journal` | 24 | Cycle annuel complet : 12 mois × 2 modes (`essential`, `reflective`) |
 
 Idempotent : chaque ligne n'est insérée que si son `text_fr` est absent.
@@ -189,7 +219,7 @@ et qu'on peut bien composer 3 questions valides pour un contact.
 ## 6. À faire avant d'écrire l'API
 
 - **Validation applicative** des questions rattachées à un contact
-  (`usage_type` et score) — non exprimable en CHECK, cf. open-questions §3.
+  (`usage_type` et score) — Note-01 de la spec v1.3, cf. open-questions §1.
 - **Nom du rôle applicatif** : le `REVOKE` de la migration 2 suppose
   `app_user`. À aligner sur ce que crée l'hébergeur (Supabase ou Railway) —
   sans urgence, le trigger tient la garantie en attendant.

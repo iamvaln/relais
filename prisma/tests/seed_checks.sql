@@ -73,10 +73,15 @@ BEGIN
     WHERE usage_type = 'journal' AND cycle_month IS NULL;
     ASSERT n = 0, n || ' question(s) de carnet sans mois de cycle';
 
-    -- BO-04 : couverture des 6 catégories de questions secrètes
+    -- BO-04 + Fix-11 : les 6 catégories de questions secrètes sont couvertes
     SELECT count(DISTINCT category) INTO n FROM checkin_questions
-    WHERE usage_type = 'secret_question';
-    ASSERT n >= 5, 'seulement ' || n || ' catégories de questions secrètes couvertes';
+    WHERE usage_type = 'secret_question'
+      AND category IN ('childhood','places','events','people','habits','shared_memory');
+    ASSERT n = 6, 'seulement ' || n || ' catégories de questions secrètes couvertes sur 6';
+
+    -- Les questions de mémoire partagée sont bien dans leur catégorie (Fix-11)
+    SELECT count(*) INTO n FROM checkin_questions WHERE category = 'shared_memory';
+    ASSERT n >= 3, 'la catégorie shared_memory devrait compter au moins 3 questions';
 END $$;
 
 -- Un contact réel peut être créé avec 3 questions issues de la bibliothèque :

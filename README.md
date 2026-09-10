@@ -13,7 +13,7 @@ d'implémentation.
 | Livrable | État |
 |---|---|
 | Specs produit, techniques, backend, frontend, back office | ✅ v1 (`docs/specs/`) |
-| Schéma PostgreSQL v1.2 | ✅ Implémenté et testé (`prisma/`) |
+| Schéma PostgreSQL v1.3 | ✅ Implémenté et testé (`prisma/`) |
 | API backend | ⬜ Non démarré |
 | App mobile | ⬜ Non démarré |
 | Back office | ⬜ Non démarré |
@@ -31,7 +31,7 @@ d'implémentation.
 
 ## Schéma
 
-La spec `specs/Relais_Schema_PostgreSQL_v1.docx` (v1.2) fait foi. Elle est
+La spec `specs/Relais_Schema_PostgreSQL_v1.docx` (v1.3) fait foi. Elle est
 implémentée en SQL — **le DDL est la source de vérité**, parce que les CHECK
 constraints, les index partiels, la FK différée et le rôle `audit_writer` ne
 sont pas exprimables en Prisma. `schema.prisma` en est un miroir généré, à ne pas
@@ -56,7 +56,7 @@ psql "$DATABASE_URL" -f prisma/tests/seed_checks.sql  # lecture seule
 npx prisma db pull && npx prisma generate
 ```
 
-22 tables, 86 index, 66 CHECK constraints, 1 FK différée, 24 lignes
+22 tables, 89 index, 66 CHECK constraints, 1 FK différée, 23 lignes
 `app_config` et 55 questions seedées.
 
 ## Principe non négociable
