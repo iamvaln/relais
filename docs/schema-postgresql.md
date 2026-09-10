@@ -13,7 +13,9 @@ Ce document ne redécrit pas le schéma — il consigne comment il est mis en
 | `prisma/migrations/20260410000001_audit_writer_role/` | Rôle `audit_writer` + REVOKE |
 | `prisma/migrations/20260415000000_v1_2_dec20_dec27/` | Delta v1.1 → v1.2 |
 | `prisma/schema.prisma` | Miroir généré par `prisma db pull`. Ne pas éditer. |
+| `prisma/seeds/001_checkin_questions.sql` | Bibliothèque de questions — 55 lignes, idempotent |
 | `prisma/tests/smoke.sql` | Test de bout en bout, rollbacké |
+| `prisma/tests/seed_checks.sql` | Contrôles de la bibliothèque, lecture seule |
 
 ---
 
@@ -118,15 +120,45 @@ Les assertions ont donc des dents.
 
 ---
 
-## 5. À faire avant d'écrire l'API
+## 5. Seed de la bibliothèque de questions
 
-- **Seed des données de référence** : `checkin_questions` est vide, et c'est
-  désormais bloquant — `trusted_contacts.question_*_id` est NOT NULL, donc
-  **aucun contact ne peut être créé tant que la bibliothèque est vide**. Il
-  faut deux jeux : questions secrètes scorées (BO-04, seuil ≥ 6) et questions
-  de carnet de vie sur cycle annuel (`cycle_month` 1-12).
+`trusted_contacts.question_*_id` étant NOT NULL depuis DEC-20, **aucun trusted
+contact ne peut exister tant que `checkin_questions` est vide**. Le seed est
+donc une dépendance de démarrage, pas un confort.
+
+`prisma/seeds/001_checkin_questions.sql` — 55 questions :
+
+| Jeu | Volume | Détail |
+|---|---|---|
+| `secret_question` | 31 | Scores 6 à 10, 5 catégories. Rien sous `vault.question_min_score`. |
+| `journal` | 24 | Cycle annuel complet : 12 mois × 2 modes (`essential`, `reflective`) |
+
+Idempotent : chaque ligne n'est insérée que si son `text_fr` est absent.
+Rejouer le fichier ne fait rien ; y ajouter des questions et le rejouer
+n'insère que les nouvelles.
+
+Les questions secrètes suivent les critères BO-04 — réponse stable dans le
+temps, connue du seul contact ciblé, univoque (un nom ou un mot), absente des
+réseaux sociaux et des documents officiels. Les mieux notées sont les
+questions de **mémoire partagée** entre l'owner et ce contact précis : seuls
+eux deux connaissent la réponse, et elle ne vieillit pas.
+
+Le vouvoiement des questions secrètes et le tutoiement des questions de carnet
+sont voulus : les premières sont une vérification d'identité posée par la
+plateforme, les secondes sont les mots de l'utilisateur pour ses proches.
+
+`prisma/tests/seed_checks.sql` vérifie que la bibliothèque respecte les specs :
+volume BO-04 (50-200), aucune question active sous le score minimum, les 12
+mois couverts dans chaque mode, bilinguisme réel (`text_fr <> text_en`), pas de
+libellé en double, pas de question secrète dans le cycle annuel ni l'inverse,
+et qu'on peut bien composer 3 questions valides pour un contact.
+
+---
+
+## 6. À faire avant d'écrire l'API
+
 - **Validation applicative** des questions rattachées à un contact
-  (`usage_type` et score) — non exprimable en CHECK, cf. open-questions §2.
+  (`usage_type` et score) — non exprimable en CHECK, cf. open-questions §3.
 - **Nom du rôle applicatif** : la migration 2 suppose `app_user`. À aligner
   sur ce que crée l'hébergeur (Supabase ou Railway).
 - **Jobs de nettoyage** : quatre sont décrits en commentaire dans le DDL

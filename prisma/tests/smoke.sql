@@ -22,10 +22,15 @@ VALUES ('Quel est ton meilleur souvenir de ce mois ?',
         'What is your best memory of this month?',
         'month_memory', 'journal', 1);
 
+-- Trois questions secrètes distinctes, choisies de façon déterministe.
+-- Tolère une bibliothèque déjà seedée comme une base vide.
 CREATE TEMP VIEW secret_qs AS
-SELECT (SELECT id FROM checkin_questions WHERE category='childhood') AS q1,
-       (SELECT id FROM checkin_questions WHERE category='places')    AS q2,
-       (SELECT id FROM checkin_questions WHERE category='events')    AS q3;
+SELECT (SELECT id FROM checkin_questions WHERE usage_type = 'secret_question'
+        ORDER BY text_fr LIMIT 1 OFFSET 0) AS q1,
+       (SELECT id FROM checkin_questions WHERE usage_type = 'secret_question'
+        ORDER BY text_fr LIMIT 1 OFFSET 1) AS q2,
+       (SELECT id FROM checkin_questions WHERE usage_type = 'secret_question'
+        ORDER BY text_fr LIMIT 1 OFFSET 2) AS q3;
 
 INSERT INTO users (email, full_name, password_hash, ed25519_pk, account_status, email_verified)
 VALUES ('adjoua@example.cm', 'Adjoua N.', '$argon2id$dummy',
@@ -65,7 +70,8 @@ INSERT INTO checkin_log (user_id, transmission_id, checkin_month, question_id,
                          game_type, game_completed_at, streak_at_checkin)
 SELECT u.id, tc.id, date_trunc('month', NOW())::date, q.id, 'riddle', NOW(), 1
 FROM users u JOIN transmission_configs tc ON tc.user_id = u.id
-CROSS JOIN (SELECT id FROM checkin_questions WHERE usage_type='journal') q;
+CROSS JOIN (SELECT id FROM checkin_questions WHERE usage_type = 'journal'
+            ORDER BY cycle_month, text_fr LIMIT 1) q;
 
 INSERT INTO journal_entries (user_id, entry_month, mode, content_enc, word_count_approx)
 SELECT id, date_trunc('month', NOW())::date, 'essential', '\xdeadbeef'::bytea, 120 FROM users;

@@ -33,8 +33,8 @@ d'implémentation.
 
 La spec `specs/Relais_Schema_PostgreSQL_v1.docx` (v1.2) fait foi. Elle est
 implémentée en SQL — **le DDL est la source de vérité**, parce que les CHECK
-constraints, les index partiels et la FK différée et le rôle `audit_writer` ne sont pas
-exprimables en Prisma. `schema.prisma` en est un miroir généré, à ne pas
+constraints, les index partiels, la FK différée et le rôle `audit_writer` ne
+sont pas exprimables en Prisma. `schema.prisma` en est un miroir généré, à ne pas
 éditer à la main.
 
 ```bash
@@ -43,15 +43,20 @@ export DATABASE_URL="postgresql://user:pass@localhost:5432/relais"
 # Appliquer (dans cet ordre)
 for m in prisma/migrations/*/migration.sql; do psql "$DATABASE_URL" -f "$m"; done
 
+# Seeder la bibliothèque de questions (obligatoire : sans elle, aucun
+# trusted contact ne peut être créé — question_*_id est NOT NULL)
+psql "$DATABASE_URL" -f prisma/seeds/001_checkin_questions.sql
+
 # Vérifier
-psql "$DATABASE_URL" -f prisma/tests/smoke.sql   # tout est rollbacké
+psql "$DATABASE_URL" -f prisma/tests/smoke.sql        # tout est rollbacké
+psql "$DATABASE_URL" -f prisma/tests/seed_checks.sql  # lecture seule
 
 # Régénérer le client typé
 npx prisma db pull && npx prisma generate
 ```
 
 22 tables, 86 index, 66 CHECK constraints, 1 FK différée, 24 lignes
-`app_config` seedées.
+`app_config` et 55 questions seedées.
 
 ## Principe non négociable
 

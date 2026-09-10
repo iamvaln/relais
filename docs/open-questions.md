@@ -56,7 +56,33 @@ La ligne est à retirer de la spec en v1.3.
 
 ---
 
-## 2. 🟢 Contrainte non exprimable en SQL, à porter dans l'API
+## 2. 🟡 Deux champs de BO-04 absents du schéma `checkin_questions`
+
+BO-04 « Structure d'une question » décrit deux éléments que le DDL ne porte
+pas :
+
+| BO-04 | État |
+|---|---|
+| Catégorie **Autres** | Absente du `CHECK (category IN (...))` |
+| **Risques** — « notes sur les risques identifiés (usage interne) » | Aucune colonne |
+
+La catégorie manquante s'est vue à l'usage : les meilleures questions
+secrètes sont celles de **mémoire partagée** (« Quel surnom donnez-vous à
+cette personne, que personne d'autre n'utilise ? » — score 10), qui ne
+relèvent d'aucune des cinq catégories restantes. Elles sont pour l'instant
+rangées dans `people` / `events` / `habits` / `places` selon la nature de la
+réponse attendue, ce qui fonctionne mais brouille le filtre par catégorie du
+back office.
+
+Deux options : rajouter `'other'` (et éventuellement `'shared_memory'`, plus
+parlant) au CHECK, ou acter que BO-04 se réduit à cinq catégories. La colonne
+`risk_notes` est à ajouter si le back office doit vraiment l'éditer.
+
+Sans effet sur le fonctionnement — d'où le 🟡 et non le 🔴.
+
+---
+
+## 3. 🟢 Contrainte non exprimable en SQL, à porter dans l'API
 
 Le Schéma v1.2 le note lui-même pour `trusted_contacts` : « uniquement des
 questions de type `secret_question` ou `both` — vérifié en application, pas de
