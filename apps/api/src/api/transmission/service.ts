@@ -1,9 +1,11 @@
 // Transmission — configuration du dead man's switch et des trusted contacts
 // (Backend Specs §3.4, Specs Techniques §4.3, DEC-12, DEC-20, DEC-23).
 
-import { decodeBase64, sha256Hex } from '../../lib/crypto.js'
+import { decodeBase64, ed25519Verify, sha256Hex } from '../../lib/crypto.js'
 import { AppError } from '../../lib/errors.js'
 import { prisma } from '../../lib/prisma.js'
+import sodium from '../../lib/sodium.js'
+import { relaisKeypair } from '../../services/secrets/index.js'
 import type { ContactBody, Roles } from './schemas.js'
 
 // --- Vues -----------------------------------------------------------------------
@@ -101,6 +103,105 @@ async function ensureConfig(userId: string): Promise<{ id: string }> {
   })
 }
 
+// --- Règles de validation (Note-01, BO-05) --------------------------------------
+
+const DEFAULT_QUESTION_MIN_SCORE = 6
+
+async function configInt(key: string, fallback: number): Promise<number> {
+  const row = await prisma().app_config.findUnique({ where: { key }, select: { value: true } })
+  const n = row ? Number.parseInt(row.value, 10) : Number.NaN
+  return Number.isFinite(n) ? n : fallback
+}
+
+/**
+ * Note-01 : les trois questions doivent exister, être distinctes, actives, de
+ * type secret_question ou both, et scorer ≥ vault.question_min_score. La
+ * contrainte n'est pas exprimable en SQL — elle vit ici.
+ */
+async function validateQuestions(ids: [string, string, string]): Promise<void> {
+  const bad = new Set<string>()
+  const seen = new Set<string>()
+  for (const id of ids) {
+    if (seen.has(id)) bad.add(id)
+    seen.add(id)
+  }
+
+  const minScore = await configInt('vault.question_min_score', DEFAULT_QUESTION_MIN_SCORE)
+  const rows = await prisma().checkin_questions.findMany({
+    where: { id: { in: [...seen] } },
+    select: { id: true, usage_type: true, status: true, reliability_score: true },
+  })
+  const byId = new Map(rows.map((r) => [r.id, r]))
+  for (const id of seen) {
+    const q = byId.get(id)
+    if (!q || q.status !== 'active' || q.usage_type === 'journal' || q.reliability_score < minScore) bad.add(id)
+  }
+
+  if (bad.size > 0) {
+    throw new AppError('VALIDATION_ERROR', {
+      message: 'Questions secrètes invalides.',
+      details: { question_ids: [...bad] },
+    })
+  }
+}
+
+const PLAN_LIMITS = {
+  free: { key: 'vault.free_max_contacts', fallback: 2 },
+  premium: { key: 'vault.premium_max_contacts', fallback: 5 },
+} as const
+
+async function assertPlanAllowsOneMore(transmissionId: string, plan: string): Promise<void> {
+  const limit = plan === 'premium' ? PLAN_LIMITS.premium : PLAN_LIMITS.free
+  const max = await configInt(limit.key, limit.fallback)
+  const current = await prisma().trusted_contacts.count({
+    where: { transmission_id: transmissionId, contact_status: { not: 'removed' } },
+  })
+  if (current >= max) {
+    throw new AppError('PLAN_LIMIT_REACHED', {
+      message: `Votre plan autorise ${max} contact(s) de confiance.`,
+      details: { max_contacts: max, plan },
+    })
+  }
+}
+
+/** L'owner doit avoir enregistré sa clé Ed25519 (POST /auth/keys) : elle authentifie chaque contact. */
+async function ownerKey(userId: string): Promise<{ plan: string; ed25519Pk: Buffer }> {
+  const user = await prisma().users.findUnique({ where: { id: userId }, select: { plan: true, ed25519_pk: true } })
+  if (!user) throw new AppError('NOT_FOUND')
+  if (!user.ed25519_pk) throw new AppError('AUTH_KEY_NOT_SET')
+  return { plan: user.plan, ed25519Pk: Buffer.from(user.ed25519_pk) }
+}
+
+/** DEC-29 : Ed25519.verify(notification_sig, notification_enc, ed25519_pk). */
+function verifyNotificationSig(ed25519Pk: Buffer, notificationEnc: Uint8Array, sig: Uint8Array): void {
+  if (!ed25519Verify(ed25519Pk, Buffer.from(notificationEnc), Buffer.from(sig))) {
+    throw new AppError('AUTH_TOKEN_INVALID', { message: 'Signature du contact invalide.' })
+  }
+}
+
+/**
+ * DEC-28 : la sealed box doit s'ouvrir avec la clé de Relais — sinon, au
+ * décès, personne ne pourra prévenir ce contact. On vérifie sans conserver
+ * le clair.
+ */
+async function assertSealedBoxOpens(notificationEnc: Uint8Array): Promise<void> {
+  await sodium.ready
+  const { publicKey, privateKey } = await relaisKeypair()
+  try {
+    sodium.crypto_box_seal_open(notificationEnc, publicKey, privateKey)
+  } catch {
+    throw new AppError('VALIDATION_ERROR', {
+      details: { notification_enc: 'sealed box illisible avec la clé de Relais (GET /transmission/relais-key)' },
+    })
+  }
+}
+
+function validateRoles(roles: Roles): void {
+  if (!roles.k1 && !roles.k2 && !roles.k3) {
+    throw new AppError('VALIDATION_ERROR', { details: { roles: 'au moins un rôle (k1, k2 ou k3)' } })
+  }
+}
+
 // --- Contacts ----------------------------------------------------------------------
 
 // Prisma 6 attend Uint8Array<ArrayBuffer> pour les colonnes Bytes ; Buffer
@@ -115,8 +216,15 @@ export async function createContact(userId: string, body: ContactBody): Promise<
   const notificationEnc = decodeOrThrow('notification_enc', body.notification_enc)
   const notificationSig = decodeOrThrow('notification_sig', body.notification_sig)
   const secretEnc = decodeOrThrow('secret_enc', body.secret_enc)
+  validateRoles(body.roles)
+  await validateQuestions(body.question_ids)
+
+  const { plan, ed25519Pk } = await ownerKey(userId)
+  verifyNotificationSig(ed25519Pk, notificationEnc, notificationSig)
+  await assertSealedBoxOpens(notificationEnc)
 
   const cfg = await ensureConfig(userId)
+  await assertPlanAllowsOneMore(cfg.id, plan)
   const last = await prisma().trusted_contacts.aggregate({ where: { transmission_id: cfg.id }, _max: { contact_order: true } })
   const position = (last._max.contact_order ?? 0) + 1
 

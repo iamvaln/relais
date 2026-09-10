@@ -1,7 +1,8 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest'
 import { prisma } from '../src/lib/prisma.js'
-import { api, closeAll, generateDeviceKeys, registerUser, resetState, type DeviceKeys } from './helpers.js'
-import { buildContactBody, fetchRelaisKey } from './transmission-helpers.js'
+import sodium from '../src/lib/sodium.js'
+import { api, closeAll, generateDeviceKeys, registerUser, resetState, signWith, type DeviceKeys } from './helpers.js'
+import { buildContactBody, fetchRelaisKey, sealToRelais } from './transmission-helpers.js'
 
 /** Owner avec clé publique enregistrée + clé de Relais récupérée. */
 async function owner(email = 'adjoua@example.cm') {
@@ -82,5 +83,134 @@ describe('POST /transmission/contacts', () => {
     const row = await prisma().trusted_contacts.findUniqueOrThrow({ where: { id: r.body.data.id } })
     expect(Buffer.from(row.notification_enc).toString('utf8')).not.toContain('herve@')
     expect(row.notification_hash).toHaveLength(64)
+  })
+
+  describe('Note-01 : validation des trois questions', () => {
+    async function post(o: Awaited<ReturnType<typeof owner>>, question_ids: [string, string, string]) {
+      const body = await buildContactBody(o.keys, o.relaisPk, {
+        notification: { email: 'herve@example.cm', phone: '+237699000000' },
+        roles: { k1: true },
+        question_ids,
+      })
+      const r = await (await api()).post('/transmission/contacts').set(o.auth).send(body)
+      expect(r.status).toBe(400)
+      return r
+    }
+
+    it('refuse une question de type journal', async () => {
+      const o = await owner()
+      const [q1, q2] = (await secretQuestionIds(2)) as [string, string]
+      const journal = await prisma().checkin_questions.findFirstOrThrow({ where: { usage_type: 'journal' }, select: { id: true } })
+      const r = await post(o, [q1, q2, journal.id])
+      expect(r.body.error.code).toBe('VALIDATION_ERROR')
+      expect(r.body.error.details.question_ids).toContain(journal.id)
+      expect(await prisma().trusted_contacts.count()).toBe(0)
+    })
+
+    it('refuse une question sous vault.question_min_score', async () => {
+      const o = await owner()
+      const [q1, q2] = (await secretQuestionIds(2)) as [string, string]
+      const weak = await prisma().checkin_questions.create({
+        data: { text_fr: '[test] faible', text_en: '[test] weak', category: 'childhood', usage_type: 'secret_question', reliability_score: 5 },
+        select: { id: true },
+      })
+      const r = await post(o, [q1, q2, weak.id])
+      expect(r.body.error.details.question_ids).toContain(weak.id)
+    })
+
+    it('refuse deux fois la même question', async () => {
+      const o = await owner()
+      const [q1, q2] = (await secretQuestionIds(2)) as [string, string]
+      const r = await post(o, [q1, q2, q1])
+      expect(r.body.error.details.question_ids).toContain(q1)
+    })
+
+    it('refuse une question inconnue', async () => {
+      const o = await owner()
+      const [q1, q2] = (await secretQuestionIds(2)) as [string, string]
+      const ghost = '00000000-0000-4000-8000-000000000000'
+      const r = await post(o, [q1, q2, ghost])
+      expect(r.body.error.details.question_ids).toContain(ghost)
+    })
+  })
+
+  it('refuse un contact sans aucun rôle', async () => {
+    const o = await owner()
+    const [q1, q2, q3] = (await secretQuestionIds(3)) as [string, string, string]
+    const body = await buildContactBody(o.keys, o.relaisPk, {
+      notification: { email: 'herve@example.cm', phone: '+237699000000' },
+      roles: {},
+      question_ids: [q1, q2, q3],
+    })
+    const r = await (await api()).post('/transmission/contacts').set(o.auth).send(body).expect(400)
+    expect(r.body.error.code).toBe('VALIDATION_ERROR')
+    expect(r.body.error.details.roles).toBeDefined()
+  })
+
+  async function validBody(o: Awaited<ReturnType<typeof owner>>, seed = 1) {
+    const [q1, q2, q3] = (await secretQuestionIds(3)) as [string, string, string]
+    return buildContactBody(o.keys, o.relaisPk, {
+      notification: { email: `contact${seed}@example.cm`, phone: '+237699000000' },
+      roles: { k1: true },
+      question_ids: [q1, q2, q3],
+      secretSeed: seed,
+    })
+  }
+
+  describe('limites de plan (BO-05 vault.free_max_contacts / premium_max_contacts)', () => {
+    it('plan gratuit : refuse le troisième contact', async () => {
+      const o = await owner()
+      for (let i = 1; i <= 2; i++) await (await api()).post('/transmission/contacts').set(o.auth).send(await validBody(o, i)).expect(201)
+      const r = await (await api()).post('/transmission/contacts').set(o.auth).send(await validBody(o, 3)).expect(403)
+      expect(r.body.error.code).toBe('PLAN_LIMIT_REACHED')
+      expect(await prisma().trusted_contacts.count()).toBe(2)
+    })
+
+    it('plan premium : accepte cinq contacts, refuse le sixième', async () => {
+      const o = await owner()
+      await prisma().users.update({ where: { id: o.userId }, data: { plan: 'premium' } })
+      for (let i = 1; i <= 5; i++) await (await api()).post('/transmission/contacts').set(o.auth).send(await validBody(o, i)).expect(201)
+      const r = await (await api()).post('/transmission/contacts').set(o.auth).send(await validBody(o, 6)).expect(403)
+      expect(r.body.error.code).toBe('PLAN_LIMIT_REACHED')
+    })
+
+    it('un contact retiré ne compte plus dans la limite', async () => {
+      const o = await owner()
+      const first = await (await api()).post('/transmission/contacts').set(o.auth).send(await validBody(o, 1)).expect(201)
+      await (await api()).post('/transmission/contacts').set(o.auth).send(await validBody(o, 2)).expect(201)
+      await prisma().trusted_contacts.update({ where: { id: first.body.data.id }, data: { contact_status: 'removed' } })
+      await (await api()).post('/transmission/contacts').set(o.auth).send(await validBody(o, 3)).expect(201)
+    })
+  })
+
+  describe('preuves cryptographiques (DEC-28, DEC-29)', () => {
+    it('refuse une notification_sig produite par une autre clé', async () => {
+      const o = await owner()
+      const impostor = generateDeviceKeys()
+      const body = await validBody(o)
+      body.notification_sig = signWith(impostor, Buffer.from(body.notification_enc, 'base64'))
+      const r = await (await api()).post('/transmission/contacts').set(o.auth).send(body).expect(401)
+      expect(r.body.error.code).toBe('AUTH_TOKEN_INVALID')
+      expect(await prisma().trusted_contacts.count()).toBe(0)
+    })
+
+    it('refuse une sealed box qui ne s’ouvre pas avec la clé de Relais', async () => {
+      const o = await owner()
+      const body = await validBody(o)
+      const otherPk = Buffer.from(sodium.crypto_box_keypair().publicKey).toString('base64')
+      body.notification_enc = await sealToRelais(otherPk, { email: 'x@example.cm', phone: '+237600000000' })
+      body.notification_sig = signWith(o.keys, Buffer.from(body.notification_enc, 'base64'))
+      const r = await (await api()).post('/transmission/contacts').set(o.auth).send(body).expect(400)
+      expect(r.body.error.code).toBe('VALIDATION_ERROR')
+      expect(r.body.error.details.notification_enc).toBeDefined()
+    })
+
+    it('refuse un owner qui n’a pas encore enregistré sa clé publique', async () => {
+      const u = await registerUser('sans-cle@example.cm')
+      const keys = generateDeviceKeys()
+      const o = { ...u, keys, auth: { Authorization: `Bearer ${u.accessToken}` }, relaisPk: await fetchRelaisKey() }
+      const r = await (await api()).post('/transmission/contacts').set(o.auth).send(await validBody(o)).expect(409)
+      expect(r.body.error.code).toBe('AUTH_KEY_NOT_SET')
+    })
   })
 })
