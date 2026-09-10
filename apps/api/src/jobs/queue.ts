@@ -6,7 +6,7 @@
 import { Queue, Worker } from 'bullmq'
 import { Redis } from 'ioredis'
 import { env } from '../config/env.js'
-import { sweep } from './deadman.js'
+import { runDeadman } from './deadman.js'
 
 export const QUEUE_NAME = 'deadman'
 export const DEADMAN_JOB = 'deadman:checkin'
@@ -30,7 +30,7 @@ export async function startJobs(): Promise<Queue> {
   worker = new Worker(
     QUEUE_NAME,
     async (job) => {
-      if (job.name === DEADMAN_JOB) return sweep()
+      if (job.name === DEADMAN_JOB) return runDeadman()
       return null
     },
     { connection: conn, concurrency: 1 },
