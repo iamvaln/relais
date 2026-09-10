@@ -49,6 +49,11 @@ const schema = z.object({
   STORJ_SECRET_KEY: z.string().optional(),
   STORJ_BUCKET: z.string().default('relais-payloads'),
 
+  // Clé privée X25519 de Relais (32 bytes base64) — ouvre les sealed boxes
+  // notification_enc des contacts (DEC-12). En production, HCV Secrets Engine
+  // (DEC-15) la fournira ; d'ici là, variable d'env derrière services/secrets.
+  RELAIS_PRIVATE_KEY: z.string().min(40, 'RELAIS_PRIVATE_KEY : 32 bytes base64'),
+
   EMAIL_TRANSPORT: z.enum(['console', 'resend']).default('console'),
   RESEND_API_KEY: z.string().optional(),
   EMAIL_FROM: z.string().default('Relais <noreply@relais.app>'),
