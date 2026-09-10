@@ -229,8 +229,15 @@ function decodeShares(c: LoadedContact, shares: VerifyBody['shares']): Map<KeySl
   return out
 }
 
-function escrowKeyId(transmissionId: string): string {
+export function escrowKeyId(transmissionId: string): string {
   return `escrow:key:${transmissionId}`
+}
+
+const ACCESS_DAYS = 30
+
+/** Fin de l'accès aux données déverrouillées : escrow + 30 jours (E5-US04). */
+export function accessExpiresAt(escrowExpiresAt: Date): Date {
+  return new Date(escrowExpiresAt.getTime() + ACCESS_DAYS * 24 * HOUR_MS)
 }
 
 /** Clé éphémère de l'escrow : créée au premier dépôt, expire avec l'escrow (Redis fait le ménage). */
@@ -305,6 +312,11 @@ export async function verify(token: string, body: VerifyBody, now = new Date()):
     where: { id: tr.id },
     data: { status: 'in_progress', k1_completed: unlocked.k1, k2_completed: unlocked.k2, k3_completed: unlocked.k3 },
   })
+  if (unlocked.k1 || unlocked.k2 || unlocked.k3) {
+    // E5-US04 : l'accès dure 30 jours au-delà de l'escrow — la clé éphémère doit y survivre.
+    const accessEnd = accessExpiresAt(tr.escrow_expires_at)
+    await redis().expire(escrowKeyId(tr.id), Math.max(1, Math.ceil((accessEnd.getTime() - now.getTime()) / 1000)))
+  }
   return { accepted: true, answered: await answeredCount(tr.id), needed, unlocked }
 }
 
@@ -405,11 +417,12 @@ export async function confirm(token: string, now = new Date()): Promise<ConfirmR
   const pending = await prisma().transmission_contacts.count({ where: { transmission_id: tr.id, status: 'answered' } })
   if (pending > 0) return { confirmed: true, transmission_status: tr.status }
 
-  await purge(tr.id, tr.user_id, tr.transmission_config_id, now)
+  await purgeTransmission(tr.id, tr.user_id, tr.transmission_config_id, now)
   return { confirmed: true, transmission_status: 'completed' }
 }
 
-async function purge(transmissionId: string, userId: string, configId: string, now: Date): Promise<void> {
+/** Purge définitive : P2, Si_enc, escrow, clé éphémère ; statut completed des deux côtés. */
+export async function purgeTransmission(transmissionId: string, userId: string, configId: string, now: Date): Promise<void> {
   const store = objectStore()
   await store.deletePrefix(vaultPrefix(userId))
   await store.deletePrefix(`shares/${userId}/`)
