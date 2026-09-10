@@ -1,7 +1,8 @@
 # RELAIS — Backend : notes d'implémentation
 
-**Specs de référence** : Backend Specs v1.1, Specs Techniques v1.2, Journal des
-Décisions v1.0 + Addendum v1.1, Schéma PostgreSQL v1.3.
+**Specs de référence** : Backend Specs v1.1 + patch DEC-28/29/30, Specs
+Techniques v1.2 + patch, Journal des Décisions v1.0 + Addendum v1.1 + patch
+(DEC-28 à DEC-30), Schéma PostgreSQL v1.3.
 
 Ce document ne redécrit pas l'API — il consigne ce qui a été décidé en la
 construisant, les écarts par rapport aux specs, et ce qui a été vérifié.
@@ -19,9 +20,12 @@ apps/api/
     middleware/              authenticate, requireStepUp
     services/email/          transports console/Resend, templates FR/EN, email_log
     services/storage/        stockage objet : memory / fs / S3 (Storj)
+    services/secrets/        relais_x25519_sk — seul secret cryptographique serveur (DEC-30)
+    lib/sodium.ts            libsodium-wrappers chargé en CommonJS (son entrée ESM est cassée)
     api/health/              GET /health
     api/auth/                schemas, service, routes
     api/vault/               sync, sync-status, restore
+    api/transmission/        contacts, schéma, activation, pause, vérification annuelle
   test/                      Vitest + Supertest sur PostgreSQL et Redis réels
 scripts/dev-services.sh      PostgreSQL 16 + Redis jetables, migrations + seed
 ```
@@ -31,7 +35,8 @@ Prisma 6 sur le schéma racine, ioredis, Vitest + Supertest, Pino.
 
 ## 2. Périmètre livré
 
-Le module **auth** de §3.1 v1.1, le module **vault** de §3.3 v1.1, et `/health` :
+Le module **auth** de §3.1 v1.1, le module **vault** de §3.3 v1.1, le module
+**transmission** de §3.4 (côté owner), et `/health` :
 
 | Endpoint | Note |
 |---|---|
@@ -54,9 +59,21 @@ Le module **auth** de §3.1 v1.1, le module **vault** de §3.3 v1.1, et `/health
 | `POST /vault/sync` | Blob chiffré + signature Ed25519 (DEC-07), taille plafonnée par `vault.max_size_mb` |
 | `GET /vault/sync-status` | Date et taille par catégorie, lues sur le stockage |
 | `POST /vault/restore` | Renvoie le blob tel quel |
+| `GET /transmission/relais-key` | **Public**, 60/min/IP, cache 24 h — DEC-28 |
+| `GET /transmission/config` | État complet, contacts inclus (jamais `removed`) |
+| `POST /transmission/contacts` | Note-01, limite de plan, signature et sealed box vérifiées |
+| `PUT /transmission/contacts/:id` | Step-up `edit_contacts`, mêmes règles |
+| `DELETE /transmission/contacts/:id` | Step-up `edit_contacts`, retrait logique |
+| `PUT /transmission/schema` | Step-up `edit_contacts`, N ≥ 2, M ≥ N |
+| `PUT /transmission/config` | Step-up `edit_transmission`, DEC-22 |
+| `POST /transmission/activate` | Step-up `activate_transmission` — DEC-29, DEC-30, voir §3 |
+| `POST /transmission/pause` · `DELETE /transmission/pause` | E4-US04, 7 / 30 / 90 jours, plafond `dms.pause_max_months` |
+| `DELETE /transmission` | Step-up `delete_transmission`, parts purgées |
+| `POST /transmission/contacts/:id/verify` | Vérification annuelle — attestation signée, voir §3 |
 
-Non livré : `/user/*`, `/transmission/*`, `/checkin/*`, `/journal/*`,
-`/relay/*`, `/admin/*`, les jobs BullMQ.
+Non livré : `/user/*`, `PUT /transmission/recipients` (sans objet depuis
+DEC-23), `/checkin/*`, `/journal/*`, `/relay/*`, `/admin/*`, les jobs BullMQ,
+l'enregistrement Arbitrum (voir §3).
 
 ## 3. Décisions et écarts par rapport aux specs
 
@@ -185,6 +202,93 @@ imposé par le service vault, pas par l'appelant.
 `/health` rapporte `storj: unconfigured` tant que le backend n'est pas `s3`,
 plutôt que `ok` pour un dossier local.
 
+### Transmission : `GET /relais-key` est public, la clé privée vit dans `secrets`
+
+DEC-28 : l'app scelle `{ email, phone }` avec `crypto_box_seal` vers la clé
+X25519 de Relais. L'endpoint est public (l'app en a besoin avant tout
+compte), limité à 60/min/IP, servi avec `Cache-Control: public,
+max-age=86400`, et renvoie `key_version` (16 hex de SHA256 de la clé
+publique) pour que l'app sache avec quelle clé chaque boîte a été scellée
+si la clé tourne un jour.
+
+DEC-30 : la clé privée est lue **uniquement** par
+`services/secrets` (`getRelaisX25519Sk()`), depuis `RELAIS_X25519_SK` (hex
+64 ou base64 44) en dev et test ; brancher HashiCorp Vault
+(`relais/x25519_sk`) en prod se fera dans ce seul module.
+
+### Transmission : la sealed box est ouverte à la création, pas seulement à l'activation
+
+Un contact dont la boîte ne s'ouvre pas avec la clé de Relais, ou ne
+contient pas d'email, est inutile le jour venu. `POST /contacts` l'ouvre
+donc et vérifie la forme (`{ email, phone }`, email valide) avant
+d'accepter — puis jette le clair. Il n'est ni stocké ni loggé ; il n'est
+relu qu'à l'activation, le temps d'envoyer l'email (DEC-30).
+
+### Transmission : le serveur choisit le chemin des parts et calcule le hash
+
+Le corps de `POST /activate` spécifié envoie `storj_kN_path` et
+`share_kN_hash` choisis par le client. Ici le client envoie les octets :
+`shares.kN = { enc, sig }` (`enc` = Si_enc, `sig` = Ed25519 sur
+SHA256(Si_enc), DEC-29). Le serveur :
+
+- vérifie **toutes** les signatures avant la moindre écriture — une seule
+  invalide rejette l'activation (401), rien n'est persisté ;
+- exige une part par rôle détenu, aucune pour les autres ;
+- dépose chaque part à `shares/{user_id}/{contact_id}/kN.enc` et calcule
+  `share_kN_hash` lui-même. Un chemin choisi par le client ne pourrait ni
+  être vérifié, ni être protégé contre l'écrasement d'un autre objet.
+
+Les noms de champs suivent ceux de `POST /contacts` (`roles`, `question_ids`,
+`schema: { n, m }`) plutôt que `has_kN_role` / `question_N_id` / `schema_n`.
+
+Le corps doit reprendre **chaque contact vivant, une fois** (re-signé,
+revalidé — l'activation est la version définitive), sinon 400 avec les
+identifiants manquants ou inconnus. Préconditions, en 409
+`TRANSMISSION_NOT_CONFIGURED` : au moins deux contacts, M ≤ nombre de
+contacts, au moins un détenteur du rôle K1.
+
+L'activation vaut premier check-in : `last_checkin_at = maintenant`,
+`next_checkin_due = maintenant + checkin_frequency_weeks`.
+
+### Transmission : pas d'Arbitrum
+
+L'étape 5 de l'activation (`contract.register()`) n'est pas implémentée :
+pas de service blockchain dans ce lot, `contract_registered` reste `false`.
+Les hashes sont en base et prêts à être poussés. Consigné dans
+`docs/open-questions.md`.
+
+### Transmission : l'email de désignation réutilise `transmission_contact`
+
+DEC-30 envoie un email à chaque contact dès l'activation. `email_log` ne
+connaît qu'un type pour les contacts, `transmission_contact`, dont le texte
+est écrit pour le déclenchement (« suivez ce lien »). Il est réutilisé tel
+quel avec `link = FRONTEND_URL/contact`, sans nom d'owner (le serveur n'en
+a pas). Un texte de désignation dédié est à écrire — point ouvert.
+
+### Transmission : contacts et schéma figés une fois active
+
+Les parts Shamir dépendent des contacts, de leurs rôles, de leurs questions
+et du schéma. Après activation, `POST/PUT/DELETE /contacts` et
+`PUT /schema` répondent 409 `TRANSMISSION_ALREADY_ACTIVE`. Le parcours de
+modification est : `DELETE /transmission` (parts purgées, contacts
+conservés) → modifier → `POST /activate` avec de nouvelles parts signées.
+`PUT /config` (silence, fréquence) reste possible à tout moment.
+
+### Transmission : vérification annuelle = attestation signée
+
+§7.2 : l'owner ressaisit ses réponses, l'app dérive K_i et ouvre
+`verify_token` localement. Le serveur ne voit ni réponses ni K_i ; il ne
+peut que dater l'attestation. `GET /config` expose `verify_token` à l'owner,
+et `POST /contacts/:id/verify` exige `Ed25519.sign(SHA256(verify_token))`
+avec la clé de l'owner — même preuve de possession que le vault (DEC-07).
+Sans cela, n'importe quel porteur d'access token pourrait « vérifier ».
+
+### Transmission : pause = `edit_transmission`
+
+DEC-25 ne liste pas d'action pour la pause ; E4-US04 exige le PIN.
+`POST /pause` utilise `edit_transmission`. La reprise (`DELETE /pause`) ne
+demande pas de PIN — elle ne fait que réarmer le check-in.
+
 ### Codes de récupération 2FA : pas de table
 
 E6-US02 : « des codes de récupération d'urgence sont générés et affichés une
@@ -201,10 +305,13 @@ manque, perdre son authenticateur signifie passer par le support.
 | K1 / K2 / K3 | jamais transmis |
 | Adresse email dans les logs | `email_log.recipient_hash` est un SHA256 ; les logs Pino hachent userId et IP |
 | Mot de passe | Argon2id, 64 MiB / 3 passes |
+| Email et téléphone des contacts | scellés vers la clé de Relais (DEC-28) ; ouverts en mémoire à la création (forme) et à l'activation (envoi), jamais stockés en clair, jamais loggés |
+| Parts Shamir, `secret_enc`, `verify_token` | blobs opaques ; le serveur n'en connaît que la taille et le hash |
+| Réponses aux questions secrètes, K_i | jamais transmis — la vérification annuelle est une attestation signée |
 
 ## 5. Vérifications
 
-39 tests d'intégration, sur PostgreSQL 16 et Redis réels, base reconstruite
+85 tests d'intégration, sur PostgreSQL 16 et Redis réels, base reconstruite
 depuis les migrations et le seed à chaque run. Chaque test repart d'une base
 et d'un stockage vides. Ils couvrent notamment :
 
@@ -229,6 +336,21 @@ et d'un stockage vides. Ils couvrent notamment :
   catégorie ; sync-status vide puis renseigné ; restore rend les octets
   intacts ; catégorie absente → `NOT_FOUND` ; un utilisateur ne voit jamais
   le backup d'un autre
+- transmission (46 tests, écrits **avant** le code) : `relais-key` public et
+  cacheable ; Note-01 (journal, score < 6, doublon, inconnue → 400 avec les
+  identifiants) ; aucun rôle → 400 ; limites de plan 2 / 5, contact retiré
+  non compté ; signature d'une autre clé → 401 ; sealed box vers une autre
+  clé → 400 ; sans clé publique → 409 ; PUT/DELETE avec step-up, 404 hors
+  périmètre, position jamais réattribuée ; schéma et délais hors catalogue
+  → 400 ; activation : < 2 contacts, M > contacts, sans K1 → 409 ; part
+  manquante ou en trop → 400 ; contact absent du corps → 400 ; **une seule
+  signature de part invalide → 401 et rien n'est persisté** (ni objet, ni
+  statut, ni email) ; activation réussie : parts sur le stockage au chemin
+  serveur, hash et `verify_token` en base, check-in planifié, deux emails
+  tracés par hash ; seconde activation → 409 ; contacts et schéma figés ;
+  pause 30 jours, plafond `dms.pause_max_months`, reprise réarme le
+  check-in ; désactivation purge les parts et rend les contacts modifiables ;
+  vérification annuelle signée, mauvaise clé → 401, avant activation → 409
 
 ```bash
 scripts/dev-services.sh start     # PostgreSQL + Redis jetables
