@@ -14,8 +14,8 @@ d'implémentation.
 |---|---|
 | Specs produit, techniques, backend, frontend, back office | ✅ v1 (`docs/specs/`) |
 | Schéma PostgreSQL v1.3 | ✅ Implémenté et testé (`prisma/`) |
-| API backend — auth, vault, transmission | ✅ 32 endpoints, 85 tests d'intégration (`apps/api/`) |
-| API backend — check-in, journal, relay, admin, jobs | ⬜ À faire |
+| API backend — auth, vault, transmission, check-in, job deadman | ✅ 38 endpoints, 113 tests d'intégration (`apps/api/`) |
+| API backend — journal, relay (déclenchement), admin | ⬜ À faire |
 | App mobile | ⬜ Non démarré |
 | Back office | ⬜ Non démarré |
 | Smart contract Arbitrum | ⬜ Reporté |
@@ -69,7 +69,7 @@ npm install
 scripts/dev-services.sh start          # PostgreSQL 16 + Redis jetables, migrations + seed
 cp apps/api/.env.example apps/api/.env # puis renseigner les secrets (openssl rand -hex 32)
 npm run dev                            # http://localhost:3000/health
-npm test                               # 85 tests d'intégration sur base réelle
+npm test                               # 113 tests d'intégration sur base réelle
 npm run typecheck && npm run lint
 ```
 
@@ -78,7 +78,9 @@ step-up (DEC-25), clé publique et restauration Ed25519 (DEC-06),
 réinitialisation, 2FA TOTP ; backup chiffré signé (DEC-07) sur stockage objet
 (mémoire / fichiers / Storj) ; contacts de confiance scellés vers la clé de
 Relais (DEC-28), parts Shamir signées (DEC-29), activation, pause,
-vérification annuelle. Le module transmission a été écrit test-first.
+vérification annuelle ; check-in mensuel par mini-jeu côté serveur, streak et
+badges, relances J+7/14/21 et déclenchement par un job BullMQ quotidien
+(`JOBS_ENABLED=true`). Transmission et check-in ont été écrits test-first.
 Détails et écarts dans [`docs/backend.md`](docs/backend.md).
 
 ## Principe non négociable

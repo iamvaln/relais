@@ -11,6 +11,7 @@ import { healthRoutes } from './api/health/routes.js'
 import { authRoutes } from './api/auth/routes.js'
 import { vaultRoutes } from './api/vault/routes.js'
 import { transmissionRoutes } from './api/transmission/routes.js'
+import { checkinRoutes } from './api/checkin/routes.js'
 
 // Fastify logge par défaut une ligne à l'arrivée et une au départ de chaque
 // requête ; on les coupe et on écrit la nôtre dans onResponse (userId et IP
@@ -65,6 +66,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(authRoutes, { prefix: '/auth' })
   await app.register(vaultRoutes, { prefix: '/vault' })
   await app.register(transmissionRoutes, { prefix: '/transmission' })
+  await app.register(checkinRoutes, { prefix: '/checkin' })
 
   return app
 }

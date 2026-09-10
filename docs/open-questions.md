@@ -115,3 +115,19 @@ Consignés dans `docs/backend.md` §3 : le client envoie les octets des parts
 (`shares.kN.{enc, sig}`) et non `storj_kN_path` + `share_kN_hash` ; les
 champs reprennent la forme de `POST /contacts` (`roles`, `question_ids`,
 `schema`). À répercuter dans la spec v1.4 si l'équipe les adopte.
+
+---
+
+## 7. 🟢 Check-in : trois choix que la spec laisse ouverts
+
+Tranchés avec le fondateur, consignés dans `docs/backend.md` §3 :
+
+| Point | Décision |
+|---|---|
+| Qui fournit le mini-jeu et vérifie la réponse | Le serveur (bibliothèque intégrée, jeton à usage unique). « Validé par simple ouverture de l'app » (E4-US01) non retenu côté API. |
+| Ce que compte le streak | Mois calendaires consécutifs ; badges `first_checkin`, `streak_3`, `streak_6`, `streak_12`. |
+| Relances et déclenchement | Relances à J+7/14/21 (`dms.relance_intervals_days`) ; déclenchement après les trois relances **et** `silence_duration_months` écoulé — le pseudo-code §4.2 (« relance 3 + 21 j ») rendait ce paramètre inopérant. |
+
+À répercuter dans la spec v1.4. Reste à écrire : `deadman:trigger` (module
+relay) et un texte d'énigmes plus fourni — la bibliothèque compte 13 défis,
+suffisant pour tester, pas pour un an d'usage.
