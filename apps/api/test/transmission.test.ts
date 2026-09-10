@@ -1,7 +1,7 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest'
 import { prisma } from '../src/lib/prisma.js'
 import sodium from '../src/lib/sodium.js'
-import { api, closeAll, generateDeviceKeys, registerUser, resetState, signWith, type DeviceKeys } from './helpers.js'
+import { api, closeAll, generateDeviceKeys, registerUser, resetState, signWith, stepUp, type DeviceKeys } from './helpers.js'
 import { buildContactBody, fetchRelaisKey, sealToRelais } from './transmission-helpers.js'
 
 /** Owner avec clé publique enregistrée + clé de Relais récupérée. */
@@ -212,5 +212,141 @@ describe('POST /transmission/contacts', () => {
       const r = await (await api()).post('/transmission/contacts').set(o.auth).send(await validBody(o)).expect(409)
       expect(r.body.error.code).toBe('AUTH_KEY_NOT_SET')
     })
+  })
+})
+
+// --- Modification (step-up edit_contacts / edit_transmission) --------------------
+
+type Owner = Awaited<ReturnType<typeof owner>>
+
+async function contactBody(o: Owner, seed = 1, roles: { k1?: boolean; k2?: boolean; k3?: boolean } = { k1: true }) {
+  const [q1, q2, q3] = (await secretQuestionIds(3)) as [string, string, string]
+  return buildContactBody(o.keys, o.relaisPk, {
+    notification: { email: `contact${seed}@example.cm`, phone: '+237699000000' },
+    roles,
+    question_ids: [q1, q2, q3],
+    secretSeed: seed,
+  })
+}
+
+async function createContact(o: Owner, seed = 1): Promise<string> {
+  const r = await (await api()).post('/transmission/contacts').set(o.auth).send(await contactBody(o, seed)).expect(201)
+  return r.body.data.id as string
+}
+
+describe('PUT /transmission/contacts/:id', () => {
+  it('exige un step-up edit_contacts', async () => {
+    const o = await owner()
+    const id = await createContact(o)
+    const r = await (await api()).put(`/transmission/contacts/${id}`).set(o.auth).send(await contactBody(o, 2)).expect(403)
+    expect(r.body.error.code).toBe('AUTH_STEPUP_REQUIRED')
+  })
+
+  it('remplace rôles, questions et notification en gardant la position', async () => {
+    const o = await owner()
+    const id = await createContact(o)
+    const [, , , q4] = (await secretQuestionIds(4)) as [string, string, string, string]
+    const body = await contactBody(o, 2, { k2: true, k3: true })
+    body.question_ids = [body.question_ids[0], body.question_ids[1], q4]
+    const su = await stepUp(o.accessToken, 'edit_contacts')
+    const r = await (await api()).put(`/transmission/contacts/${id}`).set(o.auth).set('X-Step-Up-Token', su).send(body).expect(200)
+    expect(r.body.data).toMatchObject({ id, position: 1, roles: { k1: false, k2: true, k3: true }, question_ids: body.question_ids })
+    const row = await prisma().trusted_contacts.findUniqueOrThrow({ where: { id } })
+    expect(Buffer.from(row.notification_enc).toString('base64')).toBe(body.notification_enc)
+    expect(Buffer.from(row.secret_enc).toString('base64')).toBe(body.secret_enc)
+  })
+
+  it('applique les mêmes règles que la création (question journal refusée)', async () => {
+    const o = await owner()
+    const id = await createContact(o)
+    const journal = await prisma().checkin_questions.findFirstOrThrow({ where: { usage_type: 'journal' }, select: { id: true } })
+    const body = await contactBody(o, 2)
+    body.question_ids = [body.question_ids[0], body.question_ids[1], journal.id]
+    const su = await stepUp(o.accessToken, 'edit_contacts')
+    const r = await (await api()).put(`/transmission/contacts/${id}`).set(o.auth).set('X-Step-Up-Token', su).send(body).expect(400)
+    expect(r.body.error.details.question_ids).toContain(journal.id)
+  })
+
+  it('répond 404 pour le contact d’un autre utilisateur', async () => {
+    const a = await owner('a@example.cm')
+    const b = await owner('b@example.cm')
+    const id = await createContact(a)
+    const su = await stepUp(b.accessToken, 'edit_contacts')
+    await (await api()).put(`/transmission/contacts/${id}`).set(b.auth).set('X-Step-Up-Token', su).send(await contactBody(b, 2)).expect(404)
+  })
+})
+
+describe('DELETE /transmission/contacts/:id', () => {
+  it('retire le contact : il disparaît de la config mais la ligne reste (removed)', async () => {
+    const o = await owner()
+    const id = await createContact(o)
+    const su = await stepUp(o.accessToken, 'edit_contacts')
+    const r = await (await api()).delete(`/transmission/contacts/${id}`).set(o.auth).set('X-Step-Up-Token', su).expect(200)
+    expect(r.body.data).toEqual({ id, status: 'removed' })
+    const cfg = await (await api()).get('/transmission/config').set(o.auth).expect(200)
+    expect(cfg.body.data.contacts).toEqual([])
+    const row = await prisma().trusted_contacts.findUniqueOrThrow({ where: { id } })
+    expect(row.contact_status).toBe('removed')
+  })
+
+  it('un contact déjà retiré répond 404', async () => {
+    const o = await owner()
+    const id = await createContact(o)
+    const su1 = await stepUp(o.accessToken, 'edit_contacts')
+    await (await api()).delete(`/transmission/contacts/${id}`).set(o.auth).set('X-Step-Up-Token', su1).expect(200)
+    const su2 = await stepUp(o.accessToken, 'edit_contacts')
+    await (await api()).delete(`/transmission/contacts/${id}`).set(o.auth).set('X-Step-Up-Token', su2).expect(404)
+  })
+
+  it('le contact suivant prend la position libre suivante, jamais une position déjà attribuée', async () => {
+    const o = await owner()
+    const first = await createContact(o, 1)
+    const su = await stepUp(o.accessToken, 'edit_contacts')
+    await (await api()).delete(`/transmission/contacts/${first}`).set(o.auth).set('X-Step-Up-Token', su).expect(200)
+    const r = await (await api()).post('/transmission/contacts').set(o.auth).send(await contactBody(o, 2)).expect(201)
+    expect(r.body.data.position).toBe(2)
+  })
+})
+
+describe('PUT /transmission/schema', () => {
+  it('enregistre un schéma N-of-M valide (step-up edit_contacts)', async () => {
+    const o = await owner()
+    const su = await stepUp(o.accessToken, 'edit_contacts')
+    const r = await (await api()).put('/transmission/schema').set(o.auth).set('X-Step-Up-Token', su).send({ n: 2, m: 3 }).expect(200)
+    expect(r.body.data.schema).toEqual({ n: 2, m: 3 })
+    const cfg = await (await api()).get('/transmission/config').set(o.auth).expect(200)
+    expect(cfg.body.data.schema).toEqual({ n: 2, m: 3 })
+  })
+
+  it('refuse N < 2 et M < N', async () => {
+    const o = await owner()
+    for (const bad of [{ n: 1, m: 2 }, { n: 3, m: 2 }]) {
+      const su = await stepUp(o.accessToken, 'edit_contacts')
+      const r = await (await api()).put('/transmission/schema').set(o.auth).set('X-Step-Up-Token', su).send(bad).expect(400)
+      expect(r.body.error.code).toBe('VALIDATION_ERROR')
+    }
+  })
+})
+
+describe('PUT /transmission/config', () => {
+  it('enregistre silence et fréquence de check-in (step-up edit_transmission)', async () => {
+    const o = await owner()
+    const su = await stepUp(o.accessToken, 'edit_transmission')
+    const r = await (await api())
+      .put('/transmission/config')
+      .set(o.auth)
+      .set('X-Step-Up-Token', su)
+      .send({ silence_duration_months: 6, checkin_frequency_weeks: 2 })
+      .expect(200)
+    expect(r.body.data).toMatchObject({ silence_duration_months: 6, checkin_frequency_weeks: 2, status: 'inactive' })
+  })
+
+  it('refuse une durée hors catalogue (DEC-22 : 1, 3 ou 6 mois ; 1, 2 ou 4 semaines)', async () => {
+    const o = await owner()
+    for (const bad of [{ silence_duration_months: 2, checkin_frequency_weeks: 4 }, { silence_duration_months: 3, checkin_frequency_weeks: 3 }]) {
+      const su = await stepUp(o.accessToken, 'edit_transmission')
+      const r = await (await api()).put('/transmission/config').set(o.auth).set('X-Step-Up-Token', su).send(bad).expect(400)
+      expect(r.body.error.code).toBe('VALIDATION_ERROR')
+    }
   })
 })

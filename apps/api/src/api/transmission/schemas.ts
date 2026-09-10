@@ -36,3 +36,40 @@ export interface ContactBody {
   roles: Roles
   question_ids: [string, string, string]
 }
+
+export const contactParams = {
+  type: 'object',
+  required: ['id'],
+  additionalProperties: false,
+  properties: { id: uuid },
+} as const
+export interface ContactParams {
+  id: string
+}
+
+/** Schéma N-of-M : N contacts suffisent parmi M (N ≥ 2, M ≥ N — chk transmission_configs). */
+export const schemaBody = {
+  type: 'object',
+  required: ['n', 'm'],
+  additionalProperties: false,
+  properties: { n: { type: 'integer', minimum: 2 }, m: { type: 'integer', minimum: 2 } },
+} as const
+export interface SchemaBody {
+  n: number
+  m: number
+}
+
+/** DEC-22 : catalogues fixes (dms.durations_available, dms.checkin_frequencies). */
+export const configBody = {
+  type: 'object',
+  required: ['silence_duration_months', 'checkin_frequency_weeks'],
+  additionalProperties: false,
+  properties: {
+    silence_duration_months: { type: 'integer', enum: [1, 3, 6] },
+    checkin_frequency_weeks: { type: 'integer', enum: [1, 2, 4] },
+  },
+} as const
+export interface ConfigBody {
+  silence_duration_months: 1 | 3 | 6
+  checkin_frequency_weeks: 1 | 2 | 4
+}

@@ -6,7 +6,7 @@ import { AppError } from '../../lib/errors.js'
 import { prisma } from '../../lib/prisma.js'
 import sodium from '../../lib/sodium.js'
 import { relaisKeypair } from '../../services/secrets/index.js'
-import type { ContactBody, Roles } from './schemas.js'
+import type { ConfigBody, ContactBody, Roles, SchemaBody } from './schemas.js'
 
 // --- Vues -----------------------------------------------------------------------
 
@@ -212,7 +212,15 @@ function decodeOrThrow(field: string, value: string): Uint8Array<ArrayBuffer> {
   return new Uint8Array(bytes)
 }
 
-export async function createContact(userId: string, body: ContactBody): Promise<ContactView> {
+interface ValidatedContact {
+  notificationEnc: Uint8Array<ArrayBuffer>
+  notificationSig: Uint8Array<ArrayBuffer>
+  secretEnc: Uint8Array<ArrayBuffer>
+  plan: string
+}
+
+/** Règles communes à POST et PUT : décodage, rôles, questions, clé de l'owner, signature, sealed box. */
+async function validateContactInput(userId: string, body: ContactBody): Promise<ValidatedContact> {
   const notificationEnc = decodeOrThrow('notification_enc', body.notification_enc)
   const notificationSig = decodeOrThrow('notification_sig', body.notification_sig)
   const secretEnc = decodeOrThrow('secret_enc', body.secret_enc)
@@ -222,29 +230,79 @@ export async function createContact(userId: string, body: ContactBody): Promise<
   const { plan, ed25519Pk } = await ownerKey(userId)
   verifyNotificationSig(ed25519Pk, notificationEnc, notificationSig)
   await assertSealedBoxOpens(notificationEnc)
+  return { notificationEnc, notificationSig, secretEnc, plan }
+}
+
+function contactColumns(body: ContactBody, v: ValidatedContact) {
+  return {
+    notification_enc: v.notificationEnc,
+    notification_sig: v.notificationSig,
+    notification_hash: sha256Hex(Buffer.concat([Buffer.from(v.notificationEnc), Buffer.from(v.notificationSig)])),
+    secret_enc: v.secretEnc,
+    has_k1_role: body.roles.k1,
+    has_k2_role: body.roles.k2,
+    has_k3_role: body.roles.k3,
+    question_1_id: body.question_ids[0],
+    question_2_id: body.question_ids[1],
+    question_3_id: body.question_ids[2],
+  }
+}
+
+export async function createContact(userId: string, body: ContactBody): Promise<ContactView> {
+  const v = await validateContactInput(userId, body)
 
   const cfg = await ensureConfig(userId)
-  await assertPlanAllowsOneMore(cfg.id, plan)
+  await assertPlanAllowsOneMore(cfg.id, v.plan)
   const last = await prisma().trusted_contacts.aggregate({ where: { transmission_id: cfg.id }, _max: { contact_order: true } })
   const position = (last._max.contact_order ?? 0) + 1
 
   const row = await prisma().trusted_contacts.create({
-    data: {
-      transmission_id: cfg.id,
-      user_id: userId,
-      contact_order: position,
-      notification_enc: notificationEnc,
-      notification_sig: notificationSig,
-      notification_hash: sha256Hex(Buffer.concat([Buffer.from(notificationEnc), Buffer.from(notificationSig)])),
-      secret_enc: secretEnc,
-      has_k1_role: body.roles.k1,
-      has_k2_role: body.roles.k2,
-      has_k3_role: body.roles.k3,
-      question_1_id: body.question_ids[0],
-      question_2_id: body.question_ids[1],
-      question_3_id: body.question_ids[2],
-    },
+    data: { transmission_id: cfg.id, user_id: userId, contact_order: position, ...contactColumns(body, v) },
     select: contactSelect,
   })
   return toContactView(row)
+}
+
+/** Un contact vivant (non retiré) appartenant à l'utilisateur, sinon 404. */
+async function findOwnContact(userId: string, id: string): Promise<{ id: string }> {
+  const c = await prisma().trusted_contacts.findFirst({
+    where: { id, user_id: userId, contact_status: { not: 'removed' } },
+    select: { id: true },
+  })
+  if (!c) throw new AppError('NOT_FOUND', { message: 'Contact introuvable.' })
+  return c
+}
+
+export async function updateContact(userId: string, id: string, body: ContactBody): Promise<ContactView> {
+  await findOwnContact(userId, id)
+  const v = await validateContactInput(userId, body)
+  const row = await prisma().trusted_contacts.update({ where: { id }, data: contactColumns(body, v), select: contactSelect })
+  return toContactView(row)
+}
+
+/** Retrait logique : la ligne reste (audit, positions), le contact sort de la config. */
+export async function removeContact(userId: string, id: string): Promise<{ id: string; status: 'removed' }> {
+  await findOwnContact(userId, id)
+  await prisma().trusted_contacts.update({ where: { id }, data: { contact_status: 'removed' } })
+  return { id, status: 'removed' }
+}
+
+// --- Schéma et délais ---------------------------------------------------------------
+
+export async function updateSchema(userId: string, body: SchemaBody): Promise<TransmissionConfigView> {
+  if (body.m < body.n) {
+    throw new AppError('VALIDATION_ERROR', { details: { m: 'M doit être supérieur ou égal à N' } })
+  }
+  await ensureConfig(userId)
+  await prisma().transmission_configs.update({ where: { user_id: userId }, data: { schema_n: body.n, schema_m: body.m } })
+  return getConfig(userId)
+}
+
+export async function updateConfig(userId: string, body: ConfigBody): Promise<TransmissionConfigView> {
+  await ensureConfig(userId)
+  await prisma().transmission_configs.update({
+    where: { user_id: userId },
+    data: { silence_duration_months: body.silence_duration_months, checkin_frequency_weeks: body.checkin_frequency_weeks },
+  })
+  return getConfig(userId)
 }

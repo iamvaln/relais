@@ -3,10 +3,20 @@
 import type { FastifyInstance } from 'fastify'
 import { ok } from '../../lib/errors.js'
 import { authenticate } from '../../middleware/authenticate.js'
+import { requireStepUp } from '../../middleware/require-step-up.js'
 import { limits } from '../../plugins/rate-limit.js'
 import { relaisKeyVersion, relaisPublicKeyBase64 } from '../../services/secrets/index.js'
 import * as transmission from './service.js'
-import { contactBody, type ContactBody } from './schemas.js'
+import {
+  configBody,
+  contactBody,
+  contactParams,
+  schemaBody,
+  type ConfigBody,
+  type ContactBody,
+  type ContactParams,
+  type SchemaBody,
+} from './schemas.js'
 
 export async function transmissionRoutes(app: FastifyInstance): Promise<void> {
   app.get('/config', { preHandler: [authenticate] }, async (req) => ok(await transmission.getConfig(req.user!.id)))
@@ -25,5 +35,29 @@ export async function transmissionRoutes(app: FastifyInstance): Promise<void> {
       reply.status(201)
       return ok(await transmission.createContact(req.user!.id, req.body))
     },
+  )
+
+  app.put<{ Params: ContactParams; Body: ContactBody }>(
+    '/contacts/:id',
+    { schema: { params: contactParams, body: contactBody }, preHandler: [authenticate, requireStepUp('edit_contacts')] },
+    async (req) => ok(await transmission.updateContact(req.user!.id, req.params.id, req.body)),
+  )
+
+  app.delete<{ Params: ContactParams }>(
+    '/contacts/:id',
+    { schema: { params: contactParams }, preHandler: [authenticate, requireStepUp('edit_contacts')] },
+    async (req) => ok(await transmission.removeContact(req.user!.id, req.params.id)),
+  )
+
+  app.put<{ Body: SchemaBody }>(
+    '/schema',
+    { schema: { body: schemaBody }, preHandler: [authenticate, requireStepUp('edit_contacts')] },
+    async (req) => ok(await transmission.updateSchema(req.user!.id, req.body)),
+  )
+
+  app.put<{ Body: ConfigBody }>(
+    '/config',
+    { schema: { body: configBody }, preHandler: [authenticate, requireStepUp('edit_transmission')] },
+    async (req) => ok(await transmission.updateConfig(req.user!.id, req.body)),
   )
 }
