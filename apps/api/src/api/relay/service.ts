@@ -15,6 +15,8 @@ import sodium from '../../lib/sodium.js'
 import { emailService } from '../../services/email/index.js'
 import { objectStore } from '../../services/storage/index.js'
 import { openNotification } from '../transmission/service.js'
+import { vaultKey, vaultPrefix } from '../vault/service.js'
+import type { VaultCategory } from '../vault/schemas.js'
 import type { VerifyBody } from './schemas.js'
 
 const HOUR_MS = 3600 * 1000
@@ -304,4 +306,121 @@ export async function verify(token: string, body: VerifyBody, now = new Date()):
     data: { status: 'in_progress', k1_completed: unlocked.k1, k2_completed: unlocked.k2, k3_completed: unlocked.k3 },
   })
   return { accepted: true, answered: await answeredCount(tr.id), needed, unlocked }
+}
+
+// --- Statut (GET /relay/:token/status) --------------------------------------------------
+
+export interface RelayStatusView {
+  status: string
+  contact_status: string
+  answered: number
+  needed: number
+  total: number
+  unlocked: Record<KeySlot, boolean>
+  escrow_expires_at: string
+}
+
+export async function status(token: string, now = new Date()): Promise<RelayStatusView> {
+  const c = await loadContact(token, now)
+  const tr = c.transmissions
+  return {
+    status: tr.status,
+    contact_status: c.status,
+    answered: await answeredCount(tr.id),
+    needed: tr.schema_n_snapshot,
+    total: tr.schema_m_snapshot,
+    unlocked: { k1: tr.k1_completed, k2: tr.k2_completed, k3: tr.k3_completed },
+    escrow_expires_at: tr.escrow_expires_at.toISOString(),
+  }
+}
+
+// --- Données (GET /relay/:token/data) --------------------------------------------------
+
+/** K1 → comptes & accès, K2 → souvenirs, K3 → finances (Techniques §4). */
+const SLOT_CATEGORY: Record<KeySlot, VaultCategory> = { k1: 'accounts', k2: 'messages', k3: 'finances' }
+
+export interface RelayDataView {
+  secret_enc: string
+  categories: Partial<Record<KeySlot, { category: VaultCategory; shares: string[]; p2: string | null }>>
+}
+
+function openShare(key: Uint8Array, sealed: Uint8Array): Uint8Array {
+  const n = sodium.crypto_secretbox_NONCEBYTES
+  return sodium.crypto_secretbox_open_easy(sealed.subarray(n), sealed.subarray(0, n), key)
+}
+
+/**
+ * Les N parts d'une catégorie déverrouillée, déchiffrées de l'escrow, plus
+ * P2 : la reconstitution Shamir et le déchiffrement final se font sur le
+ * device du contact (§6.8). Le serveur ne combine jamais les parts.
+ */
+export async function data(token: string, now = new Date()): Promise<RelayDataView> {
+  const c = await loadContact(token, now)
+  if (c.status !== 'answered' && c.status !== 'confirmed') throw new AppError('RELAY_NOT_UNLOCKED', { message: 'Répondez d’abord aux questions.' })
+  const tr = c.transmissions
+  const tc = c.trusted_contacts
+  const held: Record<KeySlot, boolean> = { k1: tc.has_k1_role, k2: tc.has_k2_role, k3: tc.has_k3_role }
+  const unlocked: Record<KeySlot, boolean> = { k1: tr.k1_completed, k2: tr.k2_completed, k3: tr.k3_completed }
+  const slots = KEY_SLOTS.filter((s) => held[s] && unlocked[s])
+  if (slots.length === 0) throw new AppError('RELAY_NOT_UNLOCKED')
+
+  await sodium.ready
+  const keyHex = await redis().get(escrowKeyId(tr.id))
+  if (!keyHex) throw new AppError('RELAY_NOT_UNLOCKED', { message: 'L’escrow a expiré : les contacts doivent répondre de nouveau.' })
+  const key = new Uint8Array(Buffer.from(keyHex, 'hex'))
+
+  const rows = await prisma().escrow_shares.findMany({ where: { transmission_id: tr.id, key_category: { in: slots } }, orderBy: { created_at: 'asc' } })
+  const store = objectStore()
+  const categories: RelayDataView['categories'] = {}
+  for (const slot of slots) {
+    const p2 = await store.get(vaultKey(tr.user_id, SLOT_CATEGORY[slot]))
+    categories[slot] = {
+      category: SLOT_CATEGORY[slot],
+      shares: rows.filter((r) => r.key_category === slot).map((r) => Buffer.from(openShare(key, r.share_tmp_enc)).toString('base64')),
+      p2: b64(p2),
+    }
+  }
+  return { secret_enc: b64(tc.secret_enc)!, categories }
+}
+
+// --- Confirmation et purge (POST /relay/:token/confirm) -------------------------------
+
+export interface ConfirmResult {
+  confirmed: true
+  transmission_status: string
+}
+
+/**
+ * E5-US05 : « J'ai terminé ». La transmission se termine quand chaque
+ * contact ayant répondu a confirmé — alors tout est purgé (P2, Si_enc,
+ * escrow, clé éphémère) et seul le log reste.
+ */
+export async function confirm(token: string, now = new Date()): Promise<ConfirmResult> {
+  const c = await loadContact(token, now)
+  if (c.status !== 'answered' && c.status !== 'confirmed') throw new AppError('RELAY_NOT_UNLOCKED', { message: 'Répondez d’abord aux questions.' })
+  const tr = c.transmissions
+  if (c.status === 'answered') {
+    await prisma().transmission_contacts.update({ where: { id: c.id }, data: { status: 'confirmed', confirmed_at: now } })
+  }
+  const pending = await prisma().transmission_contacts.count({ where: { transmission_id: tr.id, status: 'answered' } })
+  if (pending > 0) return { confirmed: true, transmission_status: tr.status }
+
+  await purge(tr.id, tr.user_id, tr.transmission_config_id, now)
+  return { confirmed: true, transmission_status: 'completed' }
+}
+
+async function purge(transmissionId: string, userId: string, configId: string, now: Date): Promise<void> {
+  const store = objectStore()
+  await store.deletePrefix(vaultPrefix(userId))
+  await store.deletePrefix(`shares/${userId}/`)
+  await redis().del(escrowKeyId(transmissionId))
+  await prisma().$transaction([
+    prisma().escrow_shares.deleteMany({ where: { transmission_id: transmissionId } }),
+    prisma().trusted_contacts.updateMany({
+      where: { transmission_id: configId },
+      data: { storj_k1_path: null, storj_k2_path: null, storj_k3_path: null },
+    }),
+    prisma().transmissions.update({ where: { id: transmissionId }, data: { status: 'completed', completed_at: now } }),
+    prisma().transmission_configs.update({ where: { id: configId }, data: { status: 'completed' } }),
+  ])
 }

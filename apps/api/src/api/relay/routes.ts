@@ -19,4 +19,22 @@ export async function relayRoutes(app: FastifyInstance): Promise<void> {
     { schema: { params: tokenParams, body: verifyBody } },
     async (req) => ok(await relay.verify(req.params.token, req.body)),
   )
+
+  app.get<{ Params: TokenParams }>(
+    '/:token/status',
+    { schema: { params: tokenParams }, config: { rateLimit: limits.relayRead } },
+    async (req) => ok(await relay.status(req.params.token)),
+  )
+
+  app.get<{ Params: TokenParams }>(
+    '/:token/data',
+    { schema: { params: tokenParams }, config: { rateLimit: limits.relayRead } },
+    async (req) => ok(await relay.data(req.params.token)),
+  )
+
+  app.post<{ Params: TokenParams }>(
+    '/:token/confirm',
+    { schema: { params: tokenParams }, config: { rateLimit: limits.relayWrite } },
+    async (req) => ok(await relay.confirm(req.params.token)),
+  )
 }

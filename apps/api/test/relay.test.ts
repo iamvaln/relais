@@ -5,6 +5,8 @@ import { trigger } from '../src/jobs/deadman.js'
 import { hmacToken } from '../src/lib/crypto.js'
 import { prisma } from '../src/lib/prisma.js'
 import { redis } from '../src/lib/redis.js'
+import { vaultKey } from '../src/api/vault/service.js'
+import { objectStore } from '../src/services/storage/index.js'
 import { api, closeAll, lastEmailTo, mailbox, resetState } from './helpers.js'
 import { activateTransmission, makeOwner, opaque, type ActivationContact, type Owner } from './transmission-helpers.js'
 
@@ -235,5 +237,104 @@ describe('POST /relay/:token/verify — parts en escrow (Techniques §6.7)', () 
     expect(tr.k1_completed).toBe(true)
     const link = await (await api()).get(`/relay/${tokens.contact1}`).expect(200)
     expect(link.body.data).toMatchObject({ status: 'in_progress', answered: 2, contact_status: 'answered' })
+  })
+})
+
+// --- Statut, données, confirmation (E5-US03 à E5-US05) ----------------------------------
+
+const P2_ACCOUNTS = Buffer.from('P2-accounts-blob-chiffre-cote-client')
+
+async function bothAnswered(): Promise<Opened> {
+  const op = await opened()
+  await objectStore().put(vaultKey(op.o.userId, 'accounts'), new Uint8Array(P2_ACCOUNTS))
+  expect((await verify(op.tokens.contact1, { shares: { k1: share(11) } })).status).toBe(200)
+  expect((await verify(op.tokens.contact2, { shares: { k1: share(21) } })).status).toBe(200)
+  return op
+}
+
+describe('GET /relay/:token/status', () => {
+  it('progression : répondu / requis / total, catégories déverrouillées', async () => {
+    const { tokens } = await opened()
+    const r = await (await api()).get(`/relay/${tokens.contact1}/status`).expect(200)
+    expect(r.body.data).toMatchObject({
+      status: 'triggered',
+      contact_status: 'notified',
+      answered: 0,
+      needed: 2,
+      total: 2,
+      unlocked: { k1: false, k2: false, k3: false },
+    })
+    await verify(tokens.contact2, { shares: { k1: share(21) } })
+    const again = await (await api()).get(`/relay/${tokens.contact1}/status`).expect(200)
+    expect(again.body.data).toMatchObject({ status: 'in_progress', contact_status: 'notified', answered: 1 })
+  })
+})
+
+describe('GET /relay/:token/data', () => {
+  it('tant que N parts manquent, ou si le contact n’a pas répondu : 409 RELAY_NOT_UNLOCKED', async () => {
+    const { tokens } = await opened()
+    const before = await (await api()).get(`/relay/${tokens.contact1}/data`).expect(409)
+    expect(before.body.error.code).toBe('RELAY_NOT_UNLOCKED')
+    await verify(tokens.contact1, { shares: { k1: share(11) } })
+    await (await api()).get(`/relay/${tokens.contact1}/data`).expect(409)
+  })
+
+  it('une fois déverrouillé : les N parts de l’escrow, P2 de la catégorie, secret_enc — pour chaque rôle détenu', async () => {
+    const { tokens, contacts } = await bothAnswered()
+    const r = await (await api()).get(`/relay/${tokens.contact1}/data`).expect(200)
+    expect(r.body.data.secret_enc).toBe(contacts[0]!.body.secret_enc)
+    expect(Object.keys(r.body.data.categories)).toEqual(['k1'])
+    const k1 = r.body.data.categories.k1
+    expect(k1.category).toBe('accounts')
+    expect([...k1.shares].sort()).toEqual([share(11), share(21)].sort())
+    expect(Buffer.from(k1.p2, 'base64')).toEqual(P2_ACCOUNTS)
+  })
+
+  it('escrow expiré (clé Redis disparue) : 409, rien de lisible', async () => {
+    const { tokens } = await bothAnswered()
+    const tr = await prisma().transmissions.findFirstOrThrow()
+    await redis().del(`escrow:key:${tr.id}`)
+    const r = await (await api()).get(`/relay/${tokens.contact1}/data`).expect(409)
+    expect(r.body.error.message).toMatch(/escrow/i)
+  })
+})
+
+describe('POST /relay/:token/confirm (E5-US05)', () => {
+  it('un contact qui n’a pas répondu ne peut pas confirmer', async () => {
+    const { tokens } = await opened()
+    const r = await (await api()).post(`/relay/${tokens.contact1}/confirm`).expect(409)
+    expect(r.body.error.code).toBe('RELAY_NOT_UNLOCKED')
+  })
+
+  it('la transmission se termine quand chaque contact ayant répondu a confirmé : purge totale, log conservé', async () => {
+    const { o, tokens, contacts } = await bothAnswered()
+    const tr = await prisma().transmissions.findFirstOrThrow()
+    const first = await (await api()).post(`/relay/${tokens.contact1}/confirm`).expect(200)
+    expect(first.body.data).toEqual({ confirmed: true, transmission_status: 'in_progress' })
+    expect(await prisma().escrow_shares.count()).toBe(2)
+
+    const second = await (await api()).post(`/relay/${tokens.contact2}/confirm`).expect(200)
+    expect(second.body.data).toEqual({ confirmed: true, transmission_status: 'completed' })
+
+    const done = await prisma().transmissions.findUniqueOrThrow({ where: { id: tr.id }, include: { transmission_contacts: true } })
+    expect(done.status).toBe('completed')
+    expect(done.completed_at).not.toBeNull()
+    expect(done.transmission_contacts.every((c) => c.status === 'confirmed' && c.confirmed_at !== null)).toBe(true)
+    expect(await prisma().escrow_shares.count()).toBe(0)
+    expect(await redis().exists(`escrow:key:${tr.id}`)).toBe(0)
+    expect(await objectStore().head(vaultKey(o.userId, 'accounts'))).toBeNull()
+    expect(await objectStore().head(`shares/${o.userId}/${contacts[0]!.id}/k1.enc`)).toBeNull()
+    const tc = await prisma().trusted_contacts.findUniqueOrThrow({ where: { id: contacts[0]!.id } })
+    expect(tc.storj_k1_path).toBeNull()
+    expect((await prisma().transmission_configs.findUniqueOrThrow({ where: { user_id: o.userId } })).status).toBe('completed')
+    // le lien est clos
+    await (await api()).get(`/relay/${tokens.contact1}`).expect(404)
+  })
+
+  it('est limité à 3 requêtes par minute et par IP (§7.1)', async () => {
+    const { tokens } = await bothAnswered()
+    for (let i = 0; i < 3; i++) await (await api()).post(`/relay/${tokens.contact1}/confirm`)
+    const r = await (await api()).post(`/relay/${tokens.contact1}/confirm`).expect(429)
+    expect(r.body.error.code).toBe('RATE_LIMITED')
   })
 })
