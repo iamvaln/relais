@@ -13,7 +13,7 @@ d'implémentation.
 | Livrable | État |
 |---|---|
 | Specs produit, techniques, backend, frontend, back office | ✅ v1 (`docs/specs/`) |
-| Schéma PostgreSQL | 🟡 Proposition à valider (`prisma/`, `docs/schema-postgresql.md`) |
+| Schéma PostgreSQL v1.1 | ✅ Implémenté et testé (`prisma/`) |
 | API backend | ⬜ Non démarré |
 | App mobile | ⬜ Non démarré |
 | Back office | ⬜ Non démarré |
@@ -21,8 +21,9 @@ d'implémentation.
 
 ## Documentation
 
-- [`docs/schema-postgresql.md`](docs/schema-postgresql.md) — le schéma, ses
-  décisions de modélisation, ce qui reste à modéliser
+- [`docs/schema-postgresql.md`](docs/schema-postgresql.md) — notes
+  d'implémentation du schéma : l'écart trouvé dans la spec, les vérifications
+  passées, ce qui reste à faire
 - [`docs/open-questions.md`](docs/open-questions.md) — contradictions relevées
   entre les specs, à trancher avant d'implémenter
 - [`docs/specs/`](docs/specs/) — les 8 documents de spec convertis en markdown
@@ -30,15 +31,27 @@ d'implémentation.
 
 ## Schéma
 
+La spec `specs/Relais_Schema_PostgreSQL_v1.docx` (v1.1) fait foi. Elle est
+implémentée en SQL — **le DDL est la source de vérité**, parce que les CHECK
+constraints, les index partiels et le rôle `audit_writer` ne sont pas
+exprimables en Prisma. `schema.prisma` en est un miroir généré, à ne pas
+éditer à la main.
+
 ```bash
 export DATABASE_URL="postgresql://user:pass@localhost:5432/relais"
-npx prisma validate      # vérifier le schéma
-npx prisma migrate dev   # appliquer sur une base locale
-npx prisma studio        # explorer
+
+# Appliquer (dans cet ordre)
+psql "$DATABASE_URL" -f prisma/migrations/20260410000000_init/migration.sql
+psql "$DATABASE_URL" -f prisma/migrations/20260410000001_audit_writer_role/migration.sql
+
+# Vérifier
+psql "$DATABASE_URL" -f prisma/tests/smoke.sql   # tout est rollbacké
+
+# Régénérer le client typé
+npx prisma db pull && npx prisma generate
 ```
 
-Le DDL complet est versionné dans
-`prisma/migrations/00000000000000_init/migration.sql`.
+20 tables, 76 index, 60 CHECK constraints, 23 lignes `app_config` seedées.
 
 ## Principe non négociable
 
