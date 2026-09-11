@@ -35,9 +35,13 @@ export async function closeAll(): Promise<void> {
 /** Vide les tables mutables — la bibliothèque de questions et app_config restent. */
 export async function resetState(): Promise<void> {
   await prisma().$executeRawUnsafe(`
-    TRUNCATE email_log, restore_challenges, email_otp, sessions, subscriptions, users, admin_users, audit_logs
+    TRUNCATE email_log, restore_challenges, email_otp, sessions, subscriptions, users, audit_logs
     RESTART IDENTITY CASCADE
   `)
+  // admin_users est référencée par app_config.updated_by : un TRUNCATE CASCADE
+  // viderait la configuration BO-05. On détache puis on supprime.
+  await prisma().$executeRawUnsafe(`UPDATE app_config SET updated_by = NULL WHERE updated_by IS NOT NULL`)
+  await prisma().$executeRawUnsafe(`DELETE FROM admin_users`)
   await redis().flushall()
   await objectStore().deletePrefix('')
   mailbox.clear()
