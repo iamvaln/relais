@@ -62,6 +62,5 @@ localhost -p 55432 || scripts/dev-services.sh start` avant les tests.
 
 ## Ce qui n'est pas fait
 
-Logs API (aucune table), tickets support, fournisseur de paiement
-(encaissement manuel en V1), enregistrement Arbitrum, app mobile, interface
-du back office. La liste à jour est dans le README et `docs/backend.md` §2.
+Logs API (aucune table), fournisseur de paiement (encaissement manuel en
+V1), enregistrement Arbitrum, app mobile, interface du back office. La liste à jour est dans le README et `docs/backend.md` §2.

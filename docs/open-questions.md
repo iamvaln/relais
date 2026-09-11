@@ -224,3 +224,15 @@ qui n'existe pas encore.
 (rafraîchissement de token), pas par une ouverture d'app. Si une mesure
 exacte est voulue, ajouter `users.last_active_at` en v1.4 et l'écrire côté
 `authenticate` (une écriture par requête).
+
+---
+
+## 14. 🟢 Tickets support : deux décisions
+
+| Point | Décision |
+|---|---|
+| Création sans compte | Oui, avec un email, 3/h/IP : les cas de support les plus fréquents (verrouillé, OTP absent) ne peuvent pas s'authentifier. Rattachement silencieux au compte si l'email existe. |
+| Audit des tickets | Migration `20260430000000_audit_ticket_update` : `TICKET_UPDATE` et cible `ticket` — la liste v1.3 des actions auditées ne prévoyait rien pour les tickets. À reporter dans le schéma v1.4. |
+
+Non fait : notification par email au demandeur à la résolution (aucun type
+`email_log`), et pièces jointes.

@@ -13,6 +13,8 @@ Ce document ne redécrit pas le schéma — il consigne comment il est mis en
 | `prisma/migrations/20260410000001_audit_writer_role/` | Trigger d'immuabilité + rôle `audit_writer` + REVOKE |
 | `prisma/migrations/20260415000000_v1_2_dec20_dec27/` | Delta v1.1 → v1.2 |
 | `prisma/migrations/20260420000000_v1_3_fix10_fix12/` | Delta v1.2 → v1.3 |
+| `prisma/migrations/20260425000000_email_types_notifications/` | Cinq types d'email exigés par les user stories (open-questions §1) |
+| `prisma/migrations/20260430000000_audit_ticket_update/` | `TICKET_UPDATE` et cible `ticket` dans le CHECK de `audit_logs` (BO-06) |
 | `prisma/schema.prisma` | Miroir généré par `prisma db pull`. Ne pas éditer. |
 | `prisma/seeds/001_checkin_questions.sql` | Bibliothèque de questions — 55 lignes, idempotent |
 | `prisma/tests/smoke.sql` | Test de bout en bout, rollbacké |

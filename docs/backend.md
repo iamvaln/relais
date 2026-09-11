@@ -29,7 +29,8 @@ apps/api/
     api/checkin/             statut, mini-jeu (games.ts), validation, streak
     api/relay/               côté contact : lien, réponses/escrow, données, confirmation
     api/journal/             carnet de vie : question du mois, entrées signées, Wrapped
-    api/admin/               back office : auth TOTP, dashboard, utilisateurs, transmissions, questions, config, audit, facturation
+    api/admin/               back office : auth TOTP, dashboard, utilisateurs, transmissions, questions, config, audit, facturation, tickets
+    api/support/             tickets support côté utilisateur, ouverts sans compte
     jobs/billing.ts          cycle de vie des abonnements : grâce puis rétrogradation
     middleware/authenticate-admin.ts  token admin + session Redis, grille de rôles
     lib/audit.ts             journal d'audit append-only (jamais de donnée personnelle)
@@ -105,6 +106,8 @@ Le module **auth** de §3.1 v1.1, le module **vault** de §3.3 v1.1, le module
 | `GET /admin/billing/overview` · `GET /admin/billing/subscriptions` · `GET /admin/billing/export` | BO-07, rôles finance / super_admin |
 | `PUT /admin/billing/:id/plan` · `POST /admin/billing/:id/extend` | Encaissement manuel, renouvellement, rétrogradation, geste commercial — voir §3 |
 | `GET /admin/dashboard` | BO-01 : les huit KPIs et les alertes calculables, triées par criticité — voir §3 |
+| `POST /support/tickets` · `GET /support/tickets` | Ouvert sans compte (email, 3/h/IP) ou avec token ; ses propres tickets — voir §3 |
+| `GET /admin/tickets` · `GET …/:id` · `PUT …/:id` | BO-02, rôle support : file, prise en charge, résolution, `TICKET_UPDATE` audité |
 
 Jobs (§4), BullMQ, worker dans le processus API derrière `JOBS_ENABLED=true` :
 
@@ -115,8 +118,8 @@ Jobs (§4), BullMQ, worker dans le processus API derrière `JOBS_ENABLED=true` :
 | `billing:expire` | 09:45 UTC | Échéance dépassée → grâce (premium conservé, email) ; grâce écoulée → expiré, plan gratuit, email |
 
 Non livré : `/user/*`, `PUT /transmission/recipients` (sans objet depuis
-DEC-23), `GET /admin/logs/api` (aucune table), les tickets support (lecture
-et traitement), un fournisseur de paiement (voir §3),
+DEC-23), `GET /admin/logs/api` (aucune table), un fournisseur de paiement
+(voir §3),
 `storj:cleanup` (la purge est faite directement, voir §3), l'enregistrement
 Arbitrum (voir §3).
 
@@ -562,6 +565,21 @@ indisponible (`/health`), escrow à moins de 12 h, plus de 3 contacts
 bloqués dans l'heure (déduit de `blocked_until`), comptes suspendus depuis
 plus de 24 h. Les autres sont consignées dans `docs/open-questions.md`.
 
+### Tickets : ouverts sans compte, parce que ceux qui en ont besoin ne peuvent pas se connecter
+
+BO-02 décrit deux cas de support sur trois — compte verrouillé, OTP jamais
+reçu — où l'utilisateur ne peut pas s'authentifier. Un ticket exigeant un
+token ne les servirait jamais. `POST /support/tickets` accepte donc un
+email sans token, limité à 3 par heure et par IP (la limite compte aussi
+les essais invalides : elle se joue avant la validation). Le ticket est
+rattaché au compte si l'email correspond, sans que la réponse le dise ;
+avec un token, l'identité vient du compte et l'email envoyé est ignoré.
+Côté back office, le rôle support voit l'email du demandeur (c'est son
+métier), l'audit ne garde que des identifiants. `TICKET_UPDATE` et la
+cible `ticket` ont demandé une migration du CHECK de `audit_logs`
+(`20260430000000_audit_ticket_update`) — BO-06 exige que toute action soit
+journalisée, la liste v1.3 ne prévoyait rien pour les tickets.
+
 ### Codes de récupération 2FA : pas de table
 
 E6-US02 : « des codes de récupération d'urgence sont générés et affichés une
@@ -590,7 +608,7 @@ manque, perdre son authenticateur signifie passer par le support.
 
 ## 5. Vérifications
 
-198 tests d'intégration, sur PostgreSQL 16 et Redis réels, base reconstruite
+204 tests d'intégration, sur PostgreSQL 16 et Redis réels, base reconstruite
 depuis les migrations et le seed à chaque run. Chaque test repart d'une base
 et d'un stockage vides. Ils couvrent notamment :
 
@@ -703,6 +721,13 @@ et d'un stockage vides. Ils couvrent notamment :
   actifs, déclenchée et complétée du mois, taux de check-in 50 %, revenus,
   ticket ouvert) ; taux null sans transmission active ; aucune alerte au
   calme ; escrow expirant + pic de blocages + suspension ancienne, triées
+- tickets (6 tests, test-first) : création sans compte rattachée au compte
+  sans le dire, email inconnu accepté, ni email ni token → 400, corps
+  validé, 3/h/IP ; avec token l'email est ignoré, liste des siens
+  seulement, 401 sans token ; back office : liste filtrée, détail avec
+  email, finance → 403, prise en charge puis résolution avec `resolved_at`,
+  deux lignes d'audit avant/après sans email, visible par l'utilisateur,
+  corps vide → 400, assigné inconnu → 404
 
 ```bash
 scripts/dev-services.sh start     # PostgreSQL + Redis jetables
