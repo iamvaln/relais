@@ -185,7 +185,8 @@ export async function readLink(token: string, now = new Date()): Promise<RelayLi
 
 const MAX_ATTEMPTS = 5 // chk fail_count <= 5, security.contact_max_fail
 const DEFAULT_LOCK_HOURS = 24
-const SHARE_BYTES = 32
+/** Une part Shamir GF(256) : 1 octet d'index + 32 octets (packages/crypto-core, Techniques §4). */
+const SHARE_BYTES = 33
 
 export type VerifyResult =
   | { accepted: false; attempts_left: number }
@@ -228,7 +229,7 @@ async function recordFailure(c: LoadedContact, now: Date): Promise<never | { att
   return { attempts_left: MAX_ATTEMPTS - count }
 }
 
-/** Les parts attendues : exactement une par rôle détenu, 32 bytes chacune. */
+/** Les parts attendues : exactement une par rôle détenu, 33 bytes chacune (index + 32). */
 function decodeShares(c: LoadedContact, shares: VerifyBody['shares']): Map<KeySlot, Uint8Array> {
   const held: Record<KeySlot, boolean> = { k1: c.trusted_contacts.has_k1_role, k2: c.trusted_contacts.has_k2_role, k3: c.trusted_contacts.has_k3_role }
   const out = new Map<KeySlot, Uint8Array>()

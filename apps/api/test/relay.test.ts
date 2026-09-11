@@ -237,7 +237,7 @@ describe('POST /relay/:token/verify — parts en escrow (Techniques §6.7)', () 
 
   it('Proposal-8 : une part dont le SHA256 ne correspond pas au hash signé à l’activation est refusée et compte comme un échec', async () => {
     const { tokens, contacts } = await opened()
-    const r = await verify(tokens.contact1, { shares: { k1: opaque(999, 32).toString('base64') } })
+    const r = await verify(tokens.contact1, { shares: { k1: opaque(999, 33).toString('base64') } })
     expect(r.status).toBe(422)
     expect(r.body.error.code).toBe('RELAY_SHARE_INVALID')
     expect(r.body.error.details).toEqual({ attempts_left: 4, slot: 'k1' })

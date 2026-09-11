@@ -58,9 +58,9 @@ export async function buildContactBody(keys: DeviceKeys, relaisPk: string, input
 export type Roles3 = { k1: boolean; k2: boolean; k3: boolean }
 export type Share = { enc: string; sig: string; plain_hash: string; plain_sig: string }
 
-/** Si en clair (ce que le contact déposera au relay) — distinct de Si_enc pour que les tests voient la différence. */
+/** Si en clair (ce que le contact déposera au relay), 33 octets comme une part Shamir — distinct de Si_enc pour que les tests voient la différence. */
 export function plainShareBytes(seed: number): Buffer {
-  return opaque(seed + 500, 32)
+  return opaque(seed + 500, 33)
 }
 export type ContactBodyLike = Awaited<ReturnType<typeof buildContactBody>>
 
