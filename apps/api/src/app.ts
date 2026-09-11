@@ -15,6 +15,7 @@ import { checkinRoutes } from './api/checkin/routes.js'
 import { relayRoutes } from './api/relay/routes.js'
 import { journalRoutes } from './api/journal/routes.js'
 import { adminRoutes } from './api/admin/routes.js'
+import { supportRoutes } from './api/support/routes.js'
 
 // Fastify logge par défaut une ligne à l'arrivée et une au départ de chaque
 // requête ; on les coupe et on écrit la nôtre dans onResponse (userId et IP
@@ -73,6 +74,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(relayRoutes, { prefix: '/relay' })
   await app.register(journalRoutes, { prefix: '/journal' })
   await app.register(adminRoutes, { prefix: '/admin' })
+  await app.register(supportRoutes, { prefix: '/support' })
 
   return app
 }

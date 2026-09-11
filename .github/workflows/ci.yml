@@ -1,0 +1,90 @@
+# CI — typecheck, lint, tests d'intégration sur PostgreSQL 16 + Redis réels,
+# et tests SQL du schéma. Reproduit ce qu'un contributeur lance en local
+# (scripts/dev-services.sh start && npm test).
+
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  api:
+    name: API — typecheck, lint, tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: relais
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports: ['55432:5432']
+        options: >-
+          --health-cmd "pg_isready -U relais"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+      redis:
+        image: redis:7
+        ports: ['55379:6379']
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      TEST_PG_PORT: '55432'
+      TEST_REDIS_PORT: '55379'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Clients PostgreSQL et Redis (psql, redis-cli)
+        run: sudo apt-get update -q && sudo apt-get install -y -q postgresql-client redis-tools
+      - run: npm ci
+      - run: npm run db:generate
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm test
+
+  schema:
+    name: Schéma — migrations, seed, tests SQL
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: relais
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports: ['55432:5432']
+        options: >-
+          --health-cmd "pg_isready -U relais"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      PGHOST: localhost
+      PGPORT: '55432'
+      PGUSER: relais
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update -q && sudo apt-get install -y -q postgresql-client
+      - name: Base vierge
+        run: psql -d postgres -v ON_ERROR_STOP=1 -c 'CREATE DATABASE relais_ci;'
+      - name: Migrations, dans l'ordre
+        run: for f in prisma/migrations/*/migration.sql; do psql -d relais_ci -v ON_ERROR_STOP=1 -q -f "$f"; done
+      - name: Seed
+        run: psql -d relais_ci -v ON_ERROR_STOP=1 -q -f prisma/seeds/001_checkin_questions.sql
+      - name: Tests SQL
+        run: |
+          psql -d relais_ci -v ON_ERROR_STOP=1 -q -f prisma/tests/smoke.sql
+          psql -d relais_ci -v ON_ERROR_STOP=1 -q -f prisma/tests/seed_checks.sql

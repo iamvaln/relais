@@ -25,9 +25,10 @@ export const AUDIT_ACTIONS = [
   'PLAN_CHANGE',
   'ADMIN_LOGIN',
   'ADMIN_CREATED',
+  'TICKET_UPDATE',
 ] as const
 export type AuditAction = (typeof AUDIT_ACTIONS)[number]
-export type AuditTarget = 'user' | 'transmission' | 'config' | 'question' | 'subscription' | 'admin'
+export type AuditTarget = 'user' | 'transmission' | 'config' | 'question' | 'subscription' | 'admin' | 'ticket'
 
 export interface AuditEntry {
   /** NULL pour une action système ou le script de bootstrap. */
