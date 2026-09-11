@@ -1,0 +1,26 @@
+{
+  "name": "@relais/api-client",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Relais — client TypeScript de l'API, partagé par l'app mobile et le back office web. Enveloppe { success, data | error }, bearer, refresh, step-up.",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint src",
+    "test": "echo 'testé contre la vraie API dans apps/api/test/api-client.test.ts'"
+  },
+  "devDependencies": {
+    "eslint": "^9.30.0",
+    "typescript": "^5.8.3",
+    "typescript-eslint": "^8.35.0"
+  }
+}

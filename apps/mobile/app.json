@@ -1,0 +1,30 @@
+{
+  "expo": {
+    "name": "Relais",
+    "slug": "relais",
+    "version": "0.1.0",
+    "scheme": "relais",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "ios": {
+      "bundleIdentifier": "app.getrelais.relais",
+      "supportsTablet": false,
+      "infoPlist": { "NSFaceIDUsageDescription": "Relais utilise Face ID pour déverrouiller votre coffre." }
+    },
+    "android": {
+      "package": "app.getrelais.relais",
+      "allowBackup": false
+    },
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      "expo-sqlite",
+      ["onesignal-expo-plugin", { "mode": "development" }]
+    ],
+    "experiments": { "typedRoutes": true },
+    "extra": {
+      "apiUrl": "http://localhost:3000"
+    }
+  }
+}

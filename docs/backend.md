@@ -630,7 +630,7 @@ consigné dans `docs/open-questions.md` §D.1.
 
 ## 5. Vérifications
 
-217 tests d'intégration, sur PostgreSQL 16 et Redis réels, base reconstruite
+220 tests d'intégration, sur PostgreSQL 16 et Redis réels, base reconstruite
 depuis les migrations et le seed à chaque run. Chaque test repart d'une base
 et d'un stockage vides. Ils couvrent notamment :
 
@@ -763,6 +763,9 @@ et d'un stockage vides. Ils couvrent notamment :
 - bout en bout avec le cœur crypto de l'app (`e2e-crypto-core`, voir
   `docs/crypto-core.md` §5) : de l'inscription à la reconstitution
   post-mortem, chaque corps produit par `@relais/crypto-core`
+- client API partagé (`api-client`, 3 tests, serveur sur un port éphémère) :
+  enveloppe, erreurs typées, refresh automatique sur 401 puis rejeu,
+  logout, step-up — voir `docs/mobile.md` §5
 - secrets (6 tests) : production sans HCV → refus au démarrage, clé de dev
   interdite en production, hors production clé de dev ou HCV exigés ; faux
   HCV en HTTP local : lecture KV v2 à `/v1/<path>` avec `X-Vault-Token`,
