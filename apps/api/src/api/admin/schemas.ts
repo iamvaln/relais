@@ -85,3 +85,44 @@ export const otpRegenBody = {
 export interface OtpRegenBody {
   email: string
 }
+
+export const transmissionListQuery = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    status: { type: 'string', enum: ['triggered', 'in_progress', 'completed', 'cancelled', 'expired'] },
+    page: { type: 'string', pattern: '^[0-9]{1,4}$' },
+    limit: { type: 'string', pattern: '^[0-9]{1,3}$' },
+  },
+} as const
+export interface TransmissionListQuery {
+  status?: string
+  page?: string
+  limit?: string
+}
+
+export const extendEscrowBody = {
+  type: 'object',
+  required: ['hours', 'reason'],
+  additionalProperties: false,
+  properties: {
+    /** BO-02 : +24 h ou +48 h. */
+    hours: { type: 'integer', enum: [24, 48] },
+    reason: { type: 'string', minLength: 1, maxLength: 500 },
+  },
+} as const
+export interface ExtendEscrowBody {
+  hours: 24 | 48
+  reason: string
+}
+
+export const contactParams = {
+  type: 'object',
+  required: ['id', 'cid'],
+  additionalProperties: false,
+  properties: { id: uuid, cid: uuid },
+} as const
+export interface ContactParams {
+  id: string
+  cid: string
+}

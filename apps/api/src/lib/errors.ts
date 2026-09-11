@@ -27,6 +27,7 @@ export const ErrorCodes = {
   RELAY_CONTACT_BLOCKED: { http: 423, message: 'Contact bloqué — trop d’échecs.' },
   RELAY_ALREADY_ANSWERED: { http: 409, message: 'Ce contact a déjà répondu.' },
   WRAPPED_INSUFFICIENT_ENTRIES: { http: 409, message: 'Pas assez d’entrées cette année pour un Wrapped.' },
+  ESCROW_MAX_EXTENSIONS: { http: 409, message: 'Nombre maximal d’extensions d’escrow atteint.' },
   USER_EMAIL_TAKEN: { http: 409, message: 'Cet email est déjà utilisé par un autre compte.' },
   JOURNAL_MONTH_TAKEN: { http: 409, message: 'Une entrée existe déjà pour ce mois — modifiez-la.' },
   RELAY_NOT_UNLOCKED: { http: 409, message: 'Accès pas encore déverrouillé — en attente des autres contacts.' },

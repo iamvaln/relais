@@ -7,7 +7,8 @@ import { vaultKey } from '../src/api/vault/service.js'
 import { prisma } from '../src/lib/prisma.js'
 import { objectStore } from '../src/services/storage/index.js'
 import { api, closeAll, lastEmailTo, lastOtp, mailbox, registerUser, resetState, STRONG_PASSWORD } from './helpers.js'
-import { activateTransmission, makeOwner } from './transmission-helpers.js'
+import { activateTransmission, makeOwner, opaque, openTransmission, relayTokenFromEmail } from './transmission-helpers.js'
+import { redis } from '../src/lib/redis.js'
 
 beforeEach(resetState)
 afterAll(closeAll)
@@ -295,5 +296,158 @@ describe('DELETE /admin/users/:id (RGPD)', () => {
     expect(JSON.stringify(log)).not.toContain('adjoua')
 
     await (await api()).delete(`/admin/users/${o.userId}`).set(sa.auth).send({ reason: 'x' }).expect(409)
+  })
+})
+
+// --- BO-03 Transmissions -----------------------------------------------------------
+
+const HOUR = 3600 * 1000
+const shareB64 = (seed: number) => opaque(seed, 32).toString('base64')
+
+describe('GET /admin/transmissions', () => {
+  it('liste : statuts, chiffres, escrow — sans identité de contact ni utilisateur ; filtre par statut', async () => {
+    const sa = await superAdmin()
+    const o = await makeOwner()
+    const { transmissionId, tokens } = await openTransmission(o)
+    await (await api()).post(`/relay/${tokens.contact1}/verify`).send({ shares: { k1: shareB64(11) } }).expect(200)
+
+    const r = await (await api()).get('/admin/transmissions').set(sa.auth).expect(200)
+    expect(r.body.data.total).toBe(1)
+    const row = r.body.data.items[0]
+    expect(row).toMatchObject({
+      id: transmissionId,
+      status: 'in_progress',
+      schema: { n: 2, m: 2 },
+      contacts_notified: 2,
+      contacts_confirmed: 1,
+      escrow_active: true,
+      escrow_extended_count: 0,
+      unlocked: { k1: false, k2: false, k3: false },
+    })
+    expect(row.escrow_ttl_seconds).toBeGreaterThan(70 * 3600)
+    const text = JSON.stringify(r.body.data)
+    expect(text).not.toContain(o.userId)
+    expect(text).not.toContain('contact1@')
+    expect(text).not.toContain('Adjoua')
+
+    const none = await (await api()).get('/admin/transmissions?status=completed').set(sa.auth).expect(200)
+    expect(none.body.data.items).toEqual([])
+  })
+})
+
+describe('GET /admin/transmissions/:id', () => {
+  it('détail : contacts en statuts et compteurs seulement, journal des actions admin', async () => {
+    const sa = await superAdmin()
+    const o = await makeOwner()
+    const { transmissionId, tokens } = await openTransmission(o)
+    for (let i = 0; i < 5; i++) await (await api()).post(`/relay/${tokens.contact2}/verify`).send({ failed: true })
+
+    const r = await (await api()).get(`/admin/transmissions/${transmissionId}`).set(sa.auth).expect(200)
+    expect(r.body.data).toMatchObject({ id: transmissionId, user_id: o.userId, status: 'triggered' })
+    expect(r.body.data.contacts).toHaveLength(2)
+    const blocked = r.body.data.contacts.find((c: { blocked: boolean }) => c.blocked)
+    expect(blocked).toMatchObject({ status: 'failed', fail_count: 5, roles: { k1: true, k2: false, k3: false } })
+    expect(Object.keys(blocked).sort()).toEqual(['answered_at', 'blocked', 'confirmed_at', 'fail_count', 'id', 'notified_at', 'roles', 'status'].sort())
+    expect(r.body.data.audit).toEqual([])
+    expect(JSON.stringify(r.body.data)).not.toContain('example.cm')
+    expect(JSON.stringify(r.body.data)).not.toContain('Adjoua')
+    await (await api()).get('/admin/transmissions/00000000-0000-4000-8000-000000000000').set(sa.auth).expect(404)
+  })
+})
+
+describe('POST /admin/transmissions/:id/extend-escrow', () => {
+  it('+24 h ou +48 h, deux fois maximum (dms.escrow_max_extensions) ; escrow et clé Redis suivent ; ESCROW_EXTEND audité', async () => {
+    const sa = await superAdmin()
+    const o = await makeOwner()
+    const { transmissionId, tokens } = await openTransmission(o)
+    await (await api()).post(`/relay/${tokens.contact1}/verify`).send({ shares: { k1: shareB64(11) } }).expect(200)
+    const before = await prisma().transmissions.findUniqueOrThrow({ where: { id: transmissionId } })
+
+    const support = await adminWithRole('support')
+    await (await api()).post(`/admin/transmissions/${transmissionId}/extend-escrow`).set(support.auth).send({ hours: 24, reason: 'x' }).expect(403)
+
+    const r1 = await (await api()).post(`/admin/transmissions/${transmissionId}/extend-escrow`).set(sa.auth).send({ hours: 24, reason: 'contact 2 en voyage' }).expect(200)
+    expect(r1.body.data).toMatchObject({ escrow_extended_count: 1 })
+    expect(Date.parse(r1.body.data.escrow_expires_at) - before.escrow_expires_at.getTime()).toBe(24 * HOUR)
+    const es = await prisma().escrow_shares.findFirstOrThrow({ where: { transmission_id: transmissionId } })
+    expect(es.expires_at.getTime() - before.escrow_expires_at.getTime()).toBe(24 * HOUR)
+    expect(await redis().ttl(`escrow:key:${transmissionId}`)).toBeGreaterThan(95 * 3600)
+    const log = await prisma().audit_logs.findFirstOrThrow({ where: { action: 'ESCROW_EXTEND' } })
+    expect(log).toMatchObject({ admin_id: sa.id, target_type: 'transmission', target_id: transmissionId, reason: 'contact 2 en voyage' })
+
+    await (await api()).post(`/admin/transmissions/${transmissionId}/extend-escrow`).set(sa.auth).send({ hours: 48, reason: 'encore' }).expect(200)
+    const third = await (await api()).post(`/admin/transmissions/${transmissionId}/extend-escrow`).set(sa.auth).send({ hours: 24, reason: 'trop' }).expect(409)
+    expect(third.body.error.code).toBe('ESCROW_MAX_EXTENSIONS')
+    const bad = await (await api()).post(`/admin/transmissions/${transmissionId}/extend-escrow`).set(sa.auth).send({ hours: 12, reason: 'x' }).expect(400)
+    expect(bad.body.error.code).toBe('VALIDATION_ERROR')
+  })
+})
+
+describe('POST /admin/transmissions/:id/notify', () => {
+  it('relance les contacts qui n’ont pas répondu avec un nouveau lien ; l’ancien meurt ; TRANSMISSION_NOTIFY audité', async () => {
+    const sa = await superAdmin()
+    const o = await makeOwner()
+    const { transmissionId, tokens } = await openTransmission(o)
+    await (await api()).post(`/relay/${tokens.contact1}/verify`).send({ shares: { k1: shareB64(11) } }).expect(200)
+    mailbox.clear()
+
+    const r = await (await api()).post(`/admin/transmissions/${transmissionId}/notify`).set(sa.auth).send({ reason: 'pas de nouvelles' }).expect(200)
+    expect(r.body.data).toEqual({ notified: 1 })
+    expect(lastEmailTo('contact1@example.cm')).toBeUndefined()
+    const fresh = relayTokenFromEmail('contact2@example.cm')
+    expect(fresh).not.toBe(tokens.contact2)
+    await (await api()).get(`/relay/${tokens.contact2}`).expect(404)
+    await (await api()).get(`/relay/${fresh}`).expect(200)
+    const log = await prisma().audit_logs.findFirstOrThrow({ where: { action: 'TRANSMISSION_NOTIFY' } })
+    expect(log).toMatchObject({ admin_id: sa.id, target_id: transmissionId })
+  })
+})
+
+describe('DELETE /admin/transmissions/:id', () => {
+  it('super_admin : annule, purge l’escrow, rend la transmission à l’owner (config active, check-in replanifié), audite', async () => {
+    const sa = await superAdmin()
+    const o = await makeOwner()
+    const { transmissionId, tokens } = await openTransmission(o)
+    await (await api()).post(`/relay/${tokens.contact1}/verify`).send({ shares: { k1: shareB64(11) } }).expect(200)
+
+    const adminRole = await adminWithRole('admin')
+    await (await api()).delete(`/admin/transmissions/${transmissionId}`).set(adminRole.auth).send({ reason: 'x' }).expect(403)
+
+    const before = Date.now()
+    const r = await (await api()).delete(`/admin/transmissions/${transmissionId}`).set(sa.auth).send({ reason: 'owner vivant, vérifié par téléphone' }).expect(200)
+    expect(r.body.data).toMatchObject({ status: 'cancelled' })
+    const tr = await prisma().transmissions.findUniqueOrThrow({ where: { id: transmissionId } })
+    expect(tr).toMatchObject({ status: 'cancelled', cancelled_by_admin: sa.id, cancellation_reason: 'owner vivant, vérifié par téléphone' })
+    expect(await prisma().escrow_shares.count({ where: { transmission_id: transmissionId } })).toBe(0)
+    expect(await redis().exists(`escrow:key:${transmissionId}`)).toBe(0)
+    await (await api()).get(`/relay/${tokens.contact1}`).expect(404)
+    const cfg = await prisma().transmission_configs.findUniqueOrThrow({ where: { user_id: o.userId } })
+    expect(cfg.status).toBe('active')
+    expect(cfg.relance_count).toBe(0)
+    expect(cfg.next_checkin_due!.getTime()).toBeGreaterThan(before)
+    const log = await prisma().audit_logs.findFirstOrThrow({ where: { action: 'TRANSMISSION_CANCEL' } })
+    expect(log).toMatchObject({ admin_id: sa.id, target_id: transmissionId, user_id: o.userId })
+
+    await (await api()).delete(`/admin/transmissions/${transmissionId}`).set(sa.auth).send({ reason: 'x' }).expect(409)
+  })
+})
+
+describe('POST /admin/transmissions/:id/contacts/:cid/unblock', () => {
+  it('remet les 5 tentatives du contact, sans rien révéler ; CONTACT_UNBLOCK audité', async () => {
+    const sa = await superAdmin()
+    const o = await makeOwner()
+    const { transmissionId, tokens } = await openTransmission(o)
+    for (let i = 0; i < 5; i++) await (await api()).post(`/relay/${tokens.contact2}/verify`).send({ failed: true })
+    await (await api()).get(`/relay/${tokens.contact2}`).expect(423)
+    const blocked = await prisma().transmission_contacts.findFirstOrThrow({ where: { transmission_id: transmissionId, blocked: true } })
+
+    const support = await adminWithRole('support')
+    const r = await (await api()).post(`/admin/transmissions/${transmissionId}/contacts/${blocked.id}/unblock`).set(support.auth).send({ reason: 'appel du contact' }).expect(200)
+    expect(r.body.data).toMatchObject({ id: blocked.id, status: 'notified', fail_count: 0, blocked: false })
+    await (await api()).get(`/relay/${tokens.contact2}`).expect(200)
+    const tc = await prisma().trusted_contacts.findUniqueOrThrow({ where: { id: blocked.trusted_contact_id } })
+    expect(tc.blocked_until).toBeNull()
+    const log = await prisma().audit_logs.findFirstOrThrow({ where: { action: 'CONTACT_UNBLOCK' } })
+    expect(log).toMatchObject({ admin_id: support.id, target_type: 'transmission', target_id: transmissionId })
   })
 })

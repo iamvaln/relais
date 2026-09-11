@@ -6,20 +6,27 @@ import { authenticateAdmin, requireRole } from '../../middleware/authenticate-ad
 import { limits } from '../../plugins/rate-limit.js'
 import {
   adminLoginBody,
+  contactParams,
   emailChangeBody,
+  extendEscrowBody,
   idParams,
   otpRegenBody,
   reasonBody,
+  transmissionListQuery,
   userListQuery,
   type AdminLoginBody,
+  type ContactParams,
   type EmailChangeBody,
+  type ExtendEscrowBody,
   type IdParams,
   type OtpRegenBody,
   type ReasonBody,
+  type TransmissionListQuery,
   type UserListQuery,
 } from './schemas.js'
 import * as admin from './service.js'
 import * as users from './users.js'
+import * as transmissions from './transmissions.js'
 import type { RequestContext } from './service.js'
 
 function ctx(req: FastifyRequest): RequestContext {
@@ -82,5 +89,37 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
     '/users/:id',
     { schema: { params: idParams, body: reasonBody }, preHandler: superOnly },
     async (req) => ok(await users.deleteUser(req.admin!.id, req.params.id, req.body.reason, ctx(req))),
+  )
+
+  // --- BO-03 Transmissions --------------------------------------------------------
+  app.get<{ Querystring: TransmissionListQuery }>(
+    '/transmissions',
+    { schema: { querystring: transmissionListQuery }, preHandler: support, config: { rateLimit: limits.admin } },
+    async (req) => ok(await transmissions.listTransmissions(req.query)),
+  )
+  app.get<{ Params: IdParams }>(
+    '/transmissions/:id',
+    { schema: { params: idParams }, preHandler: support, config: { rateLimit: limits.admin } },
+    async (req) => ok(await transmissions.getTransmission(req.params.id)),
+  )
+  app.post<{ Params: IdParams; Body: ExtendEscrowBody }>(
+    '/transmissions/:id/extend-escrow',
+    { schema: { params: idParams, body: extendEscrowBody }, preHandler: adminOnly },
+    async (req) => ok(await transmissions.extendEscrow(req.admin!.id, req.params.id, req.body, ctx(req))),
+  )
+  app.post<{ Params: IdParams; Body: ReasonBody }>(
+    '/transmissions/:id/notify',
+    { schema: { params: idParams, body: reasonBody }, preHandler: adminOnly },
+    async (req) => ok(await transmissions.notifyContacts(req.admin!.id, req.params.id, req.body.reason, ctx(req))),
+  )
+  app.delete<{ Params: IdParams; Body: ReasonBody }>(
+    '/transmissions/:id',
+    { schema: { params: idParams, body: reasonBody }, preHandler: superOnly },
+    async (req) => ok(await transmissions.cancelTransmission(req.admin!.id, req.params.id, req.body.reason, ctx(req))),
+  )
+  app.post<{ Params: ContactParams; Body: ReasonBody }>(
+    '/transmissions/:id/contacts/:cid/unblock',
+    { schema: { params: contactParams, body: reasonBody }, preHandler: support },
+    async (req) => ok(await transmissions.unblockContact(req.admin!.id, req.params.id, req.params.cid, req.body.reason, ctx(req))),
   )
 }
