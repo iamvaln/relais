@@ -39,6 +39,8 @@ export const keys = {
   twoFactorSetup: (userId: string) => `auth:2fa:setup:${userId}`,
   /** Regénérations OTP par heure et par email (security.otp_max_regen_hr). */
   otpRegen: (email: string) => `otp:regen:${email}`,
+  /** Session du back office (8 h) — sa présence vaut validité du token admin. */
+  adminSession: (sid: string) => `admin:session:${sid}`,
   /** Défi de check-in en cours pour un utilisateur (24 h). */
   checkinGame: (userId: string) => `checkin:game:${userId}`,
   /** Jeu réussi, à échanger contre un check-in (usage unique, 15 min). */

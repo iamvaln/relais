@@ -35,7 +35,7 @@ export async function closeAll(): Promise<void> {
 /** Vide les tables mutables — la bibliothèque de questions et app_config restent. */
 export async function resetState(): Promise<void> {
   await prisma().$executeRawUnsafe(`
-    TRUNCATE email_log, restore_challenges, email_otp, sessions, subscriptions, users
+    TRUNCATE email_log, restore_challenges, email_otp, sessions, subscriptions, users, admin_users, audit_logs
     RESTART IDENTITY CASCADE
   `)
   await redis().flushall()

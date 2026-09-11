@@ -12,7 +12,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint src test",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "admin:create": "tsx src/scripts/create-admin.ts"
   },
   "prisma": {
     "schema": "../../prisma/schema.prisma"
