@@ -4,7 +4,7 @@
 
 import { describe, expect, it } from 'vitest'
 import { mnemonicToSeed } from '@relais/crypto-core'
-import { AUTO_LOCK_MS, createKeyStore } from '../src/state/keystore.js'
+import { AUTO_LOCK_MS, createKeyStore } from '../src/state/keystore'
 
 const VECTOR = 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about'
 

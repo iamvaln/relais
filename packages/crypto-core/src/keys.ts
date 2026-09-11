@@ -89,6 +89,12 @@ export async function verifyRaw(message: Uint8Array, signature: Uint8Array, publ
   return sodium.crypto_sign_verify_detached(signature, message, publicKey)
 }
 
+/** Octets aléatoires (CSPRNG de libsodium) — clés de session, sels, clé biométrique. */
+export async function randomBytes(length: number): Promise<Uint8Array> {
+  await sodium.ready
+  return sodium.randombytes_buf(length)
+}
+
 /** Efface des secrets en mémoire (seed, clés, D) — à appeler dès qu'ils ne servent plus. */
 export function wipe(...buffers: Uint8Array[]): void {
   for (const b of buffers) b.fill(0)

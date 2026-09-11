@@ -13,10 +13,11 @@ client HTTP dans `packages/api-client`. L'app ne fait que les brancher.
 | Navigation | Expo Router (routes typées) | `app/` |
 | État | Zustand (stores « vanilla » testables sous Node) | `src/state/` |
 | API | TanStack Query + `@relais/api-client` | `src/lib/api.ts` — cookies (refresh token) gérés par le réseau natif |
-| Crypto | `@relais/crypto-core` ; `react-native-libsodium` remplace `libsodium-wrappers-sumo` à l'exécution | alias Metro à poser au lot 2 |
-| Secrets locaux | `expo-secure-store` (`seed_enc_pin` + sel, permanents — DEC-01) | lot 2 |
+| Logique | `@relais/app-core` (politique PIN, device, onboarding, session) | sans React Native, testé sous Node et contre l'API |
+| Crypto | `@relais/crypto-core` ; `react-native-libsodium` remplace `libsodium-wrappers-sumo` à l'exécution | alias dans `metro.config.js` |
+| Secrets locaux | `expo-secure-store` (`seed_enc_pin` + sel, `seed_enc_bio` + clé gardée avec authentification requise — DEC-01) | `src/lib/device.ts` |
 | Base locale | `expo-sqlite` chiffré (P1 par catégorie) | lot 3 |
-| Biométrie | `expo-local-authentication` | lot 2 |
+| Biométrie | `expo-local-authentication` (disponibilité) + `requireAuthentication` d'`expo-secure-store` (déverrouillage) | lot 2 |
 | Push | OneSignal (`react-native-onesignal` + `onesignal-expo-plugin`) | lot 5, voir §3 |
 
 ## 2. Lots (une PR chacun)
@@ -24,9 +25,10 @@ client HTTP dans `packages/api-client`. L'app ne fait que les brancher.
 1. **Socle** — ce lot : projet Expo, client API partagé et testé contre la
    vraie API, KeyStore (clés en mémoire, auto-verrouillage 10 min), i18n
    FR/EN, écran d'état du service.
-2. **Onboarding et sécurité** (E1, E6-US01/02) : inscription, OTP, 12 mots
-   affichés une fois, PIN, biométrie, backoff DEC-26, restauration
-   (challenge DEC-06), 2FA et codes de récupération.
+2. **Onboarding et sécurité** (E1, E6-US01 à US03) — fait : inscription, OTP,
+   12 mots affichés une fois + quiz de deux mots, PIN, biométrie, backoff
+   DEC-26, connexion et 2FA, restauration (challenge DEC-06), mot de passe
+   oublié, changement de mot de passe, TOTP et codes de récupération.
 3. **Coffre** (E2) : SQLite chiffré, comptes / messages / finances, niveaux
    d'urgence, sync Storj après 3 s d'inactivité, restauration P2.
 4. **Transmission** (E3) : contacts, questions de la bibliothèque, rôles,
@@ -46,6 +48,11 @@ client HTTP dans `packages/api-client`. L'app ne fait que les brancher.
 | Push | **OneSignal**, à la demande du fondateur, plutôt qu'Expo Push. Contraintes non négociables (CLAUDE.md) : l'identifiant OneSignal de l'utilisateur est `external_id = SHA256(user_id)`, jamais l'email ni le téléphone ; aucune donnée utilisateur dans une notification (« Un petit signe ? », jamais un nom de contact ni un contenu) ; `push_tokens.token` stocke l'identifiant d'abonnement OneSignal ; l'API envoie par l'API REST OneSignal depuis un job (lot 5), la clé REST vit dans les variables d'environnement (DEC-18). |
 | Ordre des lots | Celui de §2, dans l'ordre des user stories P0. |
 | Tests | La logique vit hors des écrans (stores, hooks, client) et se teste sous Node avec Vitest ; le client API se prouve contre la vraie API (`apps/api/test/api-client.test.ts`). Les écrans restent minces ; la vérification visuelle sur iOS et Android se fait sur un device, les tests Maestro viendront après le lot 2. |
+| Biométrie (lot 2) | Une clé de 32 octets gardée par le Keychain / Keystore avec authentification requise chiffre une seconde copie du seed (`seed_enc_bio`). Face ID / empreinte libère la clé ; le PIN reste le secours. |
+| Logique de l'app (lot 2) | `packages/app-core`, sans React Native : même recette que crypto-core et api-client, réutilisable par la page web du contact. |
+| 12 mots (lot 2) | Case à cocher + deux mots tirés au sort à ressaisir (E1-US02 ne demandait que la case). |
+| Mot de passe oublié (lot 2) | Dans le lot 2 : OTP par email + 12 mots qui signent `relais:password-reset:v1:{email}:{code}`. |
+| Écart de spec | E6-US03 dit qu'après un changement de mot de passe « K1 K2 K3 sont recalculées, P1 rechiffré ». Depuis DEC-02/05 les clés viennent du seed : rien à rechiffrer. À corriger dans les User Stories. |
 
 ## 4. Lancer
 
@@ -61,7 +68,33 @@ npx expo run:ios                      # ou run:android
 développement distant (proxy) : les versions viennent de
 `expo/bundledNativeModules.json`, installées avec `npm install`.
 
+Contraintes Metro, vérifiées par `npx expo export --platform android` (aussi
+en CI) : dans `apps/mobile`, imports relatifs **sans extension** (Metro ne
+mappe pas `./x.js` vers `x.ts`) ; `Buffer` polyfillé par `src/lib/polyfills.ts`
+(Hermes n'en a pas, les packages l'utilisent pour base64) ;
+`libsodium-wrappers-sumo` aliasé vers `react-native-libsodium`.
+
 ## 5. Vérifications
+
+Lot 2 :
+
+- `app-core` (8 tests sous Node) : PIN faibles refusés (format, répétition,
+  suite, motif), backoff 0/30/120/600/1800 s, compteur persistant ; device :
+  `seed_enc_pin` sans clair dans le stockage, bon PIN → seed, mauvais PIN
+  compté puis bloqué 30 s, changement de PIN, biométrie (clé avec
+  authentification, refus → erreur, désactivation), `wipe`.
+- `app-core` contre l'API réelle (4 tests, `apps/api/test/app-core.test.ts`) :
+  onboarding complet (compte → OTP → 12 mots → quiz → PIN → clé publique
+  enregistrée → biométrie, mots effacés) ; nouveau device : login puis
+  restauration par les 12 mots (mauvais mots refusés, email de notification,
+  PIN posé) ; mot de passe oublié signé par les 12 mots puis changement avec
+  step-up qui révoque les autres sessions ; TOTP avec 8 codes de
+  récupération, login en deux temps par TOTP puis par code de secours,
+  désactivation.
+- mobile (5 tests) : écran d'entrée selon session, device et KeyStore.
+- Bundle Metro Android : construit (alias libsodium, polyfill, imports).
+
+Lot 1 :
 
 - `api-client` (3 tests, contre l'API réelle sur un port éphémère) :
   enveloppe déballée, `ApiError { status, code, message, details }`, 404 ;

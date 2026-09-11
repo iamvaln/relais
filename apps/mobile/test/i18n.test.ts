@@ -2,9 +2,9 @@
 // langue demandée et retombe sur le français.
 
 import { describe, expect, it } from 'vitest'
-import { en } from '../src/i18n/en.js'
-import { fr } from '../src/i18n/fr.js'
-import { t } from '../src/i18n/index.js'
+import { en } from '../src/i18n/en'
+import { fr } from '../src/i18n/fr'
+import { t } from '../src/i18n/index'
 
 describe('i18n', () => {
   it('mêmes clés en FR et EN, aucune vide', () => {

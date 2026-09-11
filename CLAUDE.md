@@ -25,9 +25,15 @@ justifier explicitement.
 - `packages/api-client/` — client TypeScript de l'API (enveloppe, bearer,
   refresh sur 401, step-up), partagé par le mobile et le back office web ;
   testé contre l'API réelle dans `apps/api/test/api-client.test.ts`.
+- `packages/app-core/` — la logique de l'app sans React Native : politique
+  PIN et backoff (DEC-26), device (`seed_enc_pin`, biométrie), onboarding,
+  connexion, restauration, mot de passe, TOTP. Tests sous Node dans `test/`,
+  parcours contre l'API réelle dans `apps/api/test/app-core.test.ts`.
 - `apps/mobile/` — l'app React Native (Expo SDK 57, Expo Router, Zustand,
   TanStack Query). Logique hors des écrans (`src/state`, `src/lib`, `src/i18n`)
-  testée sous Node avec Vitest ; écrans minces dans `app/`. Notes, lots et
+  testée sous Node avec Vitest ; écrans minces dans `app/`. Imports relatifs
+  sans extension (Metro), `Buffer` polyfillé, alias libsodium dans
+  `metro.config.js` ; `npx expo export` vérifie le bundle. Notes, lots et
   décisions : `docs/mobile.md`.
 - `docs/backend.md` — décisions et écarts par rapport aux specs, par module.
   **À lire avant de toucher un module.** `docs/open-questions.md` — points
@@ -75,6 +81,6 @@ localhost -p 55432 || scripts/dev-services.sh start` avant les tests.
 ## Ce qui n'est pas fait
 
 Logs API (export externe), fournisseur de paiement (encaissement manuel en
-V1), enregistrement Arbitrum, app mobile lots 2 à 6 (onboarding, coffre,
-transmission, check-in, parcours du contact — le socle et le cœur crypto
+V1), enregistrement Arbitrum, app mobile lots 3 à 6 (coffre, transmission,
+check-in, parcours du contact — socle, cœur crypto, onboarding et sécurité
 sont faits), interface du back office. La liste à jour est dans le README et `docs/backend.md` §2.
