@@ -14,8 +14,8 @@ d'implémentation.
 |---|---|
 | Specs produit, techniques, backend, frontend, back office | ✅ v1 (`docs/specs/`) |
 | Schéma PostgreSQL v1.3 | ✅ Implémenté et testé (`prisma/`) |
-| API backend — auth, vault, transmission, check-in, relay, journal, admin, facturation, jobs | ✅ 83 endpoints, 193 tests d'intégration (`apps/api/`) |
-| API backend — KPIs dashboard (BO-01), logs API, tickets, fournisseur de paiement | ⬜ À faire |
+| API backend — auth, vault, transmission, check-in, relay, journal, admin, facturation, dashboard, jobs | ✅ 84 endpoints, 198 tests d'intégration (`apps/api/`) |
+| API backend — logs API, tickets support, fournisseur de paiement | ⬜ À faire |
 | App mobile | ⬜ Non démarré |
 | Back office (interface) | ⬜ Non démarré — l'API `/admin/*` est prête |
 | Smart contract Arbitrum | ⬜ Reporté |
@@ -69,7 +69,7 @@ npm install
 scripts/dev-services.sh start          # PostgreSQL 16 + Redis jetables, migrations + seed
 cp apps/api/.env.example apps/api/.env # puis renseigner les secrets (openssl rand -hex 32)
 npm run dev                            # http://localhost:3000/health
-npm test                               # 193 tests d'intégration sur base réelle
+npm test                               # 198 tests d'intégration sur base réelle
 npm run typecheck && npm run lint
 ```
 

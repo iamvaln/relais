@@ -208,3 +208,19 @@ ne dit ce qu'un essai débloque ni comment il se termine. À spécifier avant
 de l'activer. L'événement PostHog `subscription_upgraded` (trigger
 paywall / settings / limit_reached) suppose un parcours d'achat dans l'app
 qui n'existe pas encore.
+
+---
+
+## 13. 🟡 Dashboard : quatre alertes sans métrique, une mesure d'activité approchée
+
+| Alerte BO-01 | Ce qui manque |
+|---|---|
+| HCV indisponible | HCV n'est plus dans la stack (v1.1 : « plus de HCV Transit »). À retirer de la spec. |
+| Storj dégradé (> 5 % d'erreurs sur 10 min) | Aucun compteur d'erreurs de stockage. Proposition : compteur Redis glissant dans `ObjectStore`, ou export des logs Pino vers un outil de métriques. |
+| Erreur API > seuil (15 min) | Idem : pas de table de logs d'appels (`GET /admin/logs/api`, déjà signalé §11). |
+| Espace Storj > 80 % | Nécessite l'API Storj (usage du bucket) ; hors périmètre de l'API S3. |
+
+« Utilisateurs actifs 30 j » est mesuré par `sessions.last_used_at`
+(rafraîchissement de token), pas par une ouverture d'app. Si une mesure
+exacte est voulue, ajouter `users.last_active_at` en v1.4 et l'écrire côté
+`authenticate` (une écriture par requête).
