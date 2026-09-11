@@ -19,7 +19,7 @@
     "lint": "npm run lint --workspaces",
     "db:generate": "prisma generate --schema prisma/schema.prisma",
     "crypto": "npm run --workspace packages/crypto-core",
-    "core:build": "npm run build --workspace packages/crypto-core --workspace packages/api-client",
+    "core:build": "npm run build --workspace packages/crypto-core --workspace packages/api-client --workspace packages/app-core",
     "mobile": "npm run --workspace apps/mobile"
   },
   "devDependencies": {

@@ -1,0 +1,33 @@
+{
+  "name": "@relais/app-core",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Relais — logique de l'app sans React Native : politique PIN, device (seed_enc_pin, biométrie), onboarding, session, restauration. Branche crypto-core et api-client.",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint src test",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@relais/api-client": "0.1.0",
+    "@relais/crypto-core": "0.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "eslint": "^9.30.0",
+    "typescript": "^5.8.3",
+    "typescript-eslint": "^8.35.0",
+    "vitest": "^3.2.4"
+  }
+}

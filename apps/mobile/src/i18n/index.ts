@@ -1,7 +1,7 @@
 // FR d'abord (Cameroun), EN ensuite. Les clés sont typées sur le dictionnaire FR.
 
-import { en } from './en.js'
-import { fr } from './fr.js'
+import { en } from './en'
+import { fr } from './fr'
 
 export type Language = 'fr' | 'en'
 export type MessageKey = keyof typeof fr
