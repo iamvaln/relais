@@ -33,6 +33,14 @@ const fr: Record<EmailType, Template> = {
     subject: 'Relais — dernier rappel avant transmission',
     text: `Bonjour ${p.name ?? ''},\n\nSans réponse de votre part d'ici sept jours, vos contacts de confiance seront prévenus, comme vous l'avez configuré. Un seul geste l'annule : ${p.link}\n\nRelais`,
   }),
+  contact_designated: (p) => ({
+    subject: `${p.owner ?? 'Un proche'} vous a désigné comme contact de confiance`,
+    text: `Bonjour,\n\n${p.owner ?? 'Une personne qui vous fait confiance'} vous a choisi comme contact de confiance sur Relais. Rien à faire pour l'instant : le moment venu, vous recevrez un message avec la marche à suivre.\n\nPour comprendre ce rôle : ${p.link}\n\nRelais`,
+  }),
+  contact_progress: (p) => ({
+    subject: 'Relais — du nouveau sur une transmission',
+    text: `Bonjour,\n\n${p.event === 'blocked' ? 'Un autre contact de confiance a épuisé ses tentatives et est bloqué 24 heures.' : 'Un autre contact de confiance a terminé sa part.'} Vous n'avez rien à faire de plus si vous avez déjà répondu.\n\nRelais`,
+  }),
   transmission_contact: (p) => ({
     subject: `${p.owner ?? 'Un proche'} vous a confié quelque chose`,
     text: `Bonjour,\n\n${p.owner ?? 'Une personne qui vous fait confiance'} vous a désigné pour recevoir des informations importantes, à ouvrir au moment voulu.\n\n${p.message ?? ''}\n\nPour commencer, suivez ce lien : ${p.link}\n\nPrenez votre temps. Nous sommes là si besoin : support@relais.app\n\nRelais`,
@@ -99,6 +107,14 @@ const en: Record<EmailType, Template> = {
   checkin_relance_3: (p) => ({
     subject: 'Relais — final reminder before transmission',
     text: `Hello ${p.name ?? ''},\n\nWithout a reply within seven days, your trusted contacts will be notified, as you configured. One tap cancels it: ${p.link}\n\nRelais`,
+  }),
+  contact_designated: (p) => ({
+    subject: `${p.owner ?? 'Someone close to you'} named you as a trusted contact`,
+    text: `Hello,\n\n${p.owner ?? 'Someone who trusts you'} chose you as a trusted contact on Relais. Nothing to do for now: when the time comes, you will receive a message with the next steps.\n\nAbout this role: ${p.link}\n\nRelais`,
+  }),
+  contact_progress: (p) => ({
+    subject: 'Relais — an update on a transmission',
+    text: `Hello,\n\n${p.event === 'blocked' ? 'Another trusted contact ran out of attempts and is blocked for 24 hours.' : 'Another trusted contact has completed their part.'} Nothing more to do if you have already answered.\n\nRelais`,
   }),
   transmission_contact: (p) => ({
     subject: `${p.owner ?? 'Someone close to you'} entrusted you with something`,

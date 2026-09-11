@@ -7,7 +7,7 @@
 
 import { env } from '../../config/env.js'
 import { configInt } from '../../lib/app-config.js'
-import { decodeBase64, hmacToken, randomToken } from '../../lib/crypto.js'
+import { decodeBase64, hmacToken, randomToken, sha256Hex } from '../../lib/crypto.js'
 import { AppError } from '../../lib/errors.js'
 import { prisma } from '../../lib/prisma.js'
 import { redis } from '../../lib/redis.js'
@@ -88,7 +88,7 @@ export type KeySlot = (typeof KEY_SLOTS)[number]
 const OPEN_STATUSES = new Set(['triggered', 'in_progress'])
 
 const contactInclude = {
-  transmissions: { include: { users: { select: { full_name: true } } } },
+  transmissions: { include: { users: { select: { full_name: true, language: true } } } },
   trusted_contacts: {
     include: {
       checkin_questions_trusted_contacts_question_1_idTocheckin_questions: { select: { id: true, text_fr: true, text_en: true } },
@@ -192,6 +192,23 @@ export type VerifyResult =
   | { accepted: true; answered: number; needed: number; unlocked: Record<KeySlot, boolean> }
 
 /** Une tentative de plus ; à la cinquième, blocage 24 h (E5-US02) et 429. */
+/**
+ * Proposal-9 : prévenir les autres contacts (non bloqués) d'un blocage
+ * (E5-US02) ou d'une confirmation (E5-US03). Rien de personnel dans l'email :
+ * l'événement seulement.
+ */
+async function notifyOtherContacts(c: LoadedContact, event: 'blocked' | 'confirmed'): Promise<void> {
+  const others = await prisma().transmission_contacts.findMany({
+    where: { transmission_id: c.transmission_id, id: { not: c.id }, blocked: false },
+    select: { trusted_contacts: { select: { notification_enc: true } } },
+  })
+  const locale = c.transmissions.users.language === 'en' ? 'en' : 'fr'
+  for (const other of others) {
+    const { email } = await openNotification(other.trusted_contacts.notification_enc)
+    await emailService().send({ userId: c.transmissions.user_id, to: email, type: 'contact_progress', locale, params: { event } })
+  }
+}
+
 async function recordFailure(c: LoadedContact, now: Date): Promise<never | { attempts_left: number }> {
   const count = c.fail_count + 1
   if (count >= MAX_ATTEMPTS) {
@@ -201,6 +218,7 @@ async function recordFailure(c: LoadedContact, now: Date): Promise<never | { att
       prisma().transmission_contacts.update({ where: { id: c.id }, data: { fail_count: count, blocked: true, status: 'failed' } }),
       prisma().trusted_contacts.update({ where: { id: c.trusted_contact_id }, data: { fail_count: count, blocked_until: until } }),
     ])
+    await notifyOtherContacts(c, 'blocked')
     throw new AppError('RELAY_TOKEN_EXHAUSTED', { details: { blocked_until: until.toISOString() } })
   }
   await prisma().$transaction([
@@ -284,6 +302,21 @@ export async function verify(token: string, body: VerifyBody, now = new Date()):
   } catch (err) {
     await recordFailure(c, now)
     throw err
+  }
+
+  // Proposal-8 : la part déposée doit être celle que l'owner a hachée et
+  // signée à l'activation — une part fausse se voit ici, pas au déchiffrement
+  // final quand l'escrow est consommé. Elle compte comme un échec.
+  const expected: Record<KeySlot, string | null> = {
+    k1: c.trusted_contacts.share_k1_plain_hash,
+    k2: c.trusted_contacts.share_k2_plain_hash,
+    k3: c.trusted_contacts.share_k3_plain_hash,
+  }
+  for (const [slot, share] of shares) {
+    if (expected[slot] !== null && sha256Hex(Buffer.from(share)) !== expected[slot]) {
+      const failure = await recordFailure(c, now)
+      throw new AppError('RELAY_SHARE_INVALID', { details: { ...failure, slot } })
+    }
   }
 
   const tr = c.transmissions
@@ -415,7 +448,10 @@ export async function confirm(token: string, now = new Date()): Promise<ConfirmR
     await prisma().transmission_contacts.update({ where: { id: c.id }, data: { status: 'confirmed', confirmed_at: now } })
   }
   const pending = await prisma().transmission_contacts.count({ where: { transmission_id: tr.id, status: 'answered' } })
-  if (pending > 0) return { confirmed: true, transmission_status: tr.status }
+  if (pending > 0) {
+    if (c.status === 'answered') await notifyOtherContacts(c, 'confirmed')
+    return { confirmed: true, transmission_status: tr.status }
+  }
 
   await purgeTransmission(tr.id, tr.user_id, tr.transmission_config_id, now)
   return { confirmed: true, transmission_status: 'completed' }

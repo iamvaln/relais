@@ -572,22 +572,58 @@ export async function setupTwoFactor(userId: string): Promise<{ secret: string; 
 }
 
 /** Activation : le code prouve que l'app d'authentification est bien configurée. */
-export async function activateTwoFactor(userId: string, code: string): Promise<void> {
+// --- Codes de récupération (Point-2, Schéma v1.4) ---------------------------
+//
+// 8 codes xxxxx-xxxxx (50 bits chacun), rendus une seule fois à l'activation,
+// stockés hachés SHA256. Un code remplace le TOTP au login et ne sert qu'une
+// fois ; la désactivation les purge. Pas de regénération en V1 : désactiver
+// puis réactiver la 2FA.
+
+const RECOVERY_CODE_COUNT = 8
+const RECOVERY_ALPHABET = 'abcdefghjkmnpqrstuvwxyz23456789' // sans i, l, o, 0, 1
+
+function randomRecoveryCode(): string {
+  const bytes = randomBytes(10)
+  const chars = [...bytes].map((b) => RECOVERY_ALPHABET[b % RECOVERY_ALPHABET.length]!)
+  return `${chars.slice(0, 5).join('')}-${chars.slice(5).join('')}`
+}
+
+function recoveryCodeHash(code: string): string {
+  return sha256Hex(code.trim().toLowerCase())
+}
+
+async function consumeRecoveryCode(userId: string, code: string): Promise<boolean> {
+  const { count } = await prisma().two_factor_recovery_codes.updateMany({
+    where: { user_id: userId, code_hash: recoveryCodeHash(code), used_at: null },
+    data: { used_at: new Date() },
+  })
+  return count === 1
+}
+
+export async function activateTwoFactor(userId: string, code: string): Promise<{ recovery_codes: string[] }> {
   const secret = await redis().get(keys.twoFactorSetup(userId))
   if (!secret) throw new AppError('AUTH_2FA_INVALID', { message: 'Configuration expirée — relancez la mise en place.' })
   const user = await prisma().users.findUnique({ where: { id: userId }, select: { email: true, language: true } })
   if (!user) throw new AppError('AUTH_TOKEN_INVALID')
   if (totp(secret, user.email).validate({ token: code, window: 1 }) === null) throw new AppError('AUTH_2FA_INVALID')
 
-  await prisma().users.update({ where: { id: userId }, data: { totp_secret: secret, totp_enabled: true } })
+  const recoveryCodes = Array.from({ length: RECOVERY_CODE_COUNT }, randomRecoveryCode)
+  await prisma().$transaction([
+    prisma().users.update({ where: { id: userId }, data: { totp_secret: secret, totp_enabled: true } }),
+    prisma().two_factor_recovery_codes.deleteMany({ where: { user_id: userId } }),
+    prisma().two_factor_recovery_codes.createMany({ data: recoveryCodes.map((c) => ({ user_id: userId, code_hash: recoveryCodeHash(c) })) }),
+  ])
   await redis().del(keys.twoFactorSetup(userId))
   await emailService().send({ userId, to: user.email, type: 'two_factor_enabled', locale: user.language === 'en' ? 'en' : 'fr' })
+  return { recovery_codes: recoveryCodes }
 }
 
-/** Connexion : le temp_token du login + un code valide donnent une session. */
+export type TwoFactorProof = { code: string } | { recovery_code: string }
+
+/** Connexion : le temp_token du login + un code TOTP valide (ou un code de récupération non utilisé) donnent une session. */
 export async function completeTwoFactorLogin(
   tempToken: string,
-  code: string,
+  proof: TwoFactorProof,
   ctx: SessionContext,
 ): Promise<{ session: IssuedSession; user: PublicUser }> {
   const key = keys.twoFactorPending(tempToken)
@@ -598,7 +634,11 @@ export async function completeTwoFactorLogin(
     select: { ...publicUserSelect, totp_secret: true },
   })
   if (!user?.totp_secret || !user.totp_enabled) throw new AppError('AUTH_2FA_INVALID')
-  if (totp(user.totp_secret, user.email).validate({ token: code, window: 1 }) === null) throw new AppError('AUTH_2FA_INVALID')
+  if ('code' in proof) {
+    if (totp(user.totp_secret, user.email).validate({ token: proof.code, window: 1 }) === null) throw new AppError('AUTH_2FA_INVALID')
+  } else if (!(await consumeRecoveryCode(user.id, proof.recovery_code))) {
+    throw new AppError('AUTH_2FA_INVALID')
+  }
   await redis().del(key)
   const pub = toPublicUser(user)
   return { session: await issueSession(user.id, pub.plan, ctx), user: pub }
@@ -613,7 +653,10 @@ export async function disableTwoFactor(userId: string, code: string): Promise<vo
   if (!user.totp_enabled || !user.totp_secret) throw new AppError('VALIDATION_ERROR', { message: 'La double authentification n’est pas active.' })
   if (totp(user.totp_secret, user.email).validate({ token: code, window: 1 }) === null) throw new AppError('AUTH_2FA_INVALID')
 
-  await prisma().users.update({ where: { id: userId }, data: { totp_secret: null, totp_enabled: false } })
+  await prisma().$transaction([
+    prisma().users.update({ where: { id: userId }, data: { totp_secret: null, totp_enabled: false } }),
+    prisma().two_factor_recovery_codes.deleteMany({ where: { user_id: userId } }),
+  ])
   await emailService().send({ userId, to: user.email, type: 'two_factor_disabled', locale: user.language === 'en' ? 'en' : 'fr' })
 }
 

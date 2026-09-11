@@ -3,6 +3,7 @@
 // Storj) attendent une collecte qui n'existe pas encore (open-questions).
 
 import { configInt } from '../../lib/app-config.js'
+import { DEFAULT_MAX_RESTARTS } from '../../jobs/relay-cleanup.js'
 import { prisma } from '../../lib/prisma.js'
 import { healthReport } from '../health/routes.js'
 
@@ -79,7 +80,9 @@ async function alerts(now: Date): Promise<DashboardAlert[]> {
   const out: DashboardAlert[] = []
   const lockHours = await configInt('security.contact_lock_hrs', 24)
 
-  const [health, expiring, blockedRecently, suspendedStale] = await Promise.all([
+  const maxRestarts = await configInt('dms.relay_max_restarts', DEFAULT_MAX_RESTARTS)
+
+  const [health, expiring, blockedRecently, suspendedStale, triggeredConfigs] = await Promise.all([
     healthReport(),
     prisma().transmissions.findMany({
       where: { status: { in: ['triggered', 'in_progress'] }, escrow_expires_at: { gt: now, lt: new Date(now.getTime() + ESCROW_ALERT_HOURS * HOUR_MS) } },
@@ -89,13 +92,21 @@ async function alerts(now: Date): Promise<DashboardAlert[]> {
     // Un blocage dure lockHours : bloqué depuis moins d'une heure ⇔ blocked_until > now + (lockHours − 1) h.
     prisma().trusted_contacts.count({ where: { blocked_until: { gt: new Date(now.getTime() + (lockHours - 1) * HOUR_MS) } } }),
     prisma().users.count({ where: { account_status: 'suspended', updated_at: { lt: new Date(now.getTime() - SUSPENDED_STALE_HOURS * HOUR_MS) } } }),
+    // Proposal-9 : déclenchée, plus de transmission ouverte, plafond d'expirations atteint
+    prisma().transmission_configs.findMany({
+      where: { status: 'triggered', transmissions: { none: { status: { in: ['triggered', 'in_progress'] } } } },
+      select: { id: true, transmissions: { where: { status: 'expired' }, select: { id: true } } },
+      orderBy: { activated_at: 'asc' },
+    }),
   ])
+  const stalled = triggeredConfigs.filter((c) => c.transmissions.length >= maxRestarts)
 
   for (const [service, status] of Object.entries(health.services)) {
     if (status === 'down') out.push({ type: 'service_down', severity: service === 'storj' ? 'high' : 'critical', count: 1, service })
   }
   if (expiring.length > 0) out.push({ type: 'escrow_expiring', severity: 'high', count: expiring.length, transmission_ids: expiring.map((t) => t.id) })
   if (blockedRecently > BLOCKED_SPIKE_THRESHOLD) out.push({ type: 'contact_failures_spike', severity: 'high', count: blockedRecently })
+  if (stalled.length > 0) out.push({ type: 'transmission_stalled', severity: 'high', count: stalled.length, transmission_config_ids: stalled.map((c) => c.id) })
   if (suspendedStale > 0) out.push({ type: 'accounts_suspended_stale', severity: 'medium', count: suspendedStale })
 
   return out.sort((a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity])

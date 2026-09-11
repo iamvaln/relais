@@ -166,6 +166,18 @@ describe('GET /journal/entries et /journal/entries/:id', () => {
     expect(one.body.data.content_enc).toBe(content(2).toString('base64'))
   })
 
+  it('GET /journal/entries/month/:ym (Backend v1.1 §6) : l’entrée du mois avec son contenu ; mois vide → 404 ; format invalide → 400', async () => {
+    const o = await makeOwner()
+    const e = await createEntry(o, 1)
+    const r = await (await api()).get(`/journal/entries/month/${monthStart().slice(0, 7)}`).set(o.auth).expect(200)
+    expect(r.body.data.id).toBe(e.id)
+    expect(r.body.data.content_enc).toBe(content(1).toString('base64'))
+    const empty = await (await api()).get('/journal/entries/month/2020-01').set(o.auth).expect(404)
+    expect(empty.body.error.code).toBe('NOT_FOUND')
+    await (await api()).get('/journal/entries/month/2026-1').set(o.auth).expect(400)
+    await (await api()).get('/journal/entries/month/2026-13').set(o.auth).expect(400)
+  })
+
   it('l’entrée d’un autre utilisateur est introuvable', async () => {
     const a = await makeOwner('a@example.cm')
     const b = await makeOwner('b@example.cm')

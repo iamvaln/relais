@@ -3,7 +3,7 @@ import { prisma } from '../src/lib/prisma.js'
 import sodium from '../src/lib/sodium.js'
 import { objectStore } from '../src/services/storage/index.js'
 import { api, closeAll, generateDeviceKeys, lastEmailTo, registerUser, resetState, signWith, stepUp, type DeviceKeys } from './helpers.js'
-import { buildActivationBody, buildContactBody, buildShare, fetchRelaisKey, sealToRelais, sha256Hex, signHash, type ActivationContact } from './transmission-helpers.js'
+import { buildActivationBody, buildContactBody, buildShare, fetchRelaisKey, plainShareBytes, sealToRelais, sha256Hex, signHash, type ActivationContact } from './transmission-helpers.js'
 
 /** Owner avec clé publique enregistrée + clé de Relais récupérée. */
 async function owner(email = 'adjoua@example.cm') {
@@ -52,7 +52,7 @@ describe('GET /transmission/relais-key (DEC-28)', () => {
     expect(pk).toHaveLength(32)
     expect(r.body.data.key_version).toMatch(/^[0-9a-f]{8,}$/)
     expect(r.headers['cache-control']).toBe('public, max-age=86400')
-    // Dérivée de RELAIS_X25519_SK : stable d'un appel à l'autre
+    // Dérivée de RELAIS_X25519_SK_DEV : stable d'un appel à l'autre
     const again = await (await api()).get('/transmission/relais-key').expect(200)
     expect(again.body.data).toEqual(r.body.data)
   })
@@ -223,7 +223,7 @@ type Owner = Awaited<ReturnType<typeof owner>>
 async function contactBody(o: Owner, seed = 1, roles: { k1?: boolean; k2?: boolean; k3?: boolean } = { k1: true }) {
   const [q1, q2, q3] = (await secretQuestionIds(3)) as [string, string, string]
   return buildContactBody(o.keys, o.relaisPk, {
-    notification: { email: `contact${seed}@example.cm`, phone: '+237699000000' },
+    notification: { email: `contact${seed}@example.cm`, phone: '+237699000000', owner_display_name: 'Adjoua' },
     roles,
     question_ids: [q1, q2, q3],
     secretSeed: seed,
@@ -441,7 +441,7 @@ describe('POST /transmission/activate', () => {
     const cs = await contacts(o, [{ k1: true }, { k1: true, k2: true }])
     const body = buildActivationBody(o.keys, cs)
     const impostor = buildShare(generateDeviceKeys(), 22)
-    body.contacts[1]!.shares.k2 = { enc: body.contacts[1]!.shares.k2!.enc, sig: impostor.sig }
+    body.contacts[1]!.shares.k2 = { ...body.contacts[1]!.shares.k2!, sig: impostor.sig }
     const r = await activate(o, body)
     expect(r.status).toBe(401)
     expect(r.body.error.code).toBe('AUTH_TOKEN_INVALID')
@@ -454,6 +454,20 @@ describe('POST /transmission/activate', () => {
     ])
     expect(await objectStore().head(`shares/${o.userId}/${cs[0]!.id}/k1.enc`)).toBeNull()
     expect(await prisma().email_log.count({ where: { email_type: 'transmission_contact' } })).toBe(0)
+  })
+
+  it('Proposal-8 : refuse un hash de part en clair mal signé, sans rien écrire', async () => {
+    const o = await owner()
+    const cs = await contacts(o, [{ k1: true }, { k1: true }])
+    const body = buildActivationBody(o.keys, cs)
+    const impostor = buildShare(generateDeviceKeys(), 21)
+    body.contacts[1]!.shares.k1 = { ...body.contacts[1]!.shares.k1!, plain_sig: impostor.plain_sig }
+    const r = await activate(o, body)
+    expect(r.status).toBe(401)
+    expect(r.body.error.code).toBe('AUTH_TOKEN_INVALID')
+    expect(await objectStore().head(`shares/${o.userId}/${cs[0]!.id}/k1.enc`)).toBeNull()
+    const row = await prisma().trusted_contacts.findUniqueOrThrow({ where: { id: cs[0]!.id } })
+    expect(row.share_k1_plain_hash).toBeNull()
   })
 
   it('active : parts stockées et hachées, verify_token, statut, check-in planifié, contacts prévenus (DEC-30)', async () => {
@@ -483,6 +497,10 @@ describe('POST /transmission/activate', () => {
     expect(row.share_k1_hash).toBe(sha256Hex(k1))
     expect(Buffer.from((await objectStore().get(row.storj_k1_path!))!)).toEqual(k1)
     expect(row.storj_k3_path).toBeNull()
+    // Proposal-8 : SHA256(Si) signé, gardé pour comparer au dépôt du contact
+    expect(row.share_k1_plain_hash).toBe(sha256Hex(plainShareBytes(11)))
+    expect(row.share_k2_plain_hash).toBe(sha256Hex(plainShareBytes(12)))
+    expect(row.share_k3_plain_hash).toBeNull()
     expect(Buffer.from(row.verify_token!).toString('base64')).toBe(body.contacts[0]!.verify_token)
 
     // Le check-in démarre : prochaine échéance dans checkin_frequency_weeks
@@ -492,10 +510,15 @@ describe('POST /transmission/activate', () => {
     expect(weeks).toBeLessThan(2.01)
     expect(tc.relance_count).toBe(0)
 
-    // DEC-30 : email direct à chaque contact, tracé sans l'adresse en clair
-    expect(lastEmailTo('contact1@example.cm')?.subject).toBeTruthy()
-    expect(lastEmailTo('contact2@example.cm')?.subject).toBeTruthy()
-    const logs = await prisma().email_log.findMany({ where: { email_type: 'transmission_contact' } })
+    // DEC-30 / Point-1 (v1.4) : email de désignation à chaque contact, avec le
+    // prénom que l'owner a mis dans la sealed box, tracé sans l'adresse en clair
+    const designation = lastEmailTo('contact1@example.cm')
+    expect(designation?.subject).toContain('Adjoua')
+    expect(designation?.text).toContain('Adjoua')
+    expect(designation?.text).not.toMatch(/relay\//)
+    expect(lastEmailTo('contact2@example.cm')?.subject).toContain('Adjoua')
+    expect(await prisma().email_log.count({ where: { email_type: 'transmission_contact' } })).toBe(0)
+    const logs = await prisma().email_log.findMany({ where: { email_type: 'contact_designated' } })
     expect(logs.map((l) => l.recipient_hash).sort()).toEqual(
       [sha256Hex(Buffer.from('contact1@example.cm')), sha256Hex(Buffer.from('contact2@example.cm'))].sort(),
     )

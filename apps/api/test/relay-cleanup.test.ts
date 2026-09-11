@@ -8,10 +8,10 @@ import { redis } from '../src/lib/redis.js'
 import { vaultKey } from '../src/api/vault/service.js'
 import { objectStore } from '../src/services/storage/index.js'
 import { api, closeAll, lastEmailTo, mailbox, resetState } from './helpers.js'
-import { activateTransmission, makeOwner, opaque, type Owner } from './transmission-helpers.js'
+import { activateTransmission, makeOwner, plainShareBytes, type Owner } from './transmission-helpers.js'
 
 const DAY = 24 * 3600 * 1000
-const share = (seed: number) => opaque(seed, 32).toString('base64')
+const share = (seed: number) => plainShareBytes(seed).toString('base64')
 
 beforeEach(resetState)
 afterAll(closeAll)
@@ -35,7 +35,7 @@ describe('cleanup — escrow expiré', () => {
   it('ne touche à rien avant l’échéance', async () => {
     const { t1 } = await opened()
     await (await api()).post(`/relay/${t1}/verify`).send({ shares: { k1: share(11) } }).expect(200)
-    expect(await cleanup(new Date())).toEqual({ expired: 0, reopened: 0, purged: 0 })
+    expect(await cleanup(new Date())).toEqual({ expired: 0, reopened: 0, purged: 0, stalled: 0 })
     expect(await prisma().escrow_shares.count()).toBe(1)
   })
 
@@ -46,7 +46,7 @@ describe('cleanup — escrow expiré', () => {
     const later = new Date(tr.escrow_expires_at.getTime() + 3600 * 1000)
     mailbox.clear()
 
-    expect(await cleanup(later)).toEqual({ expired: 1, reopened: 1, purged: 0 })
+    expect(await cleanup(later)).toEqual({ expired: 1, reopened: 1, purged: 0, stalled: 0 })
 
     expect((await prisma().transmissions.findUniqueOrThrow({ where: { id: tr.id } })).status).toBe('expired')
     expect(await prisma().escrow_shares.count({ where: { transmission_id: tr.id } })).toBe(0)
@@ -62,6 +62,29 @@ describe('cleanup — escrow expiré', () => {
   })
 })
 
+describe('cleanup — plafond de redémarrage (Proposal-9)', () => {
+  it('après dms.relay_max_restarts (3) expirations, le process ne repart plus : la config reste triggered sans transmission ouverte', async () => {
+    const { o } = await opened()
+    let now = new Date()
+    for (const round of [1, 2]) {
+      const open = await prisma().transmissions.findFirstOrThrow({ where: { user_id: o.userId, status: 'triggered' } })
+      now = new Date(open.escrow_expires_at.getTime() + 3600 * 1000)
+      expect(await cleanup(now)).toEqual({ expired: 1, reopened: 1, purged: 0, stalled: 0 })
+      expect(await prisma().transmissions.count({ where: { user_id: o.userId, status: 'expired' } })).toBe(round)
+    }
+    const third = await prisma().transmissions.findFirstOrThrow({ where: { user_id: o.userId, status: 'triggered' } })
+    now = new Date(third.escrow_expires_at.getTime() + 3600 * 1000)
+    mailbox.clear()
+    expect(await cleanup(now)).toEqual({ expired: 1, reopened: 0, purged: 0, stalled: 1 })
+    expect(await prisma().transmissions.count({ where: { user_id: o.userId, status: 'expired' } })).toBe(3)
+    expect(await prisma().transmissions.count({ where: { user_id: o.userId, status: { in: ['triggered', 'in_progress'] } } })).toBe(0)
+    expect((await prisma().transmission_configs.findUniqueOrThrow({ where: { user_id: o.userId } })).status).toBe('triggered')
+    expect(lastEmailTo('contact1@example.cm')).toBeUndefined()
+    // le job suivant ne relance rien non plus
+    expect(await cleanup(new Date(now.getTime() + DAY))).toEqual({ expired: 0, reopened: 0, purged: 0, stalled: 0 })
+  })
+})
+
 describe('cleanup — fin d’accès (E5-US04, 30 jours)', () => {
   it('catégorie déverrouillée depuis plus de 30 jours après l’escrow : purge et statut completed', async () => {
     const { o, t1, t2 } = await opened()
@@ -72,11 +95,11 @@ describe('cleanup — fin d’accès (E5-US04, 30 jours)', () => {
 
     // à l'expiration de l'escrow, l'accès déverrouillé reste ouvert
     const afterEscrow = new Date(tr.escrow_expires_at.getTime() + DAY)
-    expect(await cleanup(afterEscrow)).toEqual({ expired: 0, reopened: 0, purged: 0 })
+    expect(await cleanup(afterEscrow)).toEqual({ expired: 0, reopened: 0, purged: 0, stalled: 0 })
     await (await api()).get(`/relay/${t1}/data`).expect(200)
 
     const afterAccess = new Date(tr.escrow_expires_at.getTime() + 31 * DAY)
-    expect(await cleanup(afterAccess)).toEqual({ expired: 0, reopened: 0, purged: 1 })
+    expect(await cleanup(afterAccess)).toEqual({ expired: 0, reopened: 0, purged: 1, stalled: 0 })
     expect((await prisma().transmissions.findUniqueOrThrow({ where: { id: tr.id } })).status).toBe('completed')
     expect(await objectStore().head(vaultKey(o.userId, 'accounts'))).toBeNull()
     expect(await prisma().escrow_shares.count()).toBe(0)

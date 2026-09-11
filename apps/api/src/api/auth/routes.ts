@@ -1,7 +1,7 @@
 // Routes /auth (Backend Specs §3.1 v1.1, DEC-25, DEC-27).
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
-import { ok } from '../../lib/errors.js'
+import { AppError, ok } from '../../lib/errors.js'
 import { authenticate } from '../../middleware/authenticate.js'
 import { requireStepUp } from '../../middleware/require-step-up.js'
 import { limits } from '../../plugins/rate-limit.js'
@@ -189,13 +189,20 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     '/2fa/verify',
     { schema: { body: twoFactorVerifyBody }, config: { rateLimit: limits.twoFactorVerify } },
     async (req, reply) => {
-      if (req.body.temp_token) {
-        const { session, user } = await auth.completeTwoFactorLogin(req.body.temp_token, req.body.code, ctx(req))
+      const { code, recovery_code, temp_token } = req.body
+      if (temp_token) {
+        // Fin du login : un code TOTP ou un code de récupération, pas les deux (Point-2)
+        if ((code === undefined) === (recovery_code === undefined)) {
+          throw new AppError('VALIDATION_ERROR', { details: { body: 'soit code, soit recovery_code' } })
+        }
+        const proof = code !== undefined ? { code } : { recovery_code: recovery_code! }
+        const { session, user } = await auth.completeTwoFactorLogin(temp_token, proof, ctx(req))
         return sendSession(reply, session, user)
       }
+      if (code === undefined) throw new AppError('VALIDATION_ERROR', { details: { code: 'requis pour activer la 2FA' } })
       await authenticate(req, reply)
-      await auth.activateTwoFactor(req.user!.id, req.body.code)
-      return ok({ enabled: true })
+      const { recovery_codes } = await auth.activateTwoFactor(req.user!.id, code)
+      return ok({ enabled: true, recovery_codes })
     },
   )
 

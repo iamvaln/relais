@@ -76,19 +76,25 @@ export interface ConfigBody {
 
 const share = {
   type: 'object',
-  required: ['enc', 'sig'],
+  required: ['enc', 'sig', 'plain_hash', 'plain_sig'],
   additionalProperties: false,
   properties: {
     /** Si_enc = XChaCha20(K_i, S_i) — opaque pour le serveur. */
     enc: { ...base64, maxLength: 4096 },
     /** Ed25519.sign(SHA256(Si_enc), owner_sk) — DEC-29. */
     sig: { ...base64, maxLength: 128 },
+    /** SHA256(Si) en hex — Proposal-8 : comparé au dépôt du contact, ne révèle rien sur Si (32 bytes d'entropie). */
+    plain_hash: { type: 'string', pattern: '^[0-9a-f]{64}$' },
+    /** Ed25519.sign(SHA256(Si), owner_sk) — même primitive que DEC-29. */
+    plain_sig: { ...base64, maxLength: 128 },
   },
 } as const
 const shareOrNull = { anyOf: [share, { type: 'null' }] } as const
 export interface Share {
   enc: string
   sig: string
+  plain_hash: string
+  plain_sig: string
 }
 
 export const activateBody = {

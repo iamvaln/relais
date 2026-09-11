@@ -23,6 +23,9 @@ export type EmailType =
   | 'restore_succeeded'
   | 'two_factor_enabled'
   | 'two_factor_disabled'
+  // v1.4 (Point-1) et Proposal-9 — migration 20260911000000
+  | 'contact_designated'
+  | 'contact_progress'
 
 export interface RenderedEmail {
   subject: string

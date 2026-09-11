@@ -26,6 +26,7 @@ export const ErrorCodes = {
   RELAY_TOKEN_EXHAUSTED: { http: 429, message: 'Trop de tentatives sur ce lien.' },
   RELAY_CONTACT_BLOCKED: { http: 423, message: 'Contact bloqué — trop d’échecs.' },
   RELAY_ALREADY_ANSWERED: { http: 409, message: 'Ce contact a déjà répondu.' },
+  RELAY_SHARE_INVALID: { http: 422, message: 'Cette part ne correspond pas à celle enregistrée à l’activation.' },
   WRAPPED_INSUFFICIENT_ENTRIES: { http: 409, message: 'Pas assez d’entrées cette année pour un Wrapped.' },
   QUESTION_DUPLICATE: { http: 409, message: 'Une question active porte déjà ce libellé.' },
   ESCROW_MAX_EXTENSIONS: { http: 409, message: 'Nombre maximal d’extensions d’escrow atteint.' },

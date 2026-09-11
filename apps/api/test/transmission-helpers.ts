@@ -35,7 +35,7 @@ export function signHash(keys: DeviceKeys, data: Buffer): string {
 }
 
 export interface ContactInput {
-  notification: { email: string; phone: string }
+  notification: { email: string; phone: string; owner_display_name?: string }
   roles: { k1?: boolean; k2?: boolean; k3?: boolean }
   question_ids: [string, string, string]
   secretSeed?: number
@@ -56,13 +56,20 @@ export async function buildContactBody(keys: DeviceKeys, relaisPk: string, input
 }
 
 export type Roles3 = { k1: boolean; k2: boolean; k3: boolean }
-export type Share = { enc: string; sig: string }
+export type Share = { enc: string; sig: string; plain_hash: string; plain_sig: string }
+
+/** Si en clair (ce que le contact déposera au relay) — distinct de Si_enc pour que les tests voient la différence. */
+export function plainShareBytes(seed: number): Buffer {
+  return opaque(seed + 500, 32)
+}
 export type ContactBodyLike = Awaited<ReturnType<typeof buildContactBody>>
 
 /** Une part Si_enc opaque de 32 bytes + sa signature Ed25519 sur SHA256(Si_enc) (DEC-29). */
-export function buildShare(keys: DeviceKeys, seed: number): Share & { bytes: Buffer } {
+/** Si_enc opaque + signature DEC-29, et SHA256(Si) signé (Proposal-8). */
+export function buildShare(keys: DeviceKeys, seed: number): Share & { bytes: Buffer; plain: Buffer } {
   const bytes = opaque(seed, 32)
-  return { bytes, enc: bytes.toString('base64'), sig: signHash(keys, bytes) }
+  const plain = plainShareBytes(seed)
+  return { bytes, plain, enc: bytes.toString('base64'), sig: signHash(keys, bytes), plain_hash: sha256Hex(plain), plain_sig: signHash(keys, plain) }
 }
 
 export function buildShares(keys: DeviceKeys, roles: Roles3, seed: number) {
@@ -95,9 +102,9 @@ export function buildActivationBody(
         id: c.id,
         ...c.body,
         shares: {
-          k1: shares.k1 && { enc: shares.k1.enc, sig: shares.k1.sig },
-          k2: shares.k2 && { enc: shares.k2.enc, sig: shares.k2.sig },
-          k3: shares.k3 && { enc: shares.k3.enc, sig: shares.k3.sig },
+          k1: shares.k1 && { enc: shares.k1.enc, sig: shares.k1.sig, plain_hash: shares.k1.plain_hash, plain_sig: shares.k1.plain_sig },
+          k2: shares.k2 && { enc: shares.k2.enc, sig: shares.k2.sig, plain_hash: shares.k2.plain_hash, plain_sig: shares.k2.plain_sig },
+          k3: shares.k3 && { enc: shares.k3.enc, sig: shares.k3.sig, plain_hash: shares.k3.plain_hash, plain_sig: shares.k3.plain_sig },
         },
         verify_token: opaque(c.seed * 100, 40).toString('base64'),
       }

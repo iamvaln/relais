@@ -331,6 +331,7 @@ export async function deleteUser(adminId: string, id: string, reason: string, ct
     prisma().restore_challenges.deleteMany({ where: { user_id: id } }),
     prisma().email_otp.deleteMany({ where: { user_id: id } }),
     prisma().push_tokens.deleteMany({ where: { user_id: id } }),
+    prisma().two_factor_recovery_codes.deleteMany({ where: { user_id: id } }),
     prisma().support_tickets.updateMany({ where: { user_id: id }, data: { user_email: 'deleted' } }),
     prisma().users.update({
       where: { id },

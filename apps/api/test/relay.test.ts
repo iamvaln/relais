@@ -8,7 +8,7 @@ import { redis } from '../src/lib/redis.js'
 import { vaultKey } from '../src/api/vault/service.js'
 import { objectStore } from '../src/services/storage/index.js'
 import { api, closeAll, lastEmailTo, mailbox, resetState } from './helpers.js'
-import { activateTransmission, makeOwner, opaque, type ActivationContact, type Owner } from './transmission-helpers.js'
+import { activateTransmission, makeOwner, opaque, plainShareBytes, type ActivationContact, type Owner } from './transmission-helpers.js'
 
 const HOUR = 3600 * 1000
 const NOW = new Date('2026-09-10T09:00:00Z')
@@ -59,7 +59,8 @@ describe('deadman trigger — ouverture de la transmission', () => {
       expect(lastEmailTo(email)?.text).not.toContain(o.userId)
     }
     const logs = await prisma().email_log.findMany({ where: { user_id: o.userId, email_type: 'transmission_contact' } })
-    expect(logs).toHaveLength(4) // 2 à l'activation (DEC-30) + 2 au déclenchement
+    expect(logs).toHaveLength(2) // les 2 de l'activation sont des contact_designated (Point-1)
+    expect(await prisma().email_log.count({ where: { user_id: o.userId, email_type: 'contact_designated' } })).toBe(2)
 
     // Idempotent : la config reste 'triggered', mais la transmission existe déjà.
     expect(await trigger(NOW)).toEqual({ transmissions: 0, contacts_notified: 0 })
@@ -153,7 +154,7 @@ describe('GET /relay/:token', () => {
 
 // --- Réponses aux questions : escrow et tentatives ------------------------------------
 
-const share = (seed: number) => opaque(seed, 32).toString('base64')
+const share = (seed: number) => plainShareBytes(seed).toString('base64')
 
 async function verify(token: string, body: unknown) {
   return (await api()).post(`/relay/${token}/verify`).send(body)
@@ -177,6 +178,12 @@ describe('POST /relay/:token/verify — tentatives (E5-US02)', () => {
     expect(tc.blocked_until!.getTime() - Date.now()).toBeGreaterThan(23.9 * HOUR)
     expect((await (await api()).get(`/relay/${tokens.contact1}`)).status).toBe(423)
     expect((await verify(tokens.contact1, { failed: true })).status).toBe(423)
+
+    // Proposal-9 : l'autre contact est prévenu du blocage, pas le bloqué
+    expect(lastEmailTo('contact2@example.cm')?.subject).toMatch(/du nouveau/)
+    expect(lastEmailTo('contact2@example.cm')?.text).toMatch(/bloqué 24 heures/)
+    expect(lastEmailTo('contact1@example.cm')?.subject).not.toMatch(/du nouveau/)
+    expect(await prisma().email_log.count({ where: { email_type: 'contact_progress' } })).toBe(1)
   })
 
   it('le blocage se lève seul après blocked_until, compteur remis à zéro', async () => {
@@ -215,7 +222,7 @@ describe('POST /relay/:token/verify — parts en escrow (Techniques §6.7)', () 
     const es = tr.escrow_shares[0]!
     expect(es).toMatchObject({ key_category: 'k1', redis_key_id: `escrow:key:${tr.id}` })
     expect(Buffer.from(es.share_tmp_enc).toString('base64')).not.toBe(share(11))
-    expect(Buffer.from(es.share_tmp_enc).includes(opaque(11, 32))).toBe(false)
+    expect(Buffer.from(es.share_tmp_enc).includes(plainShareBytes(11))).toBe(false)
     expect(es.expires_at.toISOString()).toBe(tr.escrow_expires_at.toISOString())
     const ttl = await redis().ttl(es.redis_key_id)
     expect(ttl).toBeGreaterThan(71 * 3600)
@@ -226,6 +233,19 @@ describe('POST /relay/:token/verify — parts en escrow (Techniques §6.7)', () 
     const again = await verify(tokens.contact1, { shares: { k1: share(11) } })
     expect(again.status).toBe(409)
     expect(again.body.error.code).toBe('RELAY_ALREADY_ANSWERED')
+  })
+
+  it('Proposal-8 : une part dont le SHA256 ne correspond pas au hash signé à l’activation est refusée et compte comme un échec', async () => {
+    const { tokens, contacts } = await opened()
+    const r = await verify(tokens.contact1, { shares: { k1: opaque(999, 32).toString('base64') } })
+    expect(r.status).toBe(422)
+    expect(r.body.error.code).toBe('RELAY_SHARE_INVALID')
+    expect(r.body.error.details).toEqual({ attempts_left: 4, slot: 'k1' })
+    const tc = await prisma().transmission_contacts.findFirstOrThrow({ where: { trusted_contact_id: contacts[0]!.id } })
+    expect(tc).toMatchObject({ status: 'notified', fail_count: 1 })
+    expect(await prisma().escrow_shares.count()).toBe(0)
+    // la vraie part passe ensuite
+    expect((await verify(tokens.contact1, { shares: { k1: share(11) } })).status).toBe(200)
   })
 
   it('N parts pour une catégorie : elle est déverrouillée pour tous', async () => {
@@ -314,6 +334,9 @@ describe('POST /relay/:token/confirm (E5-US05)', () => {
     const first = await (await api()).post(`/relay/${tokens.contact1}/confirm`).expect(200)
     expect(first.body.data).toEqual({ confirmed: true, transmission_status: 'in_progress' })
     expect(await prisma().escrow_shares.count()).toBe(2)
+    // Proposal-9 : l'autre contact apprend la confirmation
+    expect(lastEmailTo('contact2@example.cm')?.subject).toMatch(/du nouveau/)
+    expect(lastEmailTo('contact2@example.cm')?.text).toMatch(/terminé sa part/)
 
     const second = await (await api()).post(`/relay/${tokens.contact2}/confirm`).expect(200)
     expect(second.body.data).toEqual({ confirmed: true, transmission_status: 'completed' })
@@ -331,6 +354,8 @@ describe('POST /relay/:token/confirm (E5-US05)', () => {
     expect((await prisma().transmission_configs.findUniqueOrThrow({ where: { user_id: o.userId } })).status).toBe('completed')
     // le lien est clos
     await (await api()).get(`/relay/${tokens.contact1}`).expect(404)
+    // la confirmation qui termine la transmission ne prévient plus personne
+    expect(await prisma().email_log.count({ where: { email_type: 'contact_progress' } })).toBe(1)
   })
 
   it('est limité à 3 requêtes par minute et par IP (§7.1)', async () => {

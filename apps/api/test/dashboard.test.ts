@@ -75,6 +75,28 @@ describe('GET /admin/dashboard — KPIs (BO-01)', () => {
 })
 
 describe('GET /admin/dashboard — alertes calculables', () => {
+  it('transmission au point mort (Proposal-9) : config triggered, 3 escrows expirés, aucune transmission ouverte', async () => {
+    const admin = await loginAdmin('admin')
+    const o = await makeOwner()
+    const { transmissionId } = await openTransmission(o)
+    const tr = await prisma().transmissions.findUniqueOrThrow({ where: { id: transmissionId } })
+    await prisma().transmissions.update({ where: { id: tr.id }, data: { status: 'expired' } })
+    for (let i = 0; i < 2; i++) {
+      await prisma().transmissions.create({
+        data: {
+          transmission_config_id: tr.transmission_config_id,
+          user_id: o.userId,
+          status: 'expired',
+          escrow_expires_at: tr.escrow_expires_at,
+          schema_n_snapshot: tr.schema_n_snapshot,
+          schema_m_snapshot: tr.schema_m_snapshot,
+        },
+      })
+    }
+    const r = await (await api()).get('/admin/dashboard').set(admin.auth).expect(200)
+    expect(r.body.data.alerts).toEqual([{ type: 'transmission_stalled', severity: 'high', count: 1, transmission_config_ids: [tr.transmission_config_id] }])
+  })
+
   it('rien à signaler quand tout va bien', async () => {
     const sa = await loginAdmin()
     const r = await (await api()).get('/admin/dashboard').set(sa.auth).expect(200)

@@ -13,8 +13,8 @@ d'implémentation.
 | Livrable | État |
 |---|---|
 | Specs produit, techniques, backend, frontend, back office | ✅ v1 (`docs/specs/`) |
-| Schéma PostgreSQL v1.4 | ✅ v1.3 implémentée et testée (`prisma/`) ; delta v1.4 (`contact_designated`, `two_factor_recovery_codes`) à migrer |
-| API backend — auth, vault, transmission, check-in, relay, journal, admin, facturation, dashboard, tickets, jobs | ✅ 89 endpoints, 204 tests d'intégration (`apps/api/`) |
+| Schéma PostgreSQL v1.4 | ✅ Implémenté et testé (`prisma/`), Proposals 8 et 9 incluses |
+| API backend — auth, vault, transmission, check-in, relay, journal, admin, facturation, dashboard, tickets, jobs | ✅ 90 endpoints, 216 tests d'intégration (`apps/api/`) |
 | API backend — logs API, fournisseur de paiement | ⬜ À faire |
 | App mobile | ⬜ Non démarré |
 | Back office (interface) | ⬜ Non démarré — l'API `/admin/*` est prête |
