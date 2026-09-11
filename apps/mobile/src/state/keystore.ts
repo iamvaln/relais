@@ -8,7 +8,10 @@
 // minuteur). Zustand « vanilla » : aucun import React Native, testable sous Node.
 
 import { createStore, type StoreApi } from 'zustand/vanilla'
-import { type CategoryKeys, type SigningKeypair, deriveCategoryKeys, deriveSigningKeypair, wipe } from '@relais/crypto-core'
+import { type CategoryKeys, type SigningKeypair, argon2id, contextSalt, deriveCategoryKeys, deriveSigningKeypair, wipe } from '@relais/crypto-core'
+
+/** Clé du fichier SQLite (SQLCipher) : Argon2id(seed, ctx) comme K1/K2/K3, contexte distinct. */
+const SQLITE_CONTEXT = 'relais_sqlite_v1'
 
 export const AUTO_LOCK_MS = 10 * 60 * 1000
 
@@ -16,6 +19,8 @@ export interface KeyStoreState {
   status: 'locked' | 'unlocked'
   keys: CategoryKeys | null
   signer: SigningKeypair | null
+  /** Clé SQLCipher du coffre local — dérivée du seed, effacée au verrouillage. */
+  dbKey: Uint8Array | null
   lastActivity: number
   unlockWithSeed(seed: Uint8Array): Promise<void>
   lock(): void
@@ -30,24 +35,27 @@ export function createKeyStore(deps: { now: () => number } = { now: Date.now }):
     status: 'locked',
     keys: null,
     signer: null,
+    dbKey: null,
     lastActivity: 0,
 
     async unlockWithSeed(seed) {
       try {
         const keys = await deriveCategoryKeys(seed)
         const signer = await deriveSigningKeypair(seed)
+        const dbKey = await argon2id(seed, contextSalt(SQLITE_CONTEXT), 'interactive')
         get().lock()
-        set({ status: 'unlocked', keys, signer, lastActivity: deps.now() })
+        set({ status: 'unlocked', keys, signer, dbKey, lastActivity: deps.now() })
       } finally {
         wipe(seed)
       }
     },
 
     lock() {
-      const { keys, signer } = get()
+      const { keys, signer, dbKey } = get()
       if (keys) wipe(keys.k1, keys.k2, keys.k3)
       if (signer) wipe(signer.privateKey)
-      set({ status: 'locked', keys: null, signer: null })
+      if (dbKey) wipe(dbKey)
+      set({ status: 'locked', keys: null, signer: null, dbKey: null })
     },
 
     touch() {

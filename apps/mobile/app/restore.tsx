@@ -7,6 +7,7 @@ import { api } from '@/lib/api'
 import { device } from '@/lib/device'
 import { messageFor } from '@/lib/errors'
 import { keyStore } from '@/state/keystore'
+import { openVault } from '@/state/vault'
 import { useSession } from '@/state/session'
 import { Body, Button, ErrorText, Field, PinField, Screen, Title } from '@/ui'
 
@@ -17,6 +18,7 @@ export default function Restore() {
   const [pin, setPin] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [restoring, setRestoring] = useState(false)
 
   const submit = async () => {
     setBusy(true)
@@ -24,6 +26,9 @@ export default function Restore() {
     try {
       const { seed } = await restoreWithWords({ api, device }, { words, pin })
       await keyStore.getState().unlockWithSeed(seed)
+      setRestoring(true)
+      const { sync } = await openVault()
+      await sync.restoreAll()
       router.replace('/home')
     } catch (err) {
       if (err instanceof RestoreError) setError(t(lang, 'restore.failed'))
@@ -37,7 +42,7 @@ export default function Restore() {
   return (
     <Screen>
       <Title>{t(lang, 'restore.title')}</Title>
-      <Body>{t(lang, 'restore.body')}</Body>
+      <Body>{restoring ? t(lang, 'restore.vault') : t(lang, 'restore.body')}</Body>
       <Field label={t(lang, 'restore.words')} value={words} onChangeText={setWords} autoCapitalize="none" autoCorrect={false} multiline />
       <PinField label={t(lang, 'pin.field')} value={pin} onChangeText={setPin} />
       <ErrorText>{error}</ErrorText>

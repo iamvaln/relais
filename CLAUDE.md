@@ -27,8 +27,10 @@ justifier explicitement.
   testé contre l'API réelle dans `apps/api/test/api-client.test.ts`.
 - `packages/app-core/` — la logique de l'app sans React Native : politique
   PIN et backoff (DEC-26), device (`seed_enc_pin`, biométrie), onboarding,
-  connexion, restauration, mot de passe, TOTP. Tests sous Node dans `test/`,
-  parcours contre l'API réelle dans `apps/api/test/app-core.test.ts`.
+  connexion, restauration, mot de passe, TOTP, coffre local (`vault/` :
+  fiches chiffrées dans SQLite, sync 3 s par catégorie, restauration).
+  Tests sous Node dans `test/` (vraie SQLite via `node:sqlite`), parcours
+  contre l'API réelle dans `apps/api/test/app-core*.test.ts`.
 - `apps/mobile/` — l'app React Native (Expo SDK 57, Expo Router, Zustand,
   TanStack Query). Logique hors des écrans (`src/state`, `src/lib`, `src/i18n`)
   testée sous Node avec Vitest ; écrans minces dans `app/`. Imports relatifs
@@ -49,8 +51,11 @@ justifier explicitement.
 - Un design court et les décisions à trancher sont présentés au fondateur
   avant le premier test ; chaque décision est ensuite consignée dans
   `docs/backend.md` et `docs/open-questions.md`.
-- Une branche par lot, une PR par module, mergée par le fondateur. Chaque
-  commit passe `typecheck`, `lint` et la suite complète.
+- Une branche par lot, une PR par module. Consigne du fondateur
+  (11/09/2026) : la PR est mergée dès que la CI est verte et qu'aucun
+  commentaire n'est ouvert, sans attendre ; la branche est ensuite réalignée
+  sur `main` et le lot suivant démarre. Chaque commit passe `typecheck`,
+  `lint` et la suite complète.
 - Conventions API : enveloppe `{ success, data | error: { code, message,
   details } }`, codes dans `src/lib/errors.ts`, `additionalProperties:
   false` partout, `authenticate` puis `requireStepUp(action)` sur les
@@ -81,6 +86,6 @@ localhost -p 55432 || scripts/dev-services.sh start` avant les tests.
 ## Ce qui n'est pas fait
 
 Logs API (export externe), fournisseur de paiement (encaissement manuel en
-V1), enregistrement Arbitrum, app mobile lots 3 à 6 (coffre, transmission,
-check-in, parcours du contact — socle, cœur crypto, onboarding et sécurité
-sont faits), interface du back office. La liste à jour est dans le README et `docs/backend.md` §2.
+V1), enregistrement Arbitrum, app mobile lots 4 à 6 (transmission,
+check-in et carnet, parcours du contact — socle, cœur crypto, onboarding,
+sécurité et coffre sont faits), interface du back office. La liste à jour est dans le README et `docs/backend.md` §2.
