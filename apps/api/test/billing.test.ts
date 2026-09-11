@@ -1,9 +1,10 @@
 // Facturation (Back Office BO-07, Backend §3.8) — encaissement manuel en V1.
 
 import { afterAll, beforeEach, describe, expect, it } from 'vitest'
+import { expireSubscriptions } from '../src/jobs/billing.js'
 import { prisma } from '../src/lib/prisma.js'
 import { loginAdmin } from './admin-helpers.js'
-import { api, closeAll, registerUser, resetState } from './helpers.js'
+import { api, closeAll, lastEmailTo, mailbox, registerUser, resetState } from './helpers.js'
 
 const DAY = 24 * 3600 * 1000
 
@@ -121,5 +122,77 @@ describe('GET /admin/billing/subscriptions', () => {
     expect(premium.body.data.items.map((s: { user_id: string }) => s.user_id)).toEqual([a.userId])
     expect(premium.body.data.items[0]).toMatchObject({ id: subA.id, plan: 'premium', status: 'active', price_fcfa: 10000 })
     expect(JSON.stringify(all.body.data)).not.toContain('example.cm')
+  })
+})
+
+// --- Job billing:expire — grâce puis rétrogradation ------------------------------------
+
+async function premiumUser(email: string, expiresAt: Date) {
+  const u = await registerUser(email)
+  const sub = await subscriptionOf(u.userId)
+  await prisma().subscriptions.update({ where: { id: sub.id }, data: { plan: 'premium', status: 'active', expires_at: expiresAt, price_fcfa: 10000 } })
+  await prisma().users.update({ where: { id: u.userId }, data: { plan: 'premium' } })
+  mailbox.clear()
+  return { ...u, subId: sub.id }
+}
+
+describe('expireSubscriptions', () => {
+  it('ne touche pas un premium encore valide', async () => {
+    const now = new Date('2026-09-11T09:45:00Z')
+    await premiumUser('adjoua@example.cm', new Date(now.getTime() + 30 * DAY))
+    expect(await expireSubscriptions(now)).toEqual({ graced: 0, expired: 0 })
+    expect(mailbox.sent).toHaveLength(0)
+  })
+
+  it('échéance dépassée : grâce (premium conservé), grace_until = échéance + billing.grace_period_days, événement et email — une seule fois', async () => {
+    const now = new Date('2026-09-11T09:45:00Z')
+    const expiresAt = new Date(now.getTime() - 2 * DAY)
+    const u = await premiumUser('adjoua@example.cm', expiresAt)
+    expect(await expireSubscriptions(now)).toEqual({ graced: 1, expired: 0 })
+
+    const sub = await subscriptionOf(u.userId)
+    expect(sub).toMatchObject({ plan: 'premium', status: 'grace' })
+    expect(sub.grace_until!.getTime()).toBe(expiresAt.getTime() + 7 * DAY)
+    expect((await prisma().users.findUniqueOrThrow({ where: { id: u.userId } })).plan).toBe('premium')
+    const ev = await prisma().payment_events.findFirstOrThrow({ where: { user_id: u.userId } })
+    expect(ev).toMatchObject({ event_type: 'grace_started', amount_fcfa: null })
+    const mail = lastEmailTo('adjoua@example.cm')
+    expect(mail?.subject).toMatch(/expire bientôt/)
+    expect(mail?.text).toContain(sub.grace_until!.toISOString().slice(0, 10))
+
+    expect(await expireSubscriptions(new Date(now.getTime() + DAY))).toEqual({ graced: 0, expired: 0 })
+    expect(await prisma().payment_events.count({ where: { user_id: u.userId } })).toBe(1)
+  })
+
+  it('grâce écoulée : expiré, plan gratuit des deux côtés, événement expired, email ; idempotent', async () => {
+    const now = new Date('2026-09-11T09:45:00Z')
+    const u = await premiumUser('adjoua@example.cm', new Date(now.getTime() - 20 * DAY))
+    await prisma().subscriptions.update({ where: { id: u.subId }, data: { status: 'grace', grace_until: new Date(now.getTime() - DAY) } })
+    expect(await expireSubscriptions(now)).toEqual({ graced: 0, expired: 1 })
+
+    const sub = await subscriptionOf(u.userId)
+    expect(sub).toMatchObject({ plan: 'free', status: 'expired' })
+    expect((await prisma().users.findUniqueOrThrow({ where: { id: u.userId } })).plan).toBe('free')
+    expect((await prisma().payment_events.findFirstOrThrow({ where: { user_id: u.userId } })).event_type).toBe('expired')
+    expect(lastEmailTo('adjoua@example.cm')?.subject).toMatch(/a expiré/)
+    expect(await expireSubscriptions(now)).toEqual({ graced: 0, expired: 0 })
+    // un renouvellement après expiration repart d'aujourd'hui et compte comme 'created'
+    const sa = await loginAdmin()
+    const r = await (await api()).put(`/admin/billing/${u.subId}/plan`).set(sa.auth).send({ plan: 'premium', reason: 'revenu' }).expect(200)
+    expect(r.body.data.status).toBe('active')
+    expect((await prisma().payment_events.findFirstOrThrow({ where: { user_id: u.userId }, orderBy: { created_at: 'desc' } })).event_type).toBe('created')
+  })
+
+  it('lit billing.grace_period_days dans app_config', async () => {
+    const now = new Date('2026-09-11T09:45:00Z')
+    const expiresAt = new Date(now.getTime() - DAY)
+    const u = await premiumUser('adjoua@example.cm', expiresAt)
+    await prisma().app_config.update({ where: { key: 'billing.grace_period_days' }, data: { value: '3' } })
+    try {
+      await expireSubscriptions(now)
+      expect((await subscriptionOf(u.userId)).grace_until!.getTime()).toBe(expiresAt.getTime() + 3 * DAY)
+    } finally {
+      await prisma().app_config.update({ where: { key: 'billing.grace_period_days' }, data: { value: '7' } })
+    }
   })
 })
