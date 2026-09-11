@@ -28,6 +28,7 @@ apps/api/
     api/transmission/        contacts, schéma, activation, pause, vérification annuelle
     api/checkin/             statut, mini-jeu (games.ts), validation, streak
     api/relay/               côté contact : lien, réponses/escrow, données, confirmation
+    api/journal/             carnet de vie : question du mois, entrées signées, Wrapped
     jobs/relay-cleanup.ts    escrows expirés, fin d'accès à 30 jours
     jobs/deadman.ts          balayage quotidien : relances, déclenchement
     jobs/queue.ts            BullMQ — jobs planifiés deadman:checkin, relay:cleanup
@@ -84,6 +85,10 @@ Le module **auth** de §3.1 v1.1, le module **vault** de §3.3 v1.1, le module
 | `GET /relay/:token/status` | Répondu / requis / total, catégories déverrouillées |
 | `GET /relay/:token/data` | Une fois N parts réunies : parts de l'escrow + P2 + `secret_enc`, par rôle détenu |
 | `POST /relay/:token/confirm` | 3/min/IP ; termine et purge quand chaque contact ayant répondu a confirmé |
+| `GET /journal/question` | Question du mois par mode (`essential`, `reflective` ; `free` → aucune), « déjà répondu » |
+| `POST /journal/entries` · `GET /journal/entries` · `GET /journal/entries/:id` | Écritures signées Ed25519 (DEC-31), une entrée par mois, liste sans contenu |
+| `PUT` · `DELETE /journal/entries/:id` | Signées ; `DELETE` signe l'identifiant — voir §3 |
+| `POST` · `GET /journal/wrapped/:year` · `GET`/`POST …/export` | Seuil de 6 entrées et `entry_count` côté serveur (DEC-32) |
 
 Jobs (§4), BullMQ, worker dans le processus API derrière `JOBS_ENABLED=true` :
 
@@ -93,8 +98,8 @@ Jobs (§4), BullMQ, worker dans le processus API derrière `JOBS_ENABLED=true` :
 | `relay:cleanup` | toutes les heures (h+30) | Escrows expirés → `expired` + nouveaux liens ; accès déverrouillé depuis plus de 30 jours → purge |
 
 Non livré : `/user/*`, `PUT /transmission/recipients` (sans objet depuis
-DEC-23), `/journal/*`, `/admin/*`, `storj:cleanup` (la purge est faite
-directement, voir §3), l'enregistrement Arbitrum (voir §3).
+DEC-23), `/admin/*`, `storj:cleanup` (la purge est faite directement, voir
+§3), l'enregistrement Arbitrum (voir §3).
 
 ## 3. Décisions et écarts par rapport aux specs
 
@@ -410,6 +415,38 @@ dans `secret_enc`, chiffré par K2 : le serveur ne peut pas le lire. L'email
 (`transmission_contact`) porte le nom de l'owner et le lien ; le message
 personnel s'affiche dans l'app, une fois K2 reconstituée.
 
+### Journal : les écritures sont signées (DEC-31)
+
+Le carnet est chiffré par K2 — la clé des messages personnels, le même
+niveau de sensibilité que le vault. Comme `/vault/sync` (DEC-07), chaque
+écriture prouve la possession de la clé de l'owner : `POST` et `PUT`
+portent `signature = Ed25519.sign(SHA256(content_enc))`, `DELETE` porte
+`Ed25519.sign(SHA256(id))` où `id` est l'UUID en UTF-8 minuscules, le
+Wrapped signe `SHA256(stats_enc)`. Un access token volé (15 min) ne peut
+donc ni réécrire une entrée, ni l'effacer, ni fausser les statistiques du
+Wrapped. Même helper côté app que pour le vault et les parts Si_enc.
+
+### Journal : une entrée par mois, rattachée au check-in
+
+`journal_entries` est unique par (user, mois) : la seconde écriture du
+mois répond 409 `JOURNAL_MONTH_TAKEN` avec l'identifiant à modifier. Un
+mois passé est accepté (rattrapage), un mois futur refusé. Si un check-in
+existe déjà pour le mois, l'entrée s'y rattache (`checkin_log.journal_entry_id`,
+FK différée Fix-09a) ; la suppression détache sans supprimer le check-in.
+Les deux ordres — check-in puis entrée, entrée puis check-in — sont testés
+en transactions séparées.
+
+### Journal : le Wrapped ne fait pas confiance à l'app pour compter (DEC-32)
+
+Techniques §10.3 : un Wrapped n'a de sens qu'à partir de 6 entrées.
+`POST /journal/wrapped/:year` compte les entrées de l'année **en base** et
+refuse en dessous (409 `WRAPPED_INSUFFICIENT_ENTRIES`, `{ current,
+required }`) ; `entry_count` est celui du serveur, jamais celui reçu — le
+back office et la cohorte « Wrapped eligible » restent justes. `stats_enc`
+reste opaque (calculé et chiffré localement). L'export image est local :
+`GET …/export` ne rend que des métadonnées (année, compte, filigrane
+`relais.app`), `POST …/export` date l'export.
+
 ### Codes de récupération 2FA : pas de table
 
 E6-US02 : « des codes de récupération d'urgence sont générés et affichés une
@@ -433,10 +470,11 @@ manque, perdre son authenticateur signifie passer par le support.
 | Réponses des contacts, K_i | jamais transmis (E5-US02) ; l'app dépose les parts Si, pas ce qui les ouvre |
 | Parts Si en escrow | scellées par une clé éphémère Redis ; jamais combinées par le serveur ; supprimées à la fin |
 | Tokens de relay | HMAC en base, le token clair ne vit que dans l'email |
+| Carnet de vie, Wrapped | `content_enc` et `stats_enc` opaques (K2) ; le serveur ne connaît que mois, mode, question, taille approximative |
 
 ## 5. Vérifications
 
-136 tests d'intégration, sur PostgreSQL 16 et Redis réels, base reconstruite
+156 tests d'intégration, sur PostgreSQL 16 et Redis réels, base reconstruite
 depuis les migrations et le seed à chaque run. Chaque test repart d'une base
 et d'un stockage vides. Ils couvrent notamment :
 
@@ -503,6 +541,18 @@ et d'un stockage vides. Ils couvrent notamment :
   `secret_enc`, escrow expiré → 409 ; `confirm` : refusé sans réponse,
   purge totale au dernier confirmé, lien clos, 3/min/IP ; cleanup : rien
   avant l'échéance, expiré → nouveaux liens, accès à 30 jours puis purge
+- journal (20 tests, test-first) : question du mois par mode, `free` sans
+  question, mode inconnu → 400 ; création avec métadonnées en clair et
+  blob opaque, mois passé accepté, futur refusé, signature d'une autre
+  clé → 401, sans clé → 409, second du mois → 409, question secrète
+  refusée ; check-in puis entrée → rattachée, suppression → détachée ;
+  liste sans contenu triée, détail avec contenu, entrée d'un autre → 404
+  sur GET/PUT/DELETE ; PUT signé, mauvaise clé refusée sans modifier ;
+  DELETE sans signature → 400, mauvaise clé → 401, bonne → supprimée ;
+  Wrapped : < 6 → 409 `{ current, required }`, 6 → 201 avec compte
+  serveur, régénération → 200 et compte mis à jour, signature → 401,
+  année hors bornes → 400, GET 404 puis 200, export sans contenu, POST
+  export daté
 
 ```bash
 scripts/dev-services.sh start     # PostgreSQL + Redis jetables

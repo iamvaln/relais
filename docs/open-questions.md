@@ -161,3 +161,18 @@ information sur Si.
 Le redémarrage après escrow expiré (E5-US03) est implémenté sans plafond :
 à chaque expiration, nouveaux liens et nouveaux emails. Un maximum (3 ?)
 puis une alerte admin (BO-03) serait raisonnable.
+
+---
+
+## 10. 🟢 Journal : deux décisions, DEC-31 et DEC-32
+
+| Point | Décision |
+|---|---|
+| **DEC-31** — écritures du carnet | Signées Ed25519 comme le vault : `POST`/`PUT` signent `SHA256(content_enc)`, `DELETE` signe `SHA256(id)`, le Wrapped signe `SHA256(stats_enc)`. Un token volé ne peut ni altérer ni effacer la capsule temps, ni fausser le Wrapped. |
+| **DEC-32** — seuil du Wrapped | Le serveur compte les entrées de l'année en base ; moins de 6 → 409 `WRAPPED_INSUFFICIENT_ENTRIES`. `entry_count` est recalculé, jamais reçu. |
+
+Deux détails à reporter dans la spec v1.4 : le mode (`essential`,
+`reflective`, `free`) est choisi par entrée (aucune préférence utilisateur
+en base) ; `GET /journal/wrapped/:year/export` ne rend que des métadonnées
+et un `POST` du même chemin date l'export — la spec ne disait pas comment
+`exported_at` se remplissait.
