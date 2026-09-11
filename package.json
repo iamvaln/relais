@@ -4,7 +4,8 @@
   "version": "0.1.0",
   "description": "Relais — passe le relais, pas le chaos.",
   "workspaces": [
-    "apps/*"
+    "apps/*",
+    "packages/*"
   ],
   "engines": {
     "node": ">=22"
@@ -16,7 +17,9 @@
     "test": "npm run test --workspaces",
     "typecheck": "npm run typecheck --workspaces",
     "lint": "npm run lint --workspaces",
-    "db:generate": "prisma generate --schema prisma/schema.prisma"
+    "db:generate": "prisma generate --schema prisma/schema.prisma",
+    "crypto": "npm run --workspace packages/crypto-core",
+    "core:build": "npm run build --workspace packages/crypto-core"
   },
   "devDependencies": {
     "prisma": "^6.19.0"

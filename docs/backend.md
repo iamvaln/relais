@@ -88,7 +88,7 @@ Le module **auth** de §3.1 v1.1, le module **vault** de §3.3 v1.1, le module
 | `POST /checkin/complete` | Consomme le jeton du jeu ; ligne du mois, streak, badge ; replanifie l'échéance |
 | `GET /checkin/history` · `GET /checkin/streak` | Log des mois validés ; streak courant, record, badges |
 | `GET /relay/:token` | **Public** (token du lien), 30/min/IP : questions, rôles, `verify_token`, Si_enc, `secret_enc`, état |
-| `POST /relay/:token/verify` | `{ failed: true }` ou `{ shares }` ; part comparée au hash signé à l'activation (422 `RELAY_SHARE_INVALID`) ; 5 tentatives puis blocage 24 h, les autres contacts prévenus ; parts en escrow — voir §3 |
+| `POST /relay/:token/verify` | `{ failed: true }` ou `{ shares }` (33 octets par rôle : index Shamir + 32) ; part comparée au hash signé à l'activation (422 `RELAY_SHARE_INVALID`) ; 5 tentatives puis blocage 24 h, les autres contacts prévenus ; parts en escrow — voir §3 |
 | `GET /relay/:token/status` | Répondu / requis / total, catégories déverrouillées |
 | `GET /relay/:token/data` | Une fois N parts réunies : parts de l'escrow + P2 + `secret_enc`, par rôle détenu |
 | `POST /relay/:token/confirm` | 3/min/IP ; termine et purge quand chaque contact ayant répondu a confirmé |
@@ -399,7 +399,7 @@ pas sur le réseau ». Le serveur ne reçoit donc jamais les réponses ni K_i.
 `GET /relay/:token` donne à l'app tout ce qu'il faut pour travailler seule
 (questions, `verify_token`, ses Si_enc) ; l'app dérive K_i, vérifie ses
 réponses avec `verify_token`, déchiffre ses parts, et dépose **les parts
-Si** (`POST /verify { shares }`), 32 bytes par rôle détenu. Elles vont en
+Si** (`POST /verify { shares }`), 33 bytes par rôle détenu (index Shamir + 32). Elles vont en
 `escrow_shares`, scellées (secretbox) par une clé éphémère Redis
 (`escrow:key:{transmission}`) qui expire avec l'escrow — c'est l'escrow de
 Techniques §6.7, ni plus ni moins : le serveur détient les parts le temps
@@ -630,7 +630,7 @@ consigné dans `docs/open-questions.md` §D.1.
 
 ## 5. Vérifications
 
-216 tests d'intégration, sur PostgreSQL 16 et Redis réels, base reconstruite
+217 tests d'intégration, sur PostgreSQL 16 et Redis réels, base reconstruite
 depuis les migrations et le seed à chaque run. Chaque test repart d'une base
 et d'un stockage vides. Ils couvrent notamment :
 
@@ -760,6 +760,9 @@ et d'un stockage vides. Ils couvrent notamment :
   corps vide → 400, assigné inconnu → 404
 - dashboard : alerte `transmission_stalled` (config déclenchée, 3 escrows
   expirés, aucune transmission ouverte)
+- bout en bout avec le cœur crypto de l'app (`e2e-crypto-core`, voir
+  `docs/crypto-core.md` §5) : de l'inscription à la reconstitution
+  post-mortem, chaque corps produit par `@relais/crypto-core`
 - secrets (6 tests) : production sans HCV → refus au démarrage, clé de dev
   interdite en production, hors production clé de dev ou HCV exigés ; faux
   HCV en HTTP local : lecture KV v2 à `/v1/<path>` avec `X-Vault-Token`,

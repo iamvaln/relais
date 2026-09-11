@@ -17,6 +17,11 @@ justifier explicitement.
   par module dans `src/api/*` (`schemas.ts` JSON Schema, `service.ts`,
   `routes.ts`), jobs BullMQ dans `src/jobs/`, services partagés dans
   `src/services/` (email, stockage objet, secrets).
+- `packages/crypto-core/` — le cœur crypto de l'app mobile (seed BIP39,
+  K1/K2/K3, Ed25519, XChaCha20, Shamir GF(256), contacts, relay, carnet).
+  Pur TypeScript, ni UI ni réseau ; `libsodium-wrappers-sumo` (Argon2id).
+  Tests unitaires dans `test/`, bout en bout contre l'API dans
+  `apps/api/test/e2e-crypto-core.test.ts`. Notes : `docs/crypto-core.md`.
 - `docs/backend.md` — décisions et écarts par rapport aux specs, par module.
   **À lire avant de toucher un module.** `docs/open-questions.md` — points
   tranchés et points ouverts, numérotés. `docs/specs/` — les specs en
@@ -62,5 +67,6 @@ localhost -p 55432 || scripts/dev-services.sh start` avant les tests.
 
 ## Ce qui n'est pas fait
 
-Logs API (aucune table), fournisseur de paiement (encaissement manuel en
-V1), enregistrement Arbitrum, app mobile, interface du back office. La liste à jour est dans le README et `docs/backend.md` §2.
+Logs API (export externe), fournisseur de paiement (encaissement manuel en
+V1), enregistrement Arbitrum, app mobile (UI, stockage, HTTP — le cœur
+crypto est fait), interface du back office. La liste à jour est dans le README et `docs/backend.md` §2.
