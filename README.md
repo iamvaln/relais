@@ -14,10 +14,10 @@ d'implémentation.
 |---|---|
 | Specs produit, techniques, backend, frontend, back office | ✅ v1 (`docs/specs/`) |
 | Schéma PostgreSQL v1.3 | ✅ Implémenté et testé (`prisma/`) |
-| API backend — auth, vault, transmission, check-in, relay, journal, jobs | ✅ 54 endpoints, 156 tests d'intégration (`apps/api/`) |
-| API backend — admin (back office) | ⬜ À faire |
+| API backend — auth, vault, transmission, check-in, relay, journal, admin, jobs | ✅ 78 endpoints, 181 tests d'intégration (`apps/api/`) |
+| API backend — facturation (BO-07), KPIs dashboard (BO-01), tickets | ⬜ À faire |
 | App mobile | ⬜ Non démarré |
-| Back office | ⬜ Non démarré |
+| Back office (interface) | ⬜ Non démarré — l'API `/admin/*` est prête |
 | Smart contract Arbitrum | ⬜ Reporté |
 
 ## Documentation
@@ -69,7 +69,7 @@ npm install
 scripts/dev-services.sh start          # PostgreSQL 16 + Redis jetables, migrations + seed
 cp apps/api/.env.example apps/api/.env # puis renseigner les secrets (openssl rand -hex 32)
 npm run dev                            # http://localhost:3000/health
-npm test                               # 156 tests d'intégration sur base réelle
+npm test                               # 181 tests d'intégration sur base réelle
 npm run typecheck && npm run lint
 ```
 
@@ -83,7 +83,9 @@ badges, relances J+7/14/21 et déclenchement par un job BullMQ quotidien
 (`JOBS_ENABLED=true`) ; côté contact, liens de relay, escrow des parts
 Shamir, déverrouillage à N réponses, purge à la confirmation ; carnet de vie
 chiffré K2 à écritures signées et Wrapped annuel. Transmission, check-in,
-relay et journal ont été écrits test-first.
+relay et journal ont été écrits test-first ; back office `/admin/*` (auth
+TOTP, utilisateurs, transmissions, questions, configuration, audit), écrit
+test-first lui aussi. Premier admin : `npm run admin:create -w apps/api`.
 Détails et écarts dans [`docs/backend.md`](docs/backend.md).
 
 ## Principe non négociable

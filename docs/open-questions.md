@@ -176,3 +176,20 @@ Deux détails à reporter dans la spec v1.4 : le mode (`essential`,
 en base) ; `GET /journal/wrapped/:year/export` ne rend que des métadonnées
 et un `POST` du même chemin date l'export — la spec ne disait pas comment
 `exported_at` se remplissait.
+
+---
+
+## 11. 🟢 Back office : décisions et écarts
+
+| Point | Décision |
+|---|---|
+| Création du premier admin | Script CLI `npm run admin:create` (aucun endpoint dans §3.8 ; TOTP obligatoire donc secret généré et affiché une fois). |
+| Périmètre du lot | BO-02 à BO-06. Facturation (BO-07), KPIs dashboard (BO-01), logs API et tickets support : lot suivant. |
+| `POST /admin/users/:id/otp-regen` | Devient `POST /admin/users/otp-regen { email }` : avant l'OTP, l'inscription n'a pas de ligne `users`. |
+| Suppression RGPD | Purge + anonymisation de la ligne (FK depuis `transmissions`, log minimal), pas de DELETE physique. |
+| Annulation d'une transmission | La configuration de l'owner redevient active, cycle de check-in relancé. |
+| Notification à l'utilisateur au déblocage / à la suspension | Types `account_unblocked` / `account_suspended` existants, envoyés. Le déblocage de contact « notifie l'owner si transmission active » (BO-02) : pas de type `email_log`, non envoyé. |
+
+À reporter dans la spec v1.4. `GET /admin/logs/api` suppose une table de
+logs d'appels qui n'existe pas dans le schéma : à trancher (table dédiée,
+ou export des logs Pino vers un outil externe).
