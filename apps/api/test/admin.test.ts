@@ -7,7 +7,7 @@ import { vaultKey } from '../src/api/vault/service.js'
 import { prisma } from '../src/lib/prisma.js'
 import { objectStore } from '../src/services/storage/index.js'
 import { api, closeAll, lastEmailTo, lastOtp, mailbox, registerUser, resetState, STRONG_PASSWORD } from './helpers.js'
-import { activateTransmission, makeOwner, opaque, openTransmission, relayTokenFromEmail } from './transmission-helpers.js'
+import { activateTransmission, buildContactBody, makeOwner, opaque, openTransmission, relayTokenFromEmail, secretQuestionIds } from './transmission-helpers.js'
 import { redis } from '../src/lib/redis.js'
 
 beforeEach(resetState)
@@ -434,7 +434,6 @@ describe('DELETE /admin/transmissions/:id', () => {
 
 describe('POST /admin/transmissions/:id/contacts/:cid/unblock', () => {
   it('remet les 5 tentatives du contact, sans rien révéler ; CONTACT_UNBLOCK audité', async () => {
-    const sa = await superAdmin()
     const o = await makeOwner()
     const { transmissionId, tokens } = await openTransmission(o)
     for (let i = 0; i < 5; i++) await (await api()).post(`/relay/${tokens.contact2}/verify`).send({ failed: true })
@@ -449,5 +448,124 @@ describe('POST /admin/transmissions/:id/contacts/:cid/unblock', () => {
     expect(tc.blocked_until).toBeNull()
     const log = await prisma().audit_logs.findFirstOrThrow({ where: { action: 'CONTACT_UNBLOCK' } })
     expect(log).toMatchObject({ admin_id: support.id, target_type: 'transmission', target_id: transmissionId })
+  })
+})
+
+// --- BO-04 Questions, BO-05 Configuration, BO-06 Audit et santé -------------------------
+
+const QUESTION = {
+  text_fr: 'Quel surnom vous donnait votre grand-mère maternelle ?',
+  text_en: 'What nickname did your maternal grandmother give you?',
+  category: 'childhood',
+  usage_type: 'secret_question',
+  reliability_score: 9,
+  risk_notes: 'Stable, privé, non public.',
+}
+
+describe('BO-04 /admin/questions', () => {
+  it('liste filtrable (rôle admin) ; ajout audité ; doublon de libellé → 409', async () => {
+    const sa = await superAdmin()
+    const support = await adminWithRole('support')
+    await (await api()).get('/admin/questions').set(support.auth).expect(403)
+
+    const all = await (await api()).get('/admin/questions?usage_type=secret_question&status=active').set(sa.auth).expect(200)
+    expect(all.body.data.length).toBeGreaterThanOrEqual(31)
+    expect(all.body.data[0]).toMatchObject({ usage_type: 'secret_question', status: 'active' })
+    expect(Object.keys(all.body.data[0])).toEqual(expect.arrayContaining(['id', 'text_fr', 'text_en', 'category', 'reliability_score', 'status', 'usage_count', 'risk_notes']))
+
+    const created = await (await api()).post('/admin/questions').set(sa.auth).send(QUESTION).expect(201)
+    expect(created.body.data).toMatchObject({ ...QUESTION, status: 'active', usage_count: 0 })
+    const log = await prisma().audit_logs.findFirstOrThrow({ where: { action: 'QUESTION_ADD' } })
+    expect(log).toMatchObject({ admin_id: sa.id, target_type: 'question', target_id: created.body.data.id })
+
+    const dup = await (await api()).post('/admin/questions').set(sa.auth).send({ ...QUESTION, text_en: 'Other wording' }).expect(409)
+    expect(dup.body.error.code).toBe('QUESTION_DUPLICATE')
+    const badCat = await (await api()).post('/admin/questions').set(sa.auth).send({ ...QUESTION, text_fr: 'Autre ?', text_en: 'Other?', category: 'astrology' }).expect(400)
+    expect(badCat.body.error.code).toBe('VALIDATION_ERROR')
+  })
+
+  it('modification auditée avant/après ; archivage : plus proposée aux nouveaux contacts, les usages existants restent', async () => {
+    const sa = await superAdmin()
+    const o = await makeOwner()
+    const [q1, q2, q3] = (await secretQuestionIds(3)) as [string, string, string]
+    const body = await buildContactBody(o.keys, o.relaisPk, { notification: { email: 'h@example.cm', phone: '+237699000000' }, roles: { k1: true }, question_ids: [q1, q2, q3] })
+    const contact = await (await api()).post('/transmission/contacts').set(o.auth).send(body).expect(201)
+
+    const upd = await (await api()).put(`/admin/questions/${q1}`).set(sa.auth).send({ reliability_score: 4, risk_notes: 'devinable via les réseaux' }).expect(200)
+    expect(upd.body.data).toMatchObject({ id: q1, reliability_score: 4, risk_notes: 'devinable via les réseaux' })
+    const log = await prisma().audit_logs.findFirstOrThrow({ where: { action: 'QUESTION_UPDATE' } })
+    expect(log.value_before).toMatchObject({ reliability_score: expect.any(Number) })
+    expect(log.value_after).toMatchObject({ reliability_score: 4 })
+
+    const arch = await (await api()).put(`/admin/questions/${q1}/archive`).set(sa.auth).send({ reason: 'score trop bas' }).expect(200)
+    expect(arch.body.data.status).toBe('archived')
+    expect(await prisma().audit_logs.count({ where: { action: 'QUESTION_ARCHIVE', target_id: q1 } })).toBe(1)
+    // l'usage existant reste
+    expect((await prisma().trusted_contacts.findUniqueOrThrow({ where: { id: contact.body.data.id } })).question_1_id).toBe(q1)
+    // mais un nouveau contact ne peut plus la choisir
+    const [q4] = (await secretQuestionIds(4)).slice(3) as [string]
+    const again = await buildContactBody(o.keys, o.relaisPk, { notification: { email: 'h2@example.cm', phone: '+237699000001' }, roles: { k1: true }, question_ids: [q1, q2, q4], secretSeed: 2 })
+    const r = await (await api()).post('/transmission/contacts').set(o.auth).send(again).expect(400)
+    expect(r.body.error.details.question_ids).toContain(q1)
+    await (await api()).put('/admin/questions/00000000-0000-4000-8000-000000000000/archive').set(sa.auth).send({ reason: 'x' }).expect(404)
+  })
+})
+
+describe('BO-05 /admin/config', () => {
+  it('super_admin seulement : lecture typée, modification validée par type, avant/après audité, effet immédiat', async () => {
+    const sa = await superAdmin()
+    const adminRole = await adminWithRole('admin')
+    await (await api()).get('/admin/config').set(adminRole.auth).expect(403)
+
+    const all = await (await api()).get('/admin/config').set(sa.auth).expect(200)
+    const minScore = all.body.data.find((c: { key: string }) => c.key === 'vault.question_min_score')
+    expect(minScore).toMatchObject({ value: 6, config_type: 'int', category: 'vault', updated_by: null })
+    const intervals = all.body.data.find((c: { key: string }) => c.key === 'dms.relance_intervals_days')
+    expect(intervals.value).toEqual([7, 14, 21])
+
+    const badType = await (await api()).put('/admin/config/vault.question_min_score').set(sa.auth).send({ value: 'sept' }).expect(400)
+    expect(badType.body.error.code).toBe('VALIDATION_ERROR')
+    await (await api()).put('/admin/config/dms.relance_intervals_days').set(sa.auth).send({ value: [7, 'x'] }).expect(400)
+    await (await api()).put('/admin/config/nope.key').set(sa.auth).send({ value: 1 }).expect(404)
+
+    try {
+      const r = await (await api()).put('/admin/config/vault.question_min_score').set(sa.auth).send({ value: 10, reason: 'durcissement' }).expect(200)
+      expect(r.body.data).toMatchObject({ key: 'vault.question_min_score', value: 10, updated_by: sa.id })
+      const log = await prisma().audit_logs.findFirstOrThrow({ where: { action: 'CONFIG_UPDATE' } })
+      expect(log).toMatchObject({ target_type: 'config', target_id: 'vault.question_min_score', reason: 'durcissement' })
+      expect(log.value_before).toEqual({ value: '6' })
+      expect(log.value_after).toEqual({ value: '10' })
+
+      // effet immédiat : une question de score 9 n'est plus acceptable
+      const o = await makeOwner()
+      const [q1, q2, q3] = (await secretQuestionIds(3)) as [string, string, string]
+      const body = await buildContactBody(o.keys, o.relaisPk, { notification: { email: 'h@example.cm', phone: '+237699000000' }, roles: { k1: true }, question_ids: [q1, q2, q3] })
+      await (await api()).post('/transmission/contacts').set(o.auth).send(body).expect(400)
+    } finally {
+      await prisma().app_config.update({ where: { key: 'vault.question_min_score' }, data: { value: '6', updated_by: null } })
+    }
+  })
+})
+
+describe('BO-06 /admin/logs/audit et /admin/health', () => {
+  it('journal filtrable par action, admin, cible ; santé des services pour un admin', async () => {
+    const sa = await superAdmin()
+    const u = await registerUser('adjoua@example.cm')
+    await (await api()).post(`/admin/users/${u.userId}/unblock`).set(sa.auth).send({ reason: 'r' }).expect(200)
+
+    const logs = await (await api()).get(`/admin/logs/audit?action=ACCOUNT_UNBLOCK`).set(sa.auth).expect(200)
+    expect(logs.body.data.total).toBe(1)
+    expect(logs.body.data.items[0]).toMatchObject({ action: 'ACCOUNT_UNBLOCK', admin_id: sa.id, target_id: u.userId, reason: 'r' })
+    expect(logs.body.data.items[0].ip_hash).toHaveLength(64)
+    const byTarget = await (await api()).get(`/admin/logs/audit?target_id=${u.userId}`).set(sa.auth).expect(200)
+    expect(byTarget.body.data.total).toBe(1)
+    const byAdmin = await (await api()).get(`/admin/logs/audit?admin_id=${sa.id}`).set(sa.auth).expect(200)
+    expect(byAdmin.body.data.total).toBe(2) // login + unblock
+
+    const finance = await adminWithRole('finance')
+    await (await api()).get('/admin/health').set(finance.auth).expect(403)
+    const health = await (await api()).get('/admin/health').set(sa.auth).expect(200)
+    expect(health.body.data).toMatchObject({ status: 'ok', services: { postgres: 'ok', redis: 'ok' }, jobs: { enabled: false } })
+    expect(health.body.data.counts).toMatchObject({ users: 1, transmissions_open: 0 })
   })
 })

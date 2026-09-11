@@ -6,20 +6,32 @@ import { authenticateAdmin, requireRole } from '../../middleware/authenticate-ad
 import { limits } from '../../plugins/rate-limit.js'
 import {
   adminLoginBody,
+  auditListQuery,
+  configKeyParams,
+  configUpdateBody,
   contactParams,
   emailChangeBody,
   extendEscrowBody,
   idParams,
   otpRegenBody,
+  questionCreateBody,
+  questionListQuery,
+  questionUpdateBody,
   reasonBody,
   transmissionListQuery,
   userListQuery,
   type AdminLoginBody,
+  type AuditListQuery,
+  type ConfigKeyParams,
+  type ConfigUpdateBody,
   type ContactParams,
   type EmailChangeBody,
   type ExtendEscrowBody,
   type IdParams,
   type OtpRegenBody,
+  type QuestionCreateBody,
+  type QuestionListQuery,
+  type QuestionUpdateBody,
   type ReasonBody,
   type TransmissionListQuery,
   type UserListQuery,
@@ -27,6 +39,8 @@ import {
 import * as admin from './service.js'
 import * as users from './users.js'
 import * as transmissions from './transmissions.js'
+import * as catalog from './catalog.js'
+import * as monitoring from './monitoring.js'
 import type { RequestContext } from './service.js'
 
 function ctx(req: FastifyRequest): RequestContext {
@@ -122,4 +136,45 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
     { schema: { params: contactParams, body: reasonBody }, preHandler: support },
     async (req) => ok(await transmissions.unblockContact(req.admin!.id, req.params.id, req.params.cid, req.body.reason, ctx(req))),
   )
+
+  // --- BO-04 Questions -------------------------------------------------------------
+  app.get<{ Querystring: QuestionListQuery }>(
+    '/questions',
+    { schema: { querystring: questionListQuery }, preHandler: adminOnly, config: { rateLimit: limits.admin } },
+    async (req) => ok(await catalog.listQuestions(req.query)),
+  )
+  app.post<{ Body: QuestionCreateBody }>(
+    '/questions',
+    { schema: { body: questionCreateBody }, preHandler: adminOnly },
+    async (req, reply) => {
+      reply.status(201)
+      return ok(await catalog.createQuestion(req.admin!.id, req.body, ctx(req)))
+    },
+  )
+  app.put<{ Params: IdParams; Body: QuestionUpdateBody }>(
+    '/questions/:id',
+    { schema: { params: idParams, body: questionUpdateBody }, preHandler: adminOnly },
+    async (req) => ok(await catalog.updateQuestion(req.admin!.id, req.params.id, req.body, ctx(req))),
+  )
+  app.put<{ Params: IdParams; Body: ReasonBody }>(
+    '/questions/:id/archive',
+    { schema: { params: idParams, body: reasonBody }, preHandler: adminOnly },
+    async (req) => ok(await catalog.archiveQuestion(req.admin!.id, req.params.id, req.body.reason, ctx(req))),
+  )
+
+  // --- BO-05 Configuration ---------------------------------------------------------
+  app.get('/config', { preHandler: superOnly, config: { rateLimit: limits.admin } }, async () => ok(await catalog.listConfig()))
+  app.put<{ Params: ConfigKeyParams; Body: ConfigUpdateBody }>(
+    '/config/:key',
+    { schema: { params: configKeyParams, body: configUpdateBody }, preHandler: superOnly },
+    async (req) => ok(await catalog.updateConfig(req.admin!.id, req.params.key, req.body, ctx(req))),
+  )
+
+  // --- BO-06 Monitoring ------------------------------------------------------------
+  app.get<{ Querystring: AuditListQuery }>(
+    '/logs/audit',
+    { schema: { querystring: auditListQuery }, preHandler: adminOnly, config: { rateLimit: limits.admin } },
+    async (req) => ok(await monitoring.listAudit(req.query)),
+  )
+  app.get('/health', { preHandler: adminOnly, config: { rateLimit: limits.admin } }, async () => ok(await monitoring.adminHealth()))
 }

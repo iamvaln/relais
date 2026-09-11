@@ -126,3 +126,105 @@ export interface ContactParams {
   id: string
   cid: string
 }
+
+export const QUESTION_CATEGORIES = [
+  'childhood', 'places', 'events', 'people', 'habits', 'shared_memory', 'other',
+  'month_memory', 'relations', 'work', 'gratitude', 'introspection', 'legacy', 'lightness',
+] as const
+
+const questionFields = {
+  text_fr: { type: 'string', minLength: 5, maxLength: 500 },
+  text_en: { type: 'string', minLength: 5, maxLength: 500 },
+  category: { type: 'string', enum: [...QUESTION_CATEGORIES] },
+  usage_type: { type: 'string', enum: ['secret_question', 'journal', 'both'] },
+  reliability_score: { type: 'integer', minimum: 1, maximum: 10 },
+  risk_notes: { type: 'string', maxLength: 2000 },
+  cycle_month: { type: 'integer', minimum: 1, maximum: 12 },
+  mode_target: { type: 'string', enum: ['essential', 'reflective', 'all'] },
+} as const
+
+export const questionCreateBody = {
+  type: 'object',
+  required: ['text_fr', 'text_en', 'category', 'usage_type', 'reliability_score'],
+  additionalProperties: false,
+  properties: questionFields,
+} as const
+export interface QuestionCreateBody {
+  text_fr: string
+  text_en: string
+  category: string
+  usage_type: 'secret_question' | 'journal' | 'both'
+  reliability_score: number
+  risk_notes?: string
+  cycle_month?: number
+  mode_target?: 'essential' | 'reflective' | 'all'
+}
+
+export const questionUpdateBody = {
+  type: 'object',
+  additionalProperties: false,
+  minProperties: 1,
+  properties: { ...questionFields, status: { type: 'string', enum: ['active', 'review'] } },
+} as const
+export interface QuestionUpdateBody extends Partial<QuestionCreateBody> {
+  status?: 'active' | 'review'
+}
+
+export const questionListQuery = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    usage_type: { type: 'string', enum: ['secret_question', 'journal', 'both'] },
+    status: { type: 'string', enum: ['active', 'archived', 'review'] },
+    category: { type: 'string', enum: [...QUESTION_CATEGORIES] },
+  },
+} as const
+export interface QuestionListQuery {
+  usage_type?: string
+  status?: string
+  category?: string
+}
+
+export const configKeyParams = {
+  type: 'object',
+  required: ['key'],
+  additionalProperties: false,
+  properties: { key: { type: 'string', pattern: '^[a-z_]+\\.[a-z_]+$', maxLength: 64 } },
+} as const
+export interface ConfigKeyParams {
+  key: string
+}
+
+export const configUpdateBody = {
+  type: 'object',
+  required: ['value'],
+  additionalProperties: false,
+  properties: { value: {}, reason: { type: 'string', maxLength: 500 } },
+} as const
+export interface ConfigUpdateBody {
+  value: unknown
+  reason?: string
+}
+
+export const auditListQuery = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    action: { type: 'string', maxLength: 40 },
+    admin_id: uuid,
+    target_id: { type: 'string', maxLength: 128 },
+    from: { type: 'string', format: 'date' },
+    to: { type: 'string', format: 'date' },
+    page: { type: 'string', pattern: '^[0-9]{1,4}$' },
+    limit: { type: 'string', pattern: '^[0-9]{1,3}$' },
+  },
+} as const
+export interface AuditListQuery {
+  action?: string
+  admin_id?: string
+  target_id?: string
+  from?: string
+  to?: string
+  page?: string
+  limit?: string
+}

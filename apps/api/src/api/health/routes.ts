@@ -21,8 +21,13 @@ async function probe(fn: () => Promise<unknown>): Promise<ServiceStatus> {
   }
 }
 
-export async function healthRoutes(app: FastifyInstance): Promise<void> {
-  app.get('/health', { config: { rateLimit: limits.health } }, async (_req, reply) => {
+export interface HealthReport {
+  status: ServiceStatus
+  services: Record<string, ServiceStatus>
+  uptime: number
+}
+
+export async function healthReport(): Promise<HealthReport> {
     const [postgres, redisStatus, storage] = await Promise.all([
       probe(() => prisma().$queryRaw`SELECT 1`),
       probe(() => redis().ping()),
@@ -43,7 +48,13 @@ export async function healthRoutes(app: FastifyInstance): Promise<void> {
         ? 'down'
         : 'degraded'
 
-    reply.status(status === 'down' ? 503 : 200)
-    return ok({ status, services, uptime: Math.floor((Date.now() - startedAt) / 1000) })
+    return { status, services, uptime: Math.floor((Date.now() - startedAt) / 1000) }
+}
+
+export async function healthRoutes(app: FastifyInstance): Promise<void> {
+  app.get('/health', { config: { rateLimit: limits.health } }, async (_req, reply) => {
+    const report = await healthReport()
+    reply.status(report.status === 'down' ? 503 : 200)
+    return ok(report)
   })
 }
