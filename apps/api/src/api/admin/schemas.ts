@@ -275,3 +275,14 @@ export interface SubscriptionListQuery {
   page?: string
   limit?: string
 }
+
+export const exportQuery = {
+  type: 'object',
+  required: ['from', 'to'],
+  additionalProperties: false,
+  properties: { from: { type: 'string', format: 'date' }, to: { type: 'string', format: 'date' } },
+} as const
+export interface ExportQuery {
+  from: string
+  to: string
+}

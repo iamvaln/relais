@@ -8,7 +8,7 @@ import { audit } from '../../lib/audit.js'
 import { AppError } from '../../lib/errors.js'
 import { prisma } from '../../lib/prisma.js'
 import type { RequestContext } from './service.js'
-import type { ExtendBody, PlanChangeBody, SubscriptionListQuery } from './schemas.js'
+import type { ExportQuery, ExtendBody, PlanChangeBody, SubscriptionListQuery } from './schemas.js'
 import type { Page } from './users.js'
 
 const DAY_MS = 24 * 3600 * 1000
@@ -169,4 +169,68 @@ export async function extendSubscription(adminId: string, id: string, body: Exte
   ])
   await audit({ adminId, action: 'SUBSCRIPTION_EXTEND', targetType: 'subscription', targetId: id, userId: s.user_id, before, after: { ...snapshot(updated), days: body.days }, reason: body.reason, ip: ctx.ip })
   return toView(updated)
+}
+
+// --- Vue d'ensemble (BO-07) ----------------------------------------------------------
+
+export interface BillingOverview {
+  price_fcfa: number
+  active_premium: number
+  in_grace: number
+  mrr_fcfa: number
+  arr_fcfa: number
+  renewals_this_month: number
+  churns_this_month: number
+  revenue_this_month_fcfa: number
+  revenue_total_fcfa: number
+}
+
+function monthStart(now: Date): Date {
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1))
+}
+
+export async function overview(now = new Date()): Promise<BillingOverview> {
+  const price = await configInt('billing.premium_price_fcfa', DEFAULT_PRICE_FCFA)
+  const since = monthStart(now)
+  const paid = { in: ['created', 'renewed'] }
+  const [activePremium, inGrace, renewals, churns, month, total] = await Promise.all([
+    prisma().subscriptions.count({ where: { plan: 'premium', status: { in: ['active', 'grace'] } } }),
+    prisma().subscriptions.count({ where: { status: 'grace' } }),
+    prisma().payment_events.count({ where: { event_type: 'renewed', created_at: { gte: since } } }),
+    prisma().payment_events.count({ where: { event_type: 'expired', created_at: { gte: since } } }),
+    prisma().payment_events.aggregate({ where: { event_type: paid, created_at: { gte: since } }, _sum: { amount_fcfa: true } }),
+    prisma().payment_events.aggregate({ where: { event_type: paid }, _sum: { amount_fcfa: true } }),
+  ])
+  return {
+    price_fcfa: price,
+    active_premium: activePremium,
+    in_grace: inGrace,
+    mrr_fcfa: Math.round((activePremium * price) / PREMIUM_MONTHS),
+    arr_fcfa: activePremium * price,
+    renewals_this_month: renewals,
+    churns_this_month: churns,
+    revenue_this_month_fcfa: month._sum.amount_fcfa ?? 0,
+    revenue_total_fcfa: total._sum.amount_fcfa ?? 0,
+  }
+}
+
+// --- Export CSV ----------------------------------------------------------------------
+
+function csvCell(v: unknown): string {
+  if (v === null || v === undefined) return ''
+  const s = v instanceof Date ? v.toISOString() : String(v)
+  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
+}
+
+/** Les événements de paiement d'une période (bornes incluses), une ligne par événement, jamais d'email. */
+export async function exportCsv(q: ExportQuery): Promise<{ filename: string; csv: string }> {
+  const from = new Date(`${q.from}T00:00:00Z`)
+  const to = new Date(new Date(`${q.to}T00:00:00Z`).getTime() + DAY_MS)
+  if (!(from < to)) throw new AppError('VALIDATION_ERROR', { details: { to: 'doit être postérieur ou égal à from' } })
+  const rows = await prisma().payment_events.findMany({ where: { created_at: { gte: from, lt: to } }, orderBy: { created_at: 'asc' } })
+  const header = 'created_at,event_type,user_id,subscription_id,amount_fcfa,currency,provider_ref,notes'
+  const lines = rows.map((r) =>
+    [r.created_at, r.event_type, r.user_id, r.subscription_id, r.amount_fcfa, r.currency, r.provider_ref, r.notes].map(csvCell).join(','),
+  )
+  return { filename: `relais-billing-${q.from}_${q.to}.csv`, csv: [header, ...lines].join('\n') + '\n' }
 }

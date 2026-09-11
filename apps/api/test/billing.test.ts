@@ -196,3 +196,66 @@ describe('expireSubscriptions', () => {
     }
   })
 })
+
+// --- Vue d'ensemble et export (BO-07) ----------------------------------------------
+
+describe('GET /admin/billing/overview', () => {
+  it('KPIs : premium actifs, MRR/ARR, renouvellements, churns, grâce, revenus du mois et cumulés', async () => {
+    const sa = await loginAdmin()
+    const a = await registerUser('a@example.cm')
+    const b = await registerUser('b@example.cm')
+    const c = await registerUser('c@example.cm')
+    await registerUser('d@example.cm') // reste gratuit
+    const subA = await subscriptionOf(a.userId)
+    const subB = await subscriptionOf(b.userId)
+    const subC = await subscriptionOf(c.userId)
+    await (await api()).put(`/admin/billing/${subA.id}/plan`).set(sa.auth).send({ plan: 'premium', reason: 'x' }).expect(200)
+    await (await api()).put(`/admin/billing/${subA.id}/plan`).set(sa.auth).send({ plan: 'premium', amount_fcfa: 9000, reason: 'renouvelé' }).expect(200)
+    await (await api()).put(`/admin/billing/${subB.id}/plan`).set(sa.auth).send({ plan: 'premium', reason: 'x' }).expect(200)
+    await (await api()).put(`/admin/billing/${subC.id}/plan`).set(sa.auth).send({ plan: 'premium', reason: 'x' }).expect(200)
+    // C passe en grâce ; un churn du mois est enregistré à la main sur D
+    await prisma().subscriptions.update({ where: { id: subC.id }, data: { status: 'grace', grace_until: new Date(Date.now() + 5 * DAY) } })
+    const d = await prisma().users.findUniqueOrThrow({ where: { email: 'd@example.cm' } })
+    const subD = await subscriptionOf(d.id)
+    await prisma().payment_events.create({ data: { user_id: d.id, subscription_id: subD.id, event_type: 'expired' } })
+
+    const support = await loginAdmin('support')
+    await (await api()).get('/admin/billing/overview').set(support.auth).expect(403)
+
+    const r = await (await api()).get('/admin/billing/overview').set(sa.auth).expect(200)
+    expect(r.body.data).toEqual({
+      price_fcfa: 10000,
+      active_premium: 3, // A, B et C (en grâce, premium conservé)
+      in_grace: 1,
+      mrr_fcfa: 2500, // 3 × 10000 / 12, arrondi
+      arr_fcfa: 30000,
+      renewals_this_month: 1,
+      churns_this_month: 1,
+      revenue_this_month_fcfa: 39000, // 10000 + 9000 + 10000 + 10000
+      revenue_total_fcfa: 39000,
+    })
+  })
+})
+
+describe('GET /admin/billing/export', () => {
+  it('CSV des événements de paiement sur une période, en pièce jointe, sans email', async () => {
+    const sa = await loginAdmin()
+    const a = await registerUser('a@example.cm')
+    const subA = await subscriptionOf(a.userId)
+    await (await api()).put(`/admin/billing/${subA.id}/plan`).set(sa.auth).send({ plan: 'premium', provider_ref: 'MOMO-42', reason: 'x' }).expect(200)
+    const today = new Date().toISOString().slice(0, 10)
+
+    const r = await (await api()).get(`/admin/billing/export?from=${today}&to=${today}`).set(sa.auth).expect(200)
+    expect(r.headers['content-type']).toMatch(/^text\/csv/)
+    expect(r.headers['content-disposition']).toBe(`attachment; filename="relais-billing-${today}_${today}.csv"`)
+    const lines = r.text.trim().split('\n')
+    expect(lines[0]).toBe('created_at,event_type,user_id,subscription_id,amount_fcfa,currency,provider_ref,notes')
+    expect(lines).toHaveLength(2)
+    expect(lines[1]).toContain(`created,${a.userId},${subA.id},10000,XAF,MOMO-42,x`)
+    expect(r.text).not.toContain('example.cm')
+
+    const empty = await (await api()).get('/admin/billing/export?from=2026-01-01&to=2026-01-31').set(sa.auth).expect(200)
+    expect(empty.text.trim().split('\n')).toHaveLength(1)
+    await (await api()).get('/admin/billing/export?from=2026-02-01&to=2026-01-01').set(sa.auth).expect(400)
+  })
+})

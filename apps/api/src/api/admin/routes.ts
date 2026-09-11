@@ -11,6 +11,7 @@ import {
   configUpdateBody,
   contactParams,
   emailChangeBody,
+  exportQuery,
   extendBody,
   extendEscrowBody,
   idParams,
@@ -29,6 +30,7 @@ import {
   type ConfigUpdateBody,
   type ContactParams,
   type EmailChangeBody,
+  type ExportQuery,
   type ExtendBody,
   type ExtendEscrowBody,
   type IdParams,
@@ -201,5 +203,15 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
     '/billing/:id/extend',
     { schema: { params: idParams, body: extendBody }, preHandler: financeOnly },
     async (req) => ok(await billing.extendSubscription(req.admin!.id, req.params.id, req.body, ctx(req))),
+  )
+  app.get('/billing/overview', { preHandler: financeOnly, config: { rateLimit: limits.admin } }, async () => ok(await billing.overview()))
+  app.get<{ Querystring: ExportQuery }>(
+    '/billing/export',
+    { schema: { querystring: exportQuery }, preHandler: financeOnly, config: { rateLimit: limits.admin } },
+    async (req, reply) => {
+      const { filename, csv } = await billing.exportCsv(req.query)
+      reply.header('Content-Type', 'text/csv; charset=utf-8').header('Content-Disposition', `attachment; filename="${filename}"`)
+      return csv
+    },
   )
 }
