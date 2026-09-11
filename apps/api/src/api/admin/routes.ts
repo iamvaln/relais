@@ -11,13 +11,16 @@ import {
   configUpdateBody,
   contactParams,
   emailChangeBody,
+  extendBody,
   extendEscrowBody,
   idParams,
   otpRegenBody,
+  planChangeBody,
   questionCreateBody,
   questionListQuery,
   questionUpdateBody,
   reasonBody,
+  subscriptionListQuery,
   transmissionListQuery,
   userListQuery,
   type AdminLoginBody,
@@ -26,13 +29,16 @@ import {
   type ConfigUpdateBody,
   type ContactParams,
   type EmailChangeBody,
+  type ExtendBody,
   type ExtendEscrowBody,
   type IdParams,
   type OtpRegenBody,
+  type PlanChangeBody,
   type QuestionCreateBody,
   type QuestionListQuery,
   type QuestionUpdateBody,
   type ReasonBody,
+  type SubscriptionListQuery,
   type TransmissionListQuery,
   type UserListQuery,
 } from './schemas.js'
@@ -41,6 +47,7 @@ import * as users from './users.js'
 import * as transmissions from './transmissions.js'
 import * as catalog from './catalog.js'
 import * as monitoring from './monitoring.js'
+import * as billing from './billing.js'
 import type { RequestContext } from './service.js'
 
 function ctx(req: FastifyRequest): RequestContext {
@@ -177,4 +184,22 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
     async (req) => ok(await monitoring.listAudit(req.query)),
   )
   app.get('/health', { preHandler: adminOnly, config: { rateLimit: limits.admin } }, async () => ok(await monitoring.adminHealth()))
+
+  // --- BO-07 Facturation -----------------------------------------------------------
+  const financeOnly = [authenticateAdmin, requireRole('finance')]
+  app.get<{ Querystring: SubscriptionListQuery }>(
+    '/billing/subscriptions',
+    { schema: { querystring: subscriptionListQuery }, preHandler: financeOnly, config: { rateLimit: limits.admin } },
+    async (req) => ok(await billing.listSubscriptions(req.query)),
+  )
+  app.put<{ Params: IdParams; Body: PlanChangeBody }>(
+    '/billing/:id/plan',
+    { schema: { params: idParams, body: planChangeBody }, preHandler: financeOnly },
+    async (req) => ok(await billing.changePlan(req.admin!.id, req.params.id, req.body, ctx(req))),
+  )
+  app.post<{ Params: IdParams; Body: ExtendBody }>(
+    '/billing/:id/extend',
+    { schema: { params: idParams, body: extendBody }, preHandler: financeOnly },
+    async (req) => ok(await billing.extendSubscription(req.admin!.id, req.params.id, req.body, ctx(req))),
+  )
 }
