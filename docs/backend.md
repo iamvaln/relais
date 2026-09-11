@@ -29,7 +29,8 @@ apps/api/
     api/checkin/             statut, mini-jeu (games.ts), validation, streak
     api/relay/               côté contact : lien, réponses/escrow, données, confirmation
     api/journal/             carnet de vie : question du mois, entrées signées, Wrapped
-    api/admin/               back office : auth TOTP, utilisateurs, transmissions, questions, config, audit
+    api/admin/               back office : auth TOTP, utilisateurs, transmissions, questions, config, audit, facturation
+    jobs/billing.ts          cycle de vie des abonnements : grâce puis rétrogradation
     middleware/authenticate-admin.ts  token admin + session Redis, grille de rôles
     lib/audit.ts             journal d'audit append-only (jamais de donnée personnelle)
     scripts/create-admin.ts  bootstrap du premier admin (npm run admin:create)
@@ -101,6 +102,8 @@ Le module **auth** de §3.1 v1.1, le module **vault** de §3.3 v1.1, le module
 | `GET` · `POST /admin/questions` · `PUT …/:id` · `PUT …/:id/archive` | BO-04, rôle admin, audité |
 | `GET /admin/config` · `PUT /admin/config/:key` | BO-05, super_admin, validé par type, avant/après audité |
 | `GET /admin/logs/audit` · `GET /admin/health` | BO-06 |
+| `GET /admin/billing/overview` · `GET /admin/billing/subscriptions` · `GET /admin/billing/export` | BO-07, rôles finance / super_admin |
+| `PUT /admin/billing/:id/plan` · `POST /admin/billing/:id/extend` | Encaissement manuel, renouvellement, rétrogradation, geste commercial — voir §3 |
 
 Jobs (§4), BullMQ, worker dans le processus API derrière `JOBS_ENABLED=true` :
 
@@ -108,10 +111,11 @@ Jobs (§4), BullMQ, worker dans le processus API derrière `JOBS_ENABLED=true` :
 |---|---|---|
 | `deadman:checkin` | 09:00 UTC | Relances J+7/14/21, passage `triggered`, puis ouverture des transmissions : ligne `transmissions`, un token de relay par contact, emails |
 | `relay:cleanup` | toutes les heures (h+30) | Escrows expirés → `expired` + nouveaux liens ; accès déverrouillé depuis plus de 30 jours → purge |
+| `billing:expire` | 09:45 UTC | Échéance dépassée → grâce (premium conservé, email) ; grâce écoulée → expiré, plan gratuit, email |
 
 Non livré : `/user/*`, `PUT /transmission/recipients` (sans objet depuis
-DEC-23), la facturation (`/admin/billing/*`, BO-07), les KPIs du dashboard
-(BO-01), `GET /admin/logs/api` (aucune table), les tickets support,
+DEC-23), les KPIs du dashboard (BO-01), `GET /admin/logs/api` (aucune
+table), les tickets support, un fournisseur de paiement (voir §3),
 `storj:cleanup` (la purge est faite directement, voir §3), l'enregistrement
 Arbitrum (voir §3).
 
@@ -515,6 +519,31 @@ la configuration redevient `active` avec un cycle de check-in relancé —
 l'owner n'a rien à reconfigurer. Relancer les contacts (`notify`) émet de
 **nouveaux** liens pour ceux qui n'ont pas répondu ; les anciens meurent.
 
+### Facturation : encaissement manuel, pas de fournisseur de paiement en V1
+
+Aucune spec ne nomme un fournisseur (Mobile Money, carte). Inventer un
+contrat de webhook sans compte marchand n'aurait rien à tester. En V1 le
+client paie hors app, l'équipe enregistre le paiement :
+`PUT /admin/billing/:id/plan { plan: 'premium', amount_fcfa?, provider_ref?,
+reason }` — douze mois à partir de l'échéance en cours si elle est encore
+devant nous (renouvellement, événement `renewed`), sinon d'aujourd'hui
+(événement `created`), au prix `billing.premium_price_fcfa` sauf montant
+saisi. `subscriptions` est la source de vérité, `users.plan` son miroir :
+c'est ce que lisent les tokens et les limites de plan, mis à jour dans la
+même transaction. Le jour où un fournisseur arrive, son webhook appellera
+la même fonction.
+
+### Facturation : la grâce conserve le premium
+
+BO-05 parle de « jours de grâce après expiration avant suspension ». Lu
+ainsi : à l'échéance le statut passe `grace`, le premium reste entier
+pendant `billing.grace_period_days`, l'utilisateur reçoit la date butoir
+(`subscription_expiring`) ; à la fin, `expired`, plan gratuit des deux
+côtés, `subscription_expired`. Un renouvellement pendant la grâce prolonge
+à partir de l'échéance ; après expiration il repart d'aujourd'hui. Une
+extension admin (`POST …/extend`, sans paiement, `admin_extended`) réactive
+un compte en grâce ou expiré.
+
 ### Codes de récupération 2FA : pas de table
 
 E6-US02 : « des codes de récupération d'urgence sont générés et affichés une
@@ -543,7 +572,7 @@ manque, perdre son authenticateur signifie passer par le support.
 
 ## 5. Vérifications
 
-181 tests d'intégration, sur PostgreSQL 16 et Redis réels, base reconstruite
+193 tests d'intégration, sur PostgreSQL 16 et Redis réels, base reconstruite
 depuis les migrations et le seed à chaque run. Chaque test repart d'une base
 et d'un stockage vides. Ils couvrent notamment :
 
@@ -638,6 +667,19 @@ et d'un stockage vides. Ils couvrent notamment :
   auditée, archivage (usage conservé, plus proposée) ; config : lecture
   typée, mauvais type → 400, clé inconnue → 404, avant/après audité, effet
   immédiat ; audit filtrable ; santé admin
+- facturation (12 tests, test-first) : support → 403, finance → 200 ;
+  premium 12 mois au prix du catalogue, `created`, `users.plan` et
+  `/auth/me` synchronisés, `PLAN_CHANGE` audité ; renouvellement à partir
+  de l'échéance, `renewed`, montant explicite ; rétrogradation immédiate,
+  `admin_downgraded`, free → free refusé ; extension : jours ajoutés,
+  compteur, `admin_extended`, un expiré redevient actif d'aujourd'hui,
+  0 jour → 400, inconnu → 404 ; liste filtrable sans email ; job : premium
+  valide intact, échéance → grâce + événement + email une seule fois,
+  grâce écoulée → expiré + plan gratuit + email, idempotent, renouvellement
+  après expiration = `created`, `billing.grace_period_days` lu ; overview
+  exact (3 premium dont 1 en grâce, MRR 2 500, 1 renouvellement, 1 churn,
+  39 000 FCFA) ; export CSV en pièce jointe, période vide, bornes inversées
+  → 400
 
 ```bash
 scripts/dev-services.sh start     # PostgreSQL + Redis jetables

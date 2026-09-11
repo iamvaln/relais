@@ -193,3 +193,18 @@ et un `POST` du même chemin date l'export — la spec ne disait pas comment
 À reporter dans la spec v1.4. `GET /admin/logs/api` suppose une table de
 logs d'appels qui n'existe pas dans le schéma : à trancher (table dédiée,
 ou export des logs Pino vers un outil externe).
+
+---
+
+## 12. 🟢 Facturation : deux décisions, un manque de la spec
+
+| Point | Décision |
+|---|---|
+| Paiement | Aucun fournisseur nommé dans les specs : encaissement manuel (Mobile Money hors app), enregistré par `PUT /admin/billing/:id/plan`. Le futur webhook appellera la même fonction. |
+| Période de grâce | Premium conservé pendant `billing.grace_period_days`, rétrogradation à la fin (BO-05 : « jours de grâce avant suspension »). |
+
+`billing.trial_days` (BO-05 §5.5, défaut 0) n'a pas d'effet : aucune règle
+ne dit ce qu'un essai débloque ni comment il se termine. À spécifier avant
+de l'activer. L'événement PostHog `subscription_upgraded` (trigger
+paywall / settings / limit_reached) suppose un parcours d'achat dans l'app
+qui n'existe pas encore.
