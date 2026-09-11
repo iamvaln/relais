@@ -630,7 +630,7 @@ consigné dans `docs/open-questions.md` §D.1.
 
 ## 5. Vérifications
 
-224 tests d'intégration, sur PostgreSQL 16 et Redis réels, base reconstruite
+225 tests d'intégration, sur PostgreSQL 16 et Redis réels, base reconstruite
 depuis les migrations et le seed à chaque run. Chaque test repart d'une base
 et d'un stockage vides. Ils couvrent notamment :
 
@@ -769,6 +769,9 @@ et d'un stockage vides. Ils couvrent notamment :
 - logique de l'app (`app-core`, 4 tests contre l'API réelle) : onboarding
   complet, restauration par les 12 mots, mot de passe oublié et changement,
   TOTP et codes de récupération — voir `docs/mobile.md` §5
+- coffre de l'app (`app-core-vault`, contre l'API réelle) : sync par
+  catégorie, statut, P2 opaque sur le stockage, restauration sur nouveau
+  device — voir `docs/mobile.md` §5
 - secrets (6 tests) : production sans HCV → refus au démarrage, clé de dev
   interdite en production, hors production clé de dev ou HCV exigés ; faux
   HCV en HTTP local : lecture KV v2 à `/v1/<path>` avec `X-Vault-Token`,

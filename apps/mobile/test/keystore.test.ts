@@ -22,8 +22,12 @@ describe('KeyStore', () => {
     expect(s.status).toBe('unlocked')
     expect(s.keys?.k1).toHaveLength(32)
     expect(s.signer?.publicKey).toHaveLength(32)
+    // Clé du fichier SQLite (SQLCipher), dérivée du seed elle aussi — décision du 11/09/2026
+    expect(s.dbKey).toHaveLength(32)
+    expect(Buffer.from(s.dbKey!)).not.toEqual(Buffer.from(s.keys!.k1))
     const k1 = s.keys!.k1
     const sk = s.signer!.privateKey
+    const dbKey = s.dbKey!
 
     now += 1000
     store.getState().lock()
@@ -32,6 +36,8 @@ describe('KeyStore', () => {
     expect(store.getState().signer).toBeNull()
     expect(k1.every((b) => b === 0)).toBe(true)
     expect(sk.every((b) => b === 0)).toBe(true)
+    expect(dbKey.every((b) => b === 0)).toBe(true)
+    expect(store.getState().dbKey).toBeNull()
   })
 
   it('se verrouille seul après 10 minutes sans activité, pas avant ; touch() repousse l’échéance', async () => {

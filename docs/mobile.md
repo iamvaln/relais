@@ -16,7 +16,7 @@ client HTTP dans `packages/api-client`. L'app ne fait que les brancher.
 | Logique | `@relais/app-core` (politique PIN, device, onboarding, session) | sans React Native, testé sous Node et contre l'API |
 | Crypto | `@relais/crypto-core` ; `react-native-libsodium` remplace `libsodium-wrappers-sumo` à l'exécution | alias dans `metro.config.js` |
 | Secrets locaux | `expo-secure-store` (`seed_enc_pin` + sel, `seed_enc_bio` + clé gardée avec authentification requise — DEC-01) | `src/lib/device.ts` |
-| Base locale | `expo-sqlite` chiffré (P1 par catégorie) | lot 3 |
+| Base locale | `expo-sqlite` + SQLCipher (`useSQLCipher`), clé = Argon2id(seed, `relais_sqlite_v1`) posée par `PRAGMA key` ; une fiche = un blob P1 | `src/lib/vault-db.ts`, `src/state/vault.ts` |
 | Biométrie | `expo-local-authentication` (disponibilité) + `requireAuthentication` d'`expo-secure-store` (déverrouillage) | lot 2 |
 | Push | OneSignal (`react-native-onesignal` + `onesignal-expo-plugin`) | lot 5, voir §3 |
 
@@ -29,8 +29,13 @@ client HTTP dans `packages/api-client`. L'app ne fait que les brancher.
    12 mots affichés une fois + quiz de deux mots, PIN, biométrie, backoff
    DEC-26, connexion et 2FA, restauration (challenge DEC-06), mot de passe
    oublié, changement de mot de passe, TOTP et codes de récupération.
-3. **Coffre** (E2) : SQLite chiffré, comptes / messages / finances, niveaux
-   d'urgence, sync Storj après 3 s d'inactivité, restauration P2.
+3. **Coffre** (E2-US01 à US04, US06, E1-US06) — fait : fiches par catégorie
+   (comptes, messages, finances) avec niveau d'urgence, chiffrées fiche par
+   fiche dans SQLite sous SQLCipher ; liste, filtres, recherche, mot de
+   passe masqué, suppression définitive ; sync Storj 3 s après la dernière
+   modification, par catégorie ; restauration sur nouveau device ; tableau
+   de bord (fiches, dernière sauvegarde) ; tutoriel du premier compte.
+   E2-US05 (message personnel) va au lot 4, E2-US07 (capsule) au lot 5.
 4. **Transmission** (E3) : contacts, questions de la bibliothèque, rôles,
    schéma N-of-M, activation avec step-up, vérification annuelle.
 5. **Check-in et carnet** (E4, journal, Wrapped) : mini-jeu, streak, badges,
@@ -52,6 +57,10 @@ client HTTP dans `packages/api-client`. L'app ne fait que les brancher.
 | Logique de l'app (lot 2) | `packages/app-core`, sans React Native : même recette que crypto-core et api-client, réutilisable par la page web du contact. |
 | 12 mots (lot 2) | Case à cocher + deux mots tirés au sort à ressaisir (E1-US02 ne demandait que la case). |
 | Mot de passe oublié (lot 2) | Dans le lot 2 : OTP par email + 12 mots qui signent `relais:password-reset:v1:{email}:{code}`. |
+| SQLCipher (lot 3) | Le fichier SQLite est chiffré en plus des fiches : clé Argon2id(seed, `relais_sqlite_v1`) INTERACTIVE, dérivée au déverrouillage et effacée au verrouillage. Cache aussi catégories, urgences et dates à qui extrait le fichier. |
+| Backup (lot 3) | Un blob par catégorie, comme l'API : P2 = seal(Ki, JSON(lignes chiffrées)), signé. Restaurer = réécrire les lignes telles quelles. |
+| PIN finances (lot 3) | E2-US03 : le PIN est ressaisi localement (ou biométrie) avant d'enregistrer une fiche finances. Aucun step-up serveur : le coffre est local. |
+| Périmètre du lot 3 | E2-US05 (message personnel par contact) est le `secret_enc` du contact → lot 4 ; E2-US07 (capsule temps) est le carnet de vie → lot 5. |
 | Écart de spec | E6-US03 dit qu'après un changement de mot de passe « K1 K2 K3 sont recalculées, P1 rechiffré ». Depuis DEC-02/05 les clés viennent du seed : rien à rechiffrer. À corriger dans les User Stories. |
 
 ## 4. Lancer
@@ -75,6 +84,21 @@ mappe pas `./x.js` vers `x.ts`) ; `Buffer` polyfillé par `src/lib/polyfills.ts`
 `libsodium-wrappers-sumo` aliasé vers `react-native-libsodium`.
 
 ## 5. Vérifications
+
+Lot 3 :
+
+- `app-core` (6 tests sous Node, vraie SQLite via `node:sqlite`) : fiche
+  ajoutée / relue / modifiée / supprimée, rien de lisible dans la base
+  (service, identifiant, mot de passe, instructions absents du BLOB),
+  filtres catégorie et urgence, recherche sans casse ni accents, comptes
+  par catégorie, clés d'un autre seed refusées, export / import d'une
+  catégorie ; sync : un envoi 3 s après la dernière modification par
+  catégorie touchée, P2 signé et opaque, `flushAll`, suppression
+  synchronisée, restauration qui remplace la catégorie.
+- `app-core` contre l'API réelle (`apps/api/test/app-core-vault.test.ts`) :
+  sync après modification, statut par catégorie, P2 opaque sur le stockage,
+  restauration complète sur un nouveau device.
+- mobile : KeyStore dérive et efface la clé SQLCipher ; bundle Metro Android.
 
 Lot 2 :
 
