@@ -1,230 +1,239 @@
 RELAIS
-Journal des Décisions Architecture
-Version 1.0 — Avril 2026
-Confidentiel
-# Introduction
-Ce document trace les décisions architecturales prises lors des sessions de conception de Relais. Chaque décision inclut sa justification, son impact sur les specs, et les specs documents mis à jour.
-| Domaine | Décisions | Documents impactés |
-| Cryptographie client | DEC-01 à DEC-07 | Frontend Specs, Specs Techniques |
-| Blockchain & L2 | DEC-08 à DEC-11 | Backend Specs, Specs Techniques |
-| Trusted contacts | DEC-12 à DEC-15 | Specs Techniques, Backend Specs |
-| Simplification HCV | DEC-16 à DEC-18 | Backend Specs, Frontend Specs |
-| Intégrité vault | DEC-19 | Backend Specs, Frontend Specs |
+Passe le relais, pas le chaos.
+Journal des Décisions Architecture — Version 1.0 + Addendums v1.1/v1.2/v1.3
+Version complète — DEC-01 à DEC-35
+Avril 2026 — Confidentiel
+# Index des décisions
+| DEC | Titre | Addendum |
+| 01 | seed_enc_pin — stockage permanent | v1.0 |
+| 02 | PIN seul pour chiffrer le seed | v1.0 |
+| 03 | Comportement inactivité corrigé | v1.0 |
+| 04 | Nouveau device — flow corrigé | v1.0 |
+| 05 | Ed25519 keypair dérivé du seed | v1.0 |
+| 06 | Challenge-response Ed25519 restauration | v1.0 |
+| 07 | Signature des syncs vault | v1.0 |
+| 08 | Arbitrum L2 — pas Ethereum mainnet | v1.0 |
+| 09 | Dead man's switch = smart contract Arbitrum | v1.0 |
+| 10 | Ce qui va on-chain vs off-chain | v1.0 |
+| 11 | Migration blockchain future | v1.0 |
+| 12 | Deux niveaux de données trusted contacts | v1.0 |
+| 13 | Vérification réponses = 100% côté client | v1.0 |
+| 14 | Transmission = transport aveugle | v1.0 |
+| 15 | relais_private_key dans HCV | v1.0 |
+| 16 | HCV retiré du chiffrement données utilisateur | v1.0 |
+| 17 | HCV réduit à un seul usage | v1.0 |
+| 18 | Secrets infra = variables d'environnement | v1.0 |
+| 19 | Signature des syncs vault (Ed25519) | v1.0 |
+| 20 | Questions = FK vers checkin_questions | v1.1 |
+| 21 | Vault purement local — pas de table vault | v1.1 |
+| 22 | silence_duration_months DEFAULT 3 | v1.1 |
+| 23 | Data recipient externe supprimé | v1.1 |
+| 24 | email_log + payment_events | v1.1 |
+| 25 | Step-up token canonique | v1.1 |
+| 26 | PIN backoff progressif | v1.1 |
+| 27 | POST /auth/seed/display | v1.1 |
+| 28 | notification_enc = crypto_box_seal X25519 | v1.2 |
+| 29 | Si_enc signés Ed25519 à l'activation | v1.2 |
+| 30 | Email activation via abstraction secrets | v1.2 |
+| 31 | Écritures carnet signées Ed25519 | v1.3 |
+| 32 | Wrapped : seuil 6 vérifié serveur | v1.3 |
+| 33 | Check-in : mini-jeu fourni et vérifié serveur | v1.3 |
+| 34 | Streak = mois calendaires, 4 badges | v1.3 |
+| 35 | Timing relances + déclenchement corrigé | v1.3 |
 
-# A. Cryptographie côté client
-| DEC-01 seed_enc_pin — stockage permanent du seedImpact : Frontend Specs section 3 |
+# A. Cryptographie côté client (DEC-01 à DEC-07)
+| DEC-01  seed_enc_pin — stockage permanent du seed Impact : Frontend Specs section 3 |
 
-| Le seed chiffré avec le PIN est le seul fichier persisté contenant le seed. Il n'est JAMAIS supprimé, même après une longue inactivité. |
+| seed_enc_pin n'est JAMAIS supprimé. Même après inactivité prolongée. Supprimer le seed chiffré créerait le pire scénario : données inaccessibles si 12 mots perdus. |
 
-| // AVANT (incorrect)→ Suppression de seed_enc après 3 mois d'inactivité→ Master_key intermédiaire// APRÈS (correct)seed_enc_pin = XChaCha20(Argon2id(PIN), seed)→ Stocké dans expo-secure-store PERMANENTEMENT→ Jamais supprimé — même après inactivité longue→ Pas de master_key intermédiaire |
+| seed_enc_pin = XChaCha20(Argon2id(PIN), seed) → SecureStore PERMANENT — jamais supprimé → Pas de master_key intermédiaire |
 
-Justification
-- Supprimer seed_enc crée le pire scénario — données inaccessibles si 12 mots perdus
-- Expérience wallet crypto : oublier sa seed phrase est l'erreur la plus irréparable
-- Le device perdu/volé est protégé par Argon2id(PIN) — brute force impossible
-| DEC-02 PIN seul pour chiffrer le seed — pas de seed_enc_pwdImpact : Frontend Specs section 3 |
-
-| Le mot de passe sert uniquement à l'authentification serveur. Il n'a aucun rôle cryptographique côté client. Le seed ne quitte JAMAIS le device. |
+| DEC-02  PIN seul pour chiffrer le seed — mot de passe = auth serveur uniquement Impact : Frontend Specs section 3 |
 
 | Élément | Rôle | Jamais utilisé pour |
-| Mot de passe | Auth serveur uniquement | Crypto locale |
+| Mot de passe | Auth serveur | Crypto locale |
 | PIN | Chiffrer seed sur le device | Auth serveur |
-| Seed | Source de K1/K2/K3 | Auth serveur |
-| 12 mots | Restaurer seed sur nouveau device | Auth serveur |
+| Seed | Source de K1/K2/K3 + Ed25519 | Auth serveur |
 
-| DEC-03 Comportement inactivité > 3 mois corrigéImpact : Frontend Specs section 2, 3 |
+| DEC-03  Comportement inactivité > 3 mois corrigé Impact : Frontend Specs section 2-3 |
 
-| // Inactivité > 3 moisseed_enc_pin → toujours présent dans SecureStoreBiométrie/PIN → refusés par l'OS (expiration système)// Login mot de passe → auth serveur → tokens// App détecte que seed_enc_pin existe// Demande PIN → déchiffre seed_enc_pin → K1/K2/K3 ✅// Pas de 12 mots requis// Pas de suppression de données |
+| // seed_enc_pin toujours présent après 3 mois // Login mot de passe → tokens → app demande PIN // PIN déchiffre seed_enc_pin → K1/K2/K3 ✅ // Pas de 12 mots requis — pas de suppression de données |
 
-| DEC-04 Nouveau device — flow corrigéImpact : Frontend Specs section 3 |
+| DEC-04  Nouveau device — flow corrigé Impact : Frontend Specs section 3 |
 
-| // seed_enc_pin absent (nouveau device ou réinstallation)1. Login mot de passe → auth serveur → tokens2. App détecte : seed_enc_pin absent3. 'Créez votre PIN pour ce téléphone' → PIN différent de l'ancien device = normal4. 'Entrez vos 12 mots pour restaurer votre coffre' → seed = BIP39.toBytes(12_mots)5. seed_enc_pin = XChaCha20(Argon2id(nouveau_PIN), seed)6. SecureStore.set('seed_enc_pin', ...) ✅7. K1/K2/K3 dérivées → mémoire vive ✅ |
+| // seed_enc_pin absent (nouveau device / réinstallation) 1. Login mot de passe → auth serveur → tokens 2. App détecte : seed_enc_pin absent 3. 'Créez votre PIN pour ce téléphone' 4. 'Entrez vos 12 mots pour restaurer votre coffre' 5. seed_enc_pin = XChaCha20(Argon2id(PIN), seed) → SecureStore PERMANENT |
 
-| DEC-05 Ed25519 keypair dérivé du seedImpact : Frontend Specs section 5, Backend Specs section 2 |
+| DEC-05  Ed25519 keypair dérivé du seed Impact : Frontend Specs section 5, Backend Specs section 2 |
 
-| seed (12 mots BIP39) → K1 = Argon2id(seed, ctx='relais_comptes_v1') → K2 = Argon2id(seed, ctx='relais_messages_v1') → K3 = Argon2id(seed, ctx='relais_finances_v1') → Ed25519.keypair(seed) → { ed25519_sk, ed25519_pk }ed25519_pk → stockée en PostgreSQL à l'inscription → adresse publique on-chain Arbitrumed25519_sk → dérivée à la demande, JAMAIS stockée → signe les syncs vault + challenge restauration |
+| seed + ctx='relais_comptes_v1'   → Argon2id → K1 seed + ctx='relais_messages_v1'  → Argon2id → K2 seed + ctx='relais_finances_v1'  → Argon2id → K3 seed → Ed25519.keypair()         → { ed25519_sk, ed25519_pk } ed25519_pk → PostgreSQL + Arbitrum (public, immuable) ed25519_sk → dérivé à la demande, JAMAIS stocké |
 
-| DEC-06 Challenge-response Ed25519 pour restaurationImpact : Backend Specs section 3, Frontend Specs section 3 |
+| DEC-06  Challenge-response Ed25519 pour restauration Impact : Backend Specs section 3, Frontend Specs section 3 |
 
-| // Vérification que les 12 mots saisis sont corrects1. App: GET /auth/restore/challenge → Serveur retourne: { challenge: bytes_aléatoires }2. App: seed_saisi → ed25519_sk = Ed25519.keypair(seed).sk signature = Ed25519.sign(challenge, sk) sk détruite immédiatement3. App: POST /auth/restore/verify { signature } → Serveur: Ed25519.verify(signature, challenge, ed25519_pk) → Valide ✅ = bon seed | Invalide ❌ = mauvais seed// Le seed ne transite jamais sur le réseau ✅ |
+| GET  /auth/restore/challenge → { challenge: 32 bytes aléatoires } seed_saisi → ed25519_sk = Ed25519.keypair(seed).sk signature  = Ed25519.sign(challenge, sk) POST /auth/restore/verify { signature } → Serveur : Ed25519.verify(signature, challenge, ed25519_pk) // Le seed ne transite jamais sur le réseau ✅ |
 
-| DEC-07 Signature des syncs vaultImpact : Backend Specs section 3, Frontend Specs section 7 |
+| DEC-07  Signature des syncs vault Impact : Backend Specs section 3, Frontend Specs section 7 |
 
-| // Avant chaque sync vers Storjhash = SHA256(P1)signature = Ed25519.sign(hash, ed25519_sk)POST /vault/sync { category: 'accounts', payload: base64(P1), signature: base64(signature)}// Serveur vérifie avec ed25519_pk avant d'accepter// Garantit que seul le vrai owner peut modifier son backup// Même si access_token compromis ✅ |
+| hash      = SHA256(P1) signature = Ed25519.sign(hash, ed25519_sk) POST /vault/sync { category, payload: P1, signature } → Serveur vérifie avec ed25519_pk avant stockage Storj // Un access token volé ne peut pas modifier le vault ✅ |
 
-# B. Architecture blockchain
-| DEC-08 Arbitrum L2 — pas Ethereum mainnetImpact : Backend Specs, Specs Techniques |
-
-| Arbitrum hérite la sécurité d'Ethereum via optimistic rollups. Frais ~$0.005-0.15 par transaction vs $5-100 sur L1. EVM compatible — même tooling Solidity. |
+# B. Architecture blockchain (DEC-08 à DEC-11)
+| DEC-08  Arbitrum L2 — pas Ethereum mainnet Impact : Backend Specs, Specs Techniques |
 
 | Critère | Ethereum L1 | Arbitrum L2 |
-| Frais par transaction | $5-100+ | ~$0.005-0.15 |
-| Sécurité | Maximum | Héritée d'Ethereum |
-| Compatibilité EVM | Native | Complète |
-| Finalité | ~13 minutes | Soft: 1-2s / Hard: ~13min |
-| Migration future | — | Possible vers autre L2 |
+| Frais | $5-100+ | ~$0.005-0.15 |
+| Sécurité | Maximum | Héritée Ethereum |
+| EVM | Native | Complète |
+| Finalité | ~13min | Soft 1-2s / Hard ~13min |
 
-| DEC-09 Dead man's switch = smart contract ArbitrumImpact : Backend Specs section 4, Specs Techniques |
+| DEC-09  Dead man's switch = smart contract Arbitrum Impact : Backend Specs section 4 |
 
-| // Smart contract RelaisDeadManSwitch (Solidity)contract RelaisDeadManSwitch { mapping(address => uint256) public lastCheckin; mapping(address => DmsConfig) public config; mapping(address => bytes32) public s1Hash; mapping(address => bytes32) public s2Hash; function checkin() external { lastCheckin[msg.sender] = block.timestamp; emit CheckinRecorded(msg.sender, block.timestamp); } function isTriggered(address owner) public view returns (bool) { return block.timestamp > lastCheckin[owner] + config[owner].silenceDuration; }}// Avantage : fonctionne même si Relais ferme// Code public et vérifiable// Relais ne peut pas empêcher le déclenchement |
+| contract RelaisDeadManSwitch { mapping(address => uint256) public lastCheckin; mapping(address => DmsConfig) public config;  function checkin() external { lastCheckin[msg.sender] = block.timestamp; } function isTriggered(address owner) public view returns (bool) { return block.timestamp > lastCheckin[owner] + config[owner].silenceDuration; } } |
 
-| DEC-10 Ce qui va on-chain vs off-chainImpact : Specs Techniques |
+| DEC-10  Ce qui va on-chain vs off-chain Impact : Specs Techniques |
 
-| Donnée | Où | Pourquoi |
-| ed25519_pk | On-chain Arbitrum | Identité publique — vérification restauration |
-| Hash(S1_enc) | On-chain Arbitrum | Preuve intégrité — détecte modification |
-| Hash(S2_enc) | On-chain Arbitrum | Preuve intégrité — détecte modification |
-| Hash(notification_enc+sig) | On-chain Arbitrum | Preuve intégrité contacts |
-| Config DMS (délai, N-of-M) | On-chain Arbitrum | Autonomie du smart contract |
-| last_checkin timestamp | On-chain Arbitrum | Seule mise à jour fréquente — inoffensive |
-| Storj pointer vers P2 | On-chain Arbitrum | Localisation du backup vault |
-| P2 (vault chiffré) | Storj | Blob lourd, mis à jour fréquemment |
-| S1_enc, S2_enc | Storj | Chiffrés côté client, pas de hash public du contenu |
-| notification_enc | PostgreSQL | Lu par Relais pour notifier |
-| secret_enc (contacts) | PostgreSQL | Chiffré avec K2, Relais ne lit pas |
+| Donnée | Où |
+| ed25519_pk | Arbitrum |
+| Hash(Si_enc) | Arbitrum |
+| Hash(notification_enc+sig) | Arbitrum |
+| Config DMS, last_checkin | Arbitrum |
+| P2 vault | Storj |
+| Si_enc | Storj |
+| notification_enc | PostgreSQL |
+| secret_enc | PostgreSQL |
 
-| Le hash de P2 n'est PAS on-chain. Des mises à jour fréquentes créeraient un historique comportemental public exploitable, même sans voir le contenu. |
+| DEC-11  Migration blockchain future Impact : Specs Techniques |
 
-| DEC-11 Migration blockchain futureImpact : Specs Techniques |
+Ed25519/secp256k1 standards — même clé fonctionne sur Arbitrum, Base, Polygon
+Events comme source de vérité — state reconstituable
+Données utilisateur indépendantes de la chain choisie
+# C. Trusted contacts (DEC-12 à DEC-15)
+| DEC-12  Deux niveaux de données par contact Impact : Specs Techniques, Backend Specs |
 
-L'architecture est conçue pour permettre une migration vers une autre chain si nécessaire.
-- ed25519 / secp256k1 sont standards — même clé fonctionne sur Arbitrum, Base, Polygon
-- Smart contract utilise events comme source de vérité — state reconstituable
-- L'app mobile connaît l'adresse du contrat — un changement d'adresse via mise à jour suffit
-- Données utilisateur (Storj, PostgreSQL) indépendantes de la chain choisie
-# C. Architecture des données trusted contacts
-| DEC-12 Deux niveaux de données par contactImpact : Specs Techniques, Backend Specs |
+| NIVEAU 1 — notification_enc (Relais peut lire pour notifier) → crypto_box_seal({email,phone}, relais_x25519_pk)  -- DEC-28 → Signé Ed25519 owner  -- DEC-29  NIVEAU 2 — secret_enc (Relais ne peut PAS lire) → XChaCha20(K2, {nom, rôle, message_personnel}) |
 
-| Relais peut lire uniquement pour notifier. Relais ne peut pas modifier sans invalider la signature owner. Relais ne peut pas lire les données secrètes. |
+| DEC-13  Vérification réponses = 100% côté client Impact : Frontend Specs |
 
-| NIVEAU 1 — notification_enc (Relais peut lire, ne peut pas modifier) Contenu : { email, phone } Chiffrement : XChaCha20(relais_public_key, contenu) Signature : Ed25519.sign(notification_enc, owner_sk) Stockage : PostgreSQL Usage : Relais déchiffre avec relais_private_key pour notifier ✓NIVEAU 2 — secret_enc (Relais ne peut ni lire ni modifier) Contenu : { nom, rôle, questions, message_personnel } Chiffrement : XChaCha20(K2_owner, contenu) Stockage : PostgreSQL Usage : déchiffré uniquement sur le device de l'owner ✓ |
+| Contact saisit réponses → K_i = Argon2id(réponses) App télécharge Si_enc depuis Storj XChaCha20_decrypt(K_i, Si_enc) → Si  (Poly1305 succès = OK ✅) // Relais ne vérifie rien — transporte seulement |
 
-| DEC-13 Vérification réponses = 100% côté clientImpact : Frontend Specs, Backend Specs |
+| DEC-14  Transmission = transport aveugle Impact : Specs Techniques |
 
-| // Relais ne vérifie PAS les réponses// C'est le device du contact qui vérifieContact saisit réponses dans l'app → K_i = Argon2id(réponses concaténées) → App télécharge S1_enc depuis Storj → XChaCha20_decrypt(K_i, S1_enc) → S1 → Poly1305 succès → réponses correctes ✅ → Poly1305 échec → réponses incorrectes ❌// Relais voit : 'le contact a téléchargé S1_enc'// Relais ne sait pas si les réponses sont bonnes ou mauvaises |
+Messages chiffrés K2 → Relais ne peut pas lire
+Parts Shamir chiffrées K_i → Relais ne peut pas lire
+Relais = facteur aveugle qui livre des enveloppes fermées
+| DEC-15  relais_x25519_sk dans HCV Secrets Engine Impact : Backend Specs section 5 |
 
-| DEC-14 Transmission = transport aveugleImpact : Specs Techniques |
+| // HCV Secrets Engine — UN SEUL usage relais/x25519_sk  → clé privée X25519 pour crypto_box_seal_open → notifie les contacts en déchiffrant notification_enc |
 
-| // Relais transporte des blobs chiffrés sans les lireMessages personnels → chiffrés avec K2 → Stockés dans secret_enc en PostgreSQL → Déchiffrés sur le device du contact après reconstitution KCarnet de vie → chiffré avec K2 → Stocké dans P2 sur Storj → Téléchargé et déchiffré sur le device du contactRelais = facteur aveugle qui livre des enveloppes fermées ✅ |
+# D. Simplification HCV (DEC-16 à DEC-19)
+| DEC-16  HCV Transit retiré du chiffrement données Impact : Backend Specs, Specs Techniques |
 
-| DEC-15 relais_private_key dans HCVImpact : Backend Specs section 5 |
-
-La relais_private_key est le seul secret qui nécessite HCV Secrets Engine. C'est la clé qui déchiffre notification_enc pour envoyer les notifications aux contacts. Elle doit être auditée et rotatable sans redéploiement.
-# D. Simplification de HashiCorp Vault
-| DEC-16 HCV retiré du chiffrement des données utilisateurImpact : Backend Specs, Specs Techniques |
-
-| P2 n'est plus doublement chiffré par HCV. K seule (XChaCha20) est suffisante. Cela rend l'architecture vraiment non-custodiale — Relais ne peut pas déchiffrer le vault même s'il le voulait. |
+| P2 = XChaCha20(Ki, P1) uniquement. Relais ne peut pas déchiffrer le vault. Architecture vraiment non-custodiale. |
 
 | Donnée | Avant | Après |
-| P2 (backup vault) | K + HCV Transit | K uniquement — XChaCha20(K, P1) |
-| S1_enc, S2_enc | Envisagé HCV | K_A/K_B uniquement — côté client |
-| Responsabilité HCV | Chiffrement données + secrets | Secrets infrastructure uniquement |
+| P2 (vault) | K + HCV Transit | Ki uniquement |
+| Si_enc | Envisagé HCV | K_i uniquement (côté client) |
+| Responsabilité HCV | Chiffrement + secrets | Secrets uniquement |
 
-Justification
-- Cohérence avec la philosophie non-custodiale — Relais ne devrait pas pouvoir déchiffrer
-- XChaCha20 avec Argon2id est cryptographiquement suffisant
-- HCV crée une dépendance critique — si HCV est down, personne ne peut syncer
-- Signature Ed25519 remplace l'audit trail HCV pour l'intégrité vault
-| DEC-17 HCV réduit à un seul usageImpact : Backend Specs section 5 |
+| DEC-17  HCV réduit à un seul usage Impact : Backend Specs section 5 |
 
-| // HCV avant→ Transit Engine : chiffrement P2→ Secrets Engine : relais_private_key + tous les secrets infra// HCV maintenant — UN SEUL usage→ Secrets Engine : relais_private_key UNIQUEMENT (clé qui déchiffre notification_enc pour notifier les contacts) |
+| // HCV Secrets Engine : relais/x25519_sk UNIQUEMENT |
 
-| DEC-18 Secrets infrastructure = variables d'environnement hébergeurImpact : Backend Specs section 8 |
+| DEC-18  Secrets infra = variables d'environnement hébergeur Impact : Backend Specs section 8 |
 
-| Secret | Stockage | Justification |
-| relais_private_key | HCV Secrets Engine | Critique, doit être auditée et rotatable |
-| DATABASE_URL | Env var hébergeur | Simple credential, pas besoin HCV |
-| REDIS_URL | Env var hébergeur | Simple credential |
-| JWT_ACCESS_SECRET | Env var hébergeur | Rotaté par redéploiement |
-| STORJ_ACCESS_KEY | Env var hébergeur | API key standard |
-| RESEND_API_KEY | Env var hébergeur | API key standard |
-| ARBITRUM_RPC_URL | Env var hébergeur | URL publique |
+| Secret | Stockage |
+| relais/x25519_sk | HCV Secrets Engine |
+| DATABASE_URL | Env var hébergeur |
+| JWT_ACCESS_SECRET | Env var hébergeur |
+| STORJ_ACCESS_KEY | Env var hébergeur |
+| RESEND_API_KEY | Env var hébergeur |
 
-# E. Tableau récapitulatif — Où tout est stocké
-| Donnée | Chiffrement | Stockage | Qui peut lire |
-| P2 (vault backup) | K + XChaCha20 | Storj | Owner (K depuis seed) |
-| S1_enc | K_A + XChaCha20 | Storj | Contact A (réponses) |
-| S2_enc | K_B + XChaCha20 | Storj | Contact B (réponses) |
-| notification_enc | relais_public_key | PostgreSQL | Relais (pour notifier) |
-| notification_sig | Ed25519 owner | PostgreSQL | Vérifiable par tous |
-| secret_enc | K2 + XChaCha20 | PostgreSQL | Owner uniquement |
-| verify_token | K_i + XChaCha20 | PostgreSQL | Owner (vérif annuelle) |
-| seed_enc_pin | Argon2id(PIN) | SecureStore device | Owner (PIN local) |
-| ed25519_pk | — | PostgreSQL + Arbitrum | Public |
-| Hash(S1_enc) | — | Arbitrum | Public — preuve intégrité |
-| Hash(S2_enc) | — | Arbitrum | Public — preuve intégrité |
-| Config DMS | — | Arbitrum | Public — smart contract |
-| last_checkin | — | Arbitrum | Public — timestamp |
-| relais_private_key | HCV Secrets Engine | HCV | Relais backend uniquement |
-| Secrets infra | — | Env vars hébergeur | Relais backend uniquement |
+| DEC-19  Signature syncs vault — résumé Impact : Cohérent DEC-07 |
 
-— Fin du Journal des Décisions v1.0 —
-Prochaine étape : Schéma PostgreSQL
+ed25519_sk signe SHA256(P1) avant chaque sync
+Serveur vérifie avec ed25519_pk avant d'accepter
+Garantit que seul le vrai owner peut modifier son backup
+# E. Addendum v1.1 — DEC-20 à DEC-27
+| DEC-20  Questions = FK vers checkin_questions Impact : Specs Techniques §4.3, Backend Specs §3.7, Schema trusted_contacts |
 
+| Problème résolu : secret_enc chiffré K2 (owner décédé) — le contact ne pouvait pas lire ses questions. Solution : texte public depuis bibliothèque admin via /relay/:token. |
 
----
+| // trusted_contacts question_1_id  UUID  NOT NULL REFERENCES checkin_questions(id) question_2_id  UUID  NOT NULL REFERENCES checkin_questions(id) question_3_id  UUID  NOT NULL REFERENCES checkin_questions(id)  // secret_enc = { nom, rôle, message_personnel } UNIQUEMENT — plus de questions |
 
-# Patchs DEC-28 / DEC-29 / DEC-30 (docx courant, avril 2026)
+| DEC-21  Vault purement local — pas de table vault en PostgreSQL Impact : Backend Specs §3.3 |
 
-RELAIS
-Passe le relais, pas le chaos.
-Journal des Décisions Architecture — Addendum v1.2
-Addendum v1.2 — DEC-28 à DEC-30.
-Avril 2026 — Confidentiel
-# Addendum v1.2 — DEC-28 à DEC-30
-| Décisions issues du formulaire de revue des specs (3 questions ouvertes). Complète l'Addendum v1.1 (DEC-20 à DEC-27). |
+| // Supprimés : GET/POST/PUT/DELETE /vault/accounts, GET /vault/summary // Conservés  : POST /vault/sync, POST /vault/restore, GET /vault/sync-status // free_max_accounts = 5 → contrainte côté client uniquement (SQLite local) |
 
-| Décision | Titre | Documents impactés |
-| DEC-28 | notification_enc : crypto_box_seal (sealed box X25519) — pas XChaCha20 symétrique | Specs Techniques, Backend Specs, Frontend Specs |
-| DEC-29 | Si_enc signés Ed25519 à l'activation (comme le vault — DEC-07) | Specs Techniques §4.3, Backend Specs §3.4 |
-| DEC-30 | Email activation contacts : en direct via abstraction secrets (pas de stub) | Backend Specs §3.4, Frontend Specs |
+| DEC-22  silence_duration_months DEFAULT 3 Impact : Schema transmission_configs |
 
-| DEC-28 notification_enc : crypto_box_seal X25519 — correction de la formulationImpact : Specs Techniques §1,§4.3 — Backend Specs §3.1 — Frontend Specs §5 |
+Aligné sur session_months = 3 mois (Specs Techniques §7.3)
+3 mois d'inactivité déclenchent simultanément déconnexion et premières relances
+| DEC-23  Data recipient externe supprimé Impact : User Stories E3-US04 |
 
-| ERREUR dans toutes les specs précédentes : XChaCha20(relais_public_key, ...) est incorrect. XChaCha20 est un chiffrement symétrique — il ne peut pas chiffrer vers une clé publique. La primitive correcte est crypto_box_seal de libsodium (ECDH éphémère X25519 + XChaCha20-Poly1305). |
+| // Personne sans part Shamir ne peut pas déchiffrer sans que Relais voie le clair // → contradiction avec DEC-14 (transport aveugle) // Destinataire = TOUJOURS un trusted_contact avec rôle |
 
-Correction de formulation
-| // AVANT (incorrect dans toutes les specs)notification_enc = XChaCha20(relais_public_key, { email, phone })// APRÈS (DEC-28)notification_enc = crypto_box_seal({ email, phone }, relais_x25519_pk)// crypto_box_seal (libsodium) fait internement :// 1. Génère une paire éphémère (ek_pk, ek_sk)// 2. ECDH : shared_secret = X25519(ek_sk, relais_x25519_pk)// 3. Dérive une clé symétrique depuis shared_secret// 4. Chiffre avec XChaCha20-Poly1305// 5. Retourne ek_pk || ciphertext// → Le client ne connaît jamais la clé privée de Relais ✅// Déchiffrement côté serveurplaintext = crypto_box_seal_open( notification_enc, relais_x25519_pk, // clé publique relais_x25519_sk // clé privée — depuis HCV Secrets Engine) |
+| DEC-24  email_log + payment_events ajoutées Impact : Schema tables 21-22 |
 
-Endpoint ajouté — Backend Specs §3.1
-| // Nouveau endpoint pour exposer la clé publique de RelaisGET /transmission/relais-key → Pas d'authentification requise → Returns: { relais_x25519_pk: base64 } → Mis en cache côté client (la clé change rarement) → Rotatable sans impact sur les clients qui mettent en cache (il suffit d'invalider le cache et de re-fetcher) |
+email_log : traçabilité délivrance pour support BO-02 (OTP non reçus)
+payment_events : historique facturation pour MRR/ARR BO-07
+| DEC-25  Step-up token canonique Impact : Backend Specs §2.5 |
 
-Impact HCV
-| // relais_x25519_sk = clé privée X25519 de Relais// Stockée dans HCV Secrets Engine (DEC-15)// C'est la même clé que 'relais_private_key' — juste correctement typée// HCV Secrets Engine — clés stockéesrelais/x25519_sk → clé privée X25519 pour crypto_box_seal_open → notifie les contacts en déchiffrant notification_enc |
+| POST /auth/pin/step-up X-Step-Up-Token: <token> Actions : edit_transmission | activate_transmission | delete_transmission edit_contacts | change_password | view_seed | disable_2fa | admin_action |
 
-| DEC-29 Si_enc signés Ed25519 à l'activation — cohérent avec DEC-07Impact : Specs Techniques §4.3 — Backend Specs §3.4 |
+| DEC-26  PIN backoff progressif Impact : Specs Techniques §8.2, app_config |
 
-| DEC-07 signe les syncs vault pour garantir qu'un access token volé ne peut pas remplacer le vault. Même argument pour les parts Shamir : un access token volé ne doit pas pouvoir remplacer Si_enc d'un contact par une part hostile qui ferait échouer la transmission. |
+| Tentative | Durée blocage |
+| 1-5 | Libre |
+| 6 | 30 secondes |
+| 7 | 2 minutes |
+| 8 | 10 minutes |
+| 9+ | 30 minutes |
 
-| // Côté client — activation transmissionfor each contact_i: S_i = shamir.split(K)[i] // part Shamir brute K_i = Argon2id(réponses_contact_i) Si_enc = XChaCha20(K_i, S_i) // chiffré avec réponses hash_i = SHA256(Si_enc) sig_i = Ed25519.sign(hash_i, ed25519_sk) // ← DEC-29 // push Si_enc sur Storj // envoyer { storj_path, share_hash: hash_i, signature: sig_i } au serveur// Côté serveur — POST /transmission/activatefor each contact_payload: valid = Ed25519.verify(sig_i, hash_i, ed25519_pk) // depuis users table if not valid → rejeter toute l'activation ❌ // Si valide → enregistrer storj_path + share_hash + hash on-chain Arbitrum |
+Configurable : security.pin_backoff_steps = '[30,120,600,1800]'
+| DEC-27  POST /auth/seed/display — pas GET /auth/seed-words Impact : Backend Specs §3.1 |
 
-Garantie apportée
-| Menace | Sans DEC-29 | Avec DEC-29 |
-| Access token volé avant activation | Attaquant remplace Si_enc → transmission échoue silencieusement | Impossible — signature invalide sans ed25519_sk |
-| Serveur Relais compromis | Si_enc remplacés en base | Hash on-chain Arbitrum détecte la modification |
-| Si_enc corrompus sur Storj | Déchiffrement échoue mais sans preuve | SHA256(Si_enc) vérifiable on-chain à tout moment |
+| // Le serveur n'a jamais le seed — il retourne { authorized: true } // L'app déchiffre seed_enc_pin localement et affiche les 12 mots // POST car action délibérée + step-up 'view_seed' requis |
 
-| DEC-30 Email activation contacts : en direct via abstraction secretsImpact : Backend Specs §3.4 — src/services/secrets.ts |
+# F. Addendum v1.2 — DEC-28 à DEC-30
+| DEC-28  notification_enc = crypto_box_seal X25519 Impact : Specs Techniques §1,§4.3, Backend Specs §3.1, Frontend Specs §5 |
 
-| La gestion de la clé est déjà tranchée (DEC-15 : relais_x25519_sk dans HCV). Un stub repousserait une décision déjà prise et laisserait un trou dans le flow critique E3-US06. |
+| ERREUR corrigée : XChaCha20(relais_public_key) était incorrect — XChaCha20 est symétrique. La primitive correcte est crypto_box_seal (ECDH éphémère X25519 + XChaCha20-Poly1305). |
 
-Abstraction secrets
-| // src/services/secrets.ts// Abstraction fine : env var en dev/test, HCV en prod// Le reste du code ne connaît pas HCV directementasync function getRelaisX25519Sk(): Promise<Buffer> { if (process.env.NODE_ENV === 'production') { return await hcv.getSecret('relais/x25519_sk') } // Dev / test : clé en variable d'env locale return Buffer.from(process.env.RELAIS_X25519_SK_DEV!, 'hex')}export const secrets = { getRelaisX25519Sk } |
+| // AVANT (incorrect) notification_enc = XChaCha20(relais_public_key, { email, phone })  // APRÈS (DEC-28) notification_enc = crypto_box_seal({ email, phone }, relais_x25519_pk)  // Nouveau endpoint GET /transmission/relais-key → { relais_x25519_pk: base64 }  (public, pas d'auth) |
 
-Flow E3-US06 complet
-| // POST /transmission/activate1. Vérifier step-up token 'activate_transmission'2. Vérifier signatures Ed25519 des Si_enc (DEC-29)3. Si valides → push Si_enc sur Storj + hashes on-chain Arbitrum4. Pour chaque contact : sk = await secrets.getRelaisX25519Sk() { email, phone } = crypto_box_seal_open(notification_enc, pk, sk) // DEC-28 resend_id = await resend.send({ to: email, template: 'transmission_activated' }) INSERT email_log { email_type: 'transmission_contact', provider_id: resend_id }5. UPDATE transmission_configs SET status = 'active', activated_at = NOW()6. Enregistrer checkin on-chain Arbitrum (contrat register())7. Returns { activated: true, contacts_notified: N } |
+| DEC-29  Si_enc signés Ed25519 à l'activation Impact : Specs Techniques §4.3, Backend Specs §3.4 |
 
-Portée de l'abstraction
-- HCV peut être branché, remplacé ou migré sans toucher les handlers
-- Les tests unitaires utilisent la branche env var — pas besoin de mock HCV
-- La même abstraction couvre toute clé sensible future si besoin
-# Résumé des corrections à appliquer dans les specs
-| Document | Section | Correction |
-| Specs Techniques | §1 Vocabulaire | notification_enc : remplacer XChaCha20(relais_public_key) par crypto_box_seal(..., relais_x25519_pk) |
-| Specs Techniques | §4.3 Création des clés | Idem — formulation corrigée + signature Si_enc ajoutée |
-| Backend Specs | §3.1 Auth | Ajouter GET /transmission/relais-key |
-| Backend Specs | §3.4 Transmission | POST /transmission/activate : signature par contact (DEC-29) + email direct (DEC-30) |
-| Frontend Specs | §5.2 Crypto | crypto_box_seal pour notification_enc (DEC-28) |
-| Frontend Specs | §4.3 Transmission | Ajout signature Ed25519 sur Si_enc à l'activation (DEC-29) |
+| // Cohérent avec DEC-07 (vault) — même primitive, même garantie Si_enc = XChaCha20(K_i, S_i) hash_i  = SHA256(Si_enc) sig_i   = Ed25519.sign(hash_i, ed25519_sk) // Serveur vérifie avant stockage Storj // Un access token volé ne peut pas remplacer une part Shamir ✅ |
 
-— Fin de l'Addendum v1.2 — DEC-28 à DEC-30
+| DEC-30  Email activation contacts en direct via abstraction secrets Impact : Backend Specs §3.4 |
+
+| // src/services/secrets.ts async function getRelaisX25519Sk(): Promise<Buffer> { if (process.env.NODE_ENV === 'production') return hcv.getSecret('relais/x25519_sk') return Buffer.from(process.env.RELAIS_X25519_SK_DEV!, 'hex') } // HCV en prod, env var en dev — le reste du code n'importe que secrets.* |
+
+# G. Addendum v1.3 — DEC-31 à DEC-35
+| DEC-31  Écritures du carnet signées Ed25519 Impact : Backend Specs §3.6, Frontend Specs §5 |
+
+| // POST/PUT /journal/entries signature = Ed25519.sign(SHA256(content_enc), ed25519_sk) // DELETE /journal/entries/:id signature = Ed25519.sign(SHA256(uuidToBytes(id)), ed25519_sk) // POST /journal/wrapped/:year signature = Ed25519.sign(SHA256(stats_enc), ed25519_sk) // Un access token volé ne peut ni altérer ni effacer la capsule temps ✅ |
+
+| DEC-32  Wrapped : seuil 6 vérifié serveur, entry_count recalculé Impact : Backend Specs §3.6 |
+
+| // POST /journal/wrapped/:year entry_count = SELECT COUNT(*) FROM journal_entries WHERE user_id = $1 AND entry_month BETWEEN ':year-01-01' AND ':year-12-31'  if entry_count < 6 → 409 WRAPPED_INSUFFICIENT_ENTRIES { current, required: 6 }  INSERT annual_wrappeds { stats_enc, entry_count /* valeur serveur */, year } |
+
+| DEC-33  Check-in : mini-jeu fourni et vérifié serveur Impact : Backend Specs §3.5 |
+
+| GET /checkin/game → Serveur sélectionne énigme, génère game_token JWT (TTL 10min, usage unique) → Returns: { question_fr, question_en, game_type, game_token }  POST /checkin/game/answer { game_token, answer } → Vérifie token + compare SHA256(answer) → Si correct : émet checkin_token (TTL 15min, usage unique)  POST /checkin/complete { checkin_token, journal_entry_id? } → INSERT checkin_log, UPDATE next_checkin_due, relance_count = 0 |
+
+| DEC-34  Streak = mois calendaires consécutifs, 4 badges Impact : Backend Specs §3.5 |
+
+| // Calcul au POST /checkin/complete prev_month = date_trunc('month', NOW()) - INTERVAL '1 month' has_prev   = SELECT 1 FROM checkin_log WHERE user_id=$1 AND checkin_month=prev_month new_streak = has_prev ? current_streak + 1 : 1  // 4 badges 'first_checkin' si new_streak = 1 'streak_3'      si new_streak = 3 'streak_6'      si new_streak = 6 'streak_12'     si new_streak = 12 |
+
+| DEC-35  Timing relances + déclenchement corrigé Impact : Backend Specs §4.2 |
+
+| Correction : le pseudo-code §4.2 rendait silence_duration_months inopérant ('relance 3 + 21j → déclenchement'). La valeur du paramètre était ignorée. |
+
+| // JOB deadman:checkin (quotidien) overdue_since     = NOW() - last_checkin_at silence_threshold = silence_duration_months * 30 jours days_overdue      = (NOW() - next_checkin_due).days  if relance_count=0 AND days_overdue>=7:  envoyer relance_1 if relance_count=1 AND days_overdue>=14: envoyer relance_2 if relance_count=2 AND days_overdue>=21: envoyer relance_3  // DEC-35 : déclenchement quand 3 relances ET silence_duration_months écoulé if relance_count=3 AND overdue_since >= silence_threshold: enqueue deadman:trigger  // Exemple silence_duration_months=3 (défaut) // last_checkin 1er janvier → relances 8/15/22 février → déclenchement 1er AVRIL |
+
+## Errata User Stories
+| US | Correction |
+| E3-US04 | Supprimer 'data recipient externe (email uniquement)'. Destinataire = trusted contact avec rôle (DEC-23). |
+| E1-US03 | Blocage PIN : backoff progressif [30s, 2min, 10min, 30min] — pas 30 secondes fixe (DEC-26). |
+| E3-US05 | 'Bimestriel' → 'Bimensuel (toutes les 2 semaines)'. checkin_frequency_weeks IN (1,2,4) est correct. |
+
+— Fin du Journal des Décisions Architecture — DEC-01 à DEC-35

@@ -1,8 +1,9 @@
 # RELAIS — Backend : notes d'implémentation
 
-**Specs de référence** : Backend Specs v1.1 + patch DEC-28/29/30, Specs
-Techniques v1.2 + patch, Journal des Décisions v1.0 + Addendum v1.1 + patch
-(DEC-28 à DEC-30), Schéma PostgreSQL v1.3.
+**Specs de référence** (révision de septembre 2026) : Backend Specs v1.1
+réécrite, Specs Techniques v1.2, Journal des Décisions DEC-01 à DEC-35,
+Schéma PostgreSQL v1.4, Frontend Specs v1.1. Les écarts de contrat entre
+cette révision et l'API livrée sont listés dans `docs/open-questions.md` §B.
 
 Ce document ne redécrit pas l'API — il consigne ce qui a été décidé en la
 construisant, les écarts par rapport aux specs, et ce qui a été vérifié.
@@ -203,8 +204,8 @@ Le CHECK v1.3 n'a aucun type pour cinq notifications que les user stories
 exigent : compte verrouillé (§2.5), mot de passe changé (E6-US03), coffre
 restauré (E6-US01), 2FA activée / désactivée (E6-US02). Sans eux, il aurait
 fallu soit ne pas envoyer ces emails, soit les envoyer sans les tracer
-(DEC-24). Ajoutés par la migration `20260425000000`, proposés pour la spec
-v1.4 — voir `docs/open-questions.md`.
+(DEC-24). Ajoutés par la migration `20260425000000` ; le Schéma v1.4
+(Point-1) reprend les cinq types à l'identique.
 
 ### Vault : la signature porte sur le blob envoyé
 
@@ -311,7 +312,9 @@ DEC-30 envoie un email à chaque contact dès l'activation. `email_log` ne
 connaît qu'un type pour les contacts, `transmission_contact`, dont le texte
 est écrit pour le déclenchement (« suivez ce lien »). Il est réutilisé tel
 quel avec `link = FRONTEND_URL/contact`, sans nom d'owner (le serveur n'en
-a pas). Un texte de désignation dédié est à écrire — point ouvert.
+a pas). Le Schéma v1.4 (Point-1) ajoute le type `contact_designated` et
+Backend v1.1 §4.3 l'utilise : migration, gabarit et bascule à faire —
+`docs/open-questions.md` §C.1.
 
 ### Transmission : contacts et schéma figés une fois active
 
@@ -584,8 +587,9 @@ journalisée, la liste v1.3 ne prévoyait rien pour les tickets.
 
 E6-US02 : « des codes de récupération d'urgence sont générés et affichés une
 fois ». Le schéma n'a aucune table pour les stocker, et `users` n'a pas de
-colonne. Non implémenté ; consigné dans `docs/open-questions.md`. Tant que ça
-manque, perdre son authenticateur signifie passer par le support.
+colonne. Le Schéma v1.4 (Point-2) ajoute `two_factor_recovery_codes` ;
+les endpoints restent à fixer — `docs/open-questions.md` §C.2 et §D.1. Tant
+que ça manque, perdre son authenticateur signifie passer par le support.
 
 ## 4. Ce que le serveur ne voit jamais
 

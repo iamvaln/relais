@@ -1,8 +1,10 @@
 # RELAIS — Schéma PostgreSQL : notes d'implémentation
 
-**La spec fait foi** : `specs/Relais_Schema_PostgreSQL_v1.docx` (**v1.3**,
-22 tables), complétée par l'Addendum Journal des Décisions v1.1 (DEC-20 à
-DEC-27). Extraites en [`docs/specs/`](specs/).
+**La spec fait foi** : `specs/Relais_Schema_PostgreSQL_v1.docx` (**v1.4**,
+23 tables), complétée par le Journal des Décisions DEC-01 à DEC-35.
+Extraites en [`docs/specs/`](specs/). Les migrations couvrent la v1.3 plus
+les cinq types d'email de la v1.4 ; restent à migrer `contact_designated` et
+la table `two_factor_recovery_codes` (`docs/open-questions.md` §C).
 
 Ce document ne redécrit pas le schéma — il consigne comment il est mis en
 œuvre et ce qui a été vérifié.
