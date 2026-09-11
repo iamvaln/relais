@@ -22,6 +22,8 @@ import {
   questionUpdateBody,
   reasonBody,
   subscriptionListQuery,
+  ticketListQuery,
+  ticketUpdateBody,
   transmissionListQuery,
   userListQuery,
   type AdminLoginBody,
@@ -41,6 +43,8 @@ import {
   type QuestionUpdateBody,
   type ReasonBody,
   type SubscriptionListQuery,
+  type TicketListQuery,
+  type TicketUpdateBody,
   type TransmissionListQuery,
   type UserListQuery,
 } from './schemas.js'
@@ -51,6 +55,7 @@ import * as catalog from './catalog.js'
 import * as monitoring from './monitoring.js'
 import * as billing from './billing.js'
 import * as dashboard from './dashboard.js'
+import * as tickets from './tickets.js'
 import type { RequestContext } from './service.js'
 
 function ctx(req: FastifyRequest): RequestContext {
@@ -218,4 +223,21 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
 
   // --- BO-01 Dashboard -------------------------------------------------------------
   app.get('/dashboard', { preHandler: adminOnly, config: { rateLimit: limits.admin } }, async () => ok(await dashboard.dashboard()))
+
+  // --- BO-02 Tickets support --------------------------------------------------------
+  app.get<{ Querystring: TicketListQuery }>(
+    '/tickets',
+    { schema: { querystring: ticketListQuery }, preHandler: support, config: { rateLimit: limits.admin } },
+    async (req) => ok(await tickets.listTickets(req.query)),
+  )
+  app.get<{ Params: IdParams }>(
+    '/tickets/:id',
+    { schema: { params: idParams }, preHandler: support, config: { rateLimit: limits.admin } },
+    async (req) => ok(await tickets.getTicket(req.params.id)),
+  )
+  app.put<{ Params: IdParams; Body: TicketUpdateBody }>(
+    '/tickets/:id',
+    { schema: { params: idParams, body: ticketUpdateBody }, preHandler: support },
+    async (req) => ok(await tickets.updateTicket(req.admin!.id, req.params.id, req.body, ctx(req))),
+  )
 }

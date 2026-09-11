@@ -286,3 +286,40 @@ export interface ExportQuery {
   from: string
   to: string
 }
+
+export const ticketListQuery = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    status: { type: 'string', enum: ['open', 'in_progress', 'resolved', 'closed'] },
+    priority: { type: 'string', enum: ['urgent', 'high', 'normal', 'low'] },
+    category: { type: 'string', enum: ['account_locked', 'otp_issue', 'transmission', 'subscription', 'rgpd', 'other'] },
+    page: { type: 'string', pattern: '^[0-9]{1,4}$' },
+    limit: { type: 'string', pattern: '^[0-9]{1,3}$' },
+  },
+} as const
+export interface TicketListQuery {
+  status?: string
+  priority?: string
+  category?: string
+  page?: string
+  limit?: string
+}
+
+export const ticketUpdateBody = {
+  type: 'object',
+  additionalProperties: false,
+  minProperties: 1,
+  properties: {
+    status: { type: 'string', enum: ['open', 'in_progress', 'resolved', 'closed'] },
+    priority: { type: 'string', enum: ['urgent', 'high', 'normal', 'low'] },
+    assigned_to: { anyOf: [uuid, { type: 'null' }] },
+    resolution_note: { type: 'string', maxLength: 5000 },
+  },
+} as const
+export interface TicketUpdateBody {
+  status?: 'open' | 'in_progress' | 'resolved' | 'closed'
+  priority?: 'urgent' | 'high' | 'normal' | 'low'
+  assigned_to?: string | null
+  resolution_note?: string
+}
