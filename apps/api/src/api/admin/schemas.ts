@@ -228,3 +228,61 @@ export interface AuditListQuery {
   page?: string
   limit?: string
 }
+
+export const planChangeBody = {
+  type: 'object',
+  required: ['plan', 'reason'],
+  additionalProperties: false,
+  properties: {
+    plan: { type: 'string', enum: ['free', 'premium'] },
+    /** Montant encaissé (Mobile Money, hors app) ; défaut billing.premium_price_fcfa. */
+    amount_fcfa: { type: 'integer', minimum: 1, maximum: 100000000 },
+    provider_ref: { type: 'string', maxLength: 128 },
+    reason: { type: 'string', minLength: 1, maxLength: 500 },
+  },
+} as const
+export interface PlanChangeBody {
+  plan: 'free' | 'premium'
+  amount_fcfa?: number
+  provider_ref?: string
+  reason: string
+}
+
+export const extendBody = {
+  type: 'object',
+  required: ['days', 'reason'],
+  additionalProperties: false,
+  properties: { days: { type: 'integer', minimum: 1, maximum: 365 }, reason: { type: 'string', minLength: 1, maxLength: 500 } },
+} as const
+export interface ExtendBody {
+  days: number
+  reason: string
+}
+
+export const subscriptionListQuery = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    plan: { type: 'string', enum: ['free', 'premium'] },
+    status: { type: 'string', enum: ['active', 'grace', 'expired', 'cancelled'] },
+    page: { type: 'string', pattern: '^[0-9]{1,4}$' },
+    limit: { type: 'string', pattern: '^[0-9]{1,3}$' },
+  },
+} as const
+export interface SubscriptionListQuery {
+  plan?: string
+  status?: string
+  page?: string
+  limit?: string
+}
+
+export const exportQuery = {
+  type: 'object',
+  required: ['from', 'to'],
+  additionalProperties: false,
+  properties: { from: { type: 'string', format: 'date' }, to: { type: 'string', format: 'date' } },
+} as const
+export interface ExportQuery {
+  from: string
+  to: string
+}
