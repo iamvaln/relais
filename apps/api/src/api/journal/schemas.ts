@@ -75,6 +75,17 @@ export interface EntryParams {
 }
 
 /** Année du Wrapped, en 4 chiffres ; bornes (2026 → année courante) vérifiées en service — les params ne sont pas coercés. */
+/** Backend v1.1 §6 : GET /journal/entries/month/:ym — un mois calendaire, YYYY-MM. */
+export const monthParams = {
+  type: 'object',
+  required: ['ym'],
+  additionalProperties: false,
+  properties: { ym: { type: 'string', pattern: '^[0-9]{4}-(0[1-9]|1[0-2])$' } },
+} as const
+export interface MonthParams {
+  ym: string
+}
+
 export const yearParams = {
   type: 'object',
   required: ['year'],

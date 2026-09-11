@@ -13,8 +13,8 @@ d'implémentation.
 | Livrable | État |
 |---|---|
 | Specs produit, techniques, backend, frontend, back office | ✅ v1 (`docs/specs/`) |
-| Schéma PostgreSQL v1.3 | ✅ Implémenté et testé (`prisma/`) |
-| API backend — auth, vault, transmission, check-in, relay, journal, admin, facturation, dashboard, tickets, jobs | ✅ 89 endpoints, 204 tests d'intégration (`apps/api/`) |
+| Schéma PostgreSQL v1.4 | ✅ Implémenté et testé (`prisma/`), Proposals 8 et 9 incluses |
+| API backend — auth, vault, transmission, check-in, relay, journal, admin, facturation, dashboard, tickets, jobs | ✅ 90 endpoints, 216 tests d'intégration (`apps/api/`) |
 | API backend — logs API, fournisseur de paiement | ⬜ À faire |
 | App mobile | ⬜ Non démarré |
 | Back office (interface) | ⬜ Non démarré — l'API `/admin/*` est prête |
@@ -27,14 +27,15 @@ d'implémentation.
 - [`docs/schema-postgresql.md`](docs/schema-postgresql.md) — notes
   d'implémentation du schéma : l'écart trouvé dans la spec, les vérifications
   passées, ce qui reste à faire
-- [`docs/open-questions.md`](docs/open-questions.md) — contradictions relevées
-  entre les specs, à trancher avant d'implémenter
-- [`docs/specs/`](docs/specs/) — les 8 documents de spec convertis en markdown
+- [`docs/open-questions.md`](docs/open-questions.md) — points tranchés par les
+  specs, écarts de contrat entre la révision de septembre 2026 et l'API, et
+  ce qui reste à trancher
+- [`docs/specs/`](docs/specs/) — les 10 documents de spec convertis en markdown
   (sources `.docx` dans `specs/`)
 
 ## Schéma
 
-La spec `specs/Relais_Schema_PostgreSQL_v1.docx` (v1.3) fait foi. Elle est
+La spec `specs/Relais_Schema_PostgreSQL_v1.docx` (v1.4) fait foi. Elle est
 implémentée en SQL — **le DDL est la source de vérité**, parce que les CHECK
 constraints, les index partiels, la FK différée et le rôle `audit_writer` ne
 sont pas exprimables en Prisma. `schema.prisma` en est un miroir généré, à ne pas

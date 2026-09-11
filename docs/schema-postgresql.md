@@ -1,8 +1,10 @@
 # RELAIS — Schéma PostgreSQL : notes d'implémentation
 
-**La spec fait foi** : `specs/Relais_Schema_PostgreSQL_v1.docx` (**v1.3**,
-22 tables), complétée par l'Addendum Journal des Décisions v1.1 (DEC-20 à
-DEC-27). Extraites en [`docs/specs/`](specs/).
+**La spec fait foi** : `specs/Relais_Schema_PostgreSQL_v1.docx` (**v1.4**,
+23 tables), complétée par le Journal des Décisions DEC-01 à DEC-35.
+Extraites en [`docs/specs/`](specs/). Les migrations couvrent la v1.4
+complète, plus les Proposals 8 et 9 adoptées en septembre 2026
+(`docs/open-questions.md` §D).
 
 Ce document ne redécrit pas le schéma — il consigne comment il est mis en
 œuvre et ce qui a été vérifié.
@@ -15,6 +17,7 @@ Ce document ne redécrit pas le schéma — il consigne comment il est mis en
 | `prisma/migrations/20260420000000_v1_3_fix10_fix12/` | Delta v1.2 → v1.3 |
 | `prisma/migrations/20260425000000_email_types_notifications/` | Cinq types d'email exigés par les user stories (open-questions §1) |
 | `prisma/migrations/20260430000000_audit_ticket_update/` | `TICKET_UPDATE` et cible `ticket` dans le CHECK de `audit_logs` (BO-06) |
+| `prisma/migrations/20260911000000_v1_4_delta/` | Delta v1.3 → v1.4 : `contact_designated` (Point-1), `two_factor_recovery_codes` (Point-2) ; Proposals adoptées : `contact_progress` (9), `share_kN_plain_hash` (8) |
 | `prisma/schema.prisma` | Miroir généré par `prisma db pull`. Ne pas éditer. |
 | `prisma/seeds/001_checkin_questions.sql` | Bibliothèque de questions — 55 lignes, idempotent |
 | `prisma/tests/smoke.sql` | Test de bout en bout, rollbacké |
@@ -109,9 +112,9 @@ Cluster PostgreSQL 16 local, les quatre migrations appliquées à froid.
 | Contrôle | Résultat |
 |---|---|
 | Les quatre migrations s'appliquent sans erreur | ✅ |
-| Tables | **22** — conforme à l'en-tête v1.3 |
-| Index | 89 |
-| CHECK constraints | 66 |
+| Tables | **23** — conforme à l'en-tête v1.4 |
+| Index | 92 |
+| CHECK constraints | 69 |
 | FK différées | 1 (`fk_cl_journal`) |
 | Lignes `app_config` | 23 — `pin_lockout_min` retirée |
 | `dms.durations_available` | `[1,3,6]` — intact |

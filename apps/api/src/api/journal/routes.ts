@@ -8,6 +8,7 @@ import {
   entryDeleteBody,
   entryParams,
   entryUpdateBody,
+  monthParams,
   questionQuery,
   wrappedBody,
   yearParams,
@@ -15,6 +16,7 @@ import {
   type EntryDeleteBody,
   type EntryParams,
   type EntryUpdateBody,
+  type MonthParams,
   type QuestionQuery,
   type WrappedBody,
   type YearParams,
@@ -34,6 +36,12 @@ export async function journalRoutes(app: FastifyInstance): Promise<void> {
   })
 
   app.get('/entries', { preHandler: [authenticate] }, async (req) => ok(await journal.listEntries(req.user!.id)))
+
+  app.get<{ Params: MonthParams }>(
+    '/entries/month/:ym',
+    { schema: { params: monthParams }, preHandler: [authenticate] },
+    async (req) => ok(await journal.getEntryByMonth(req.user!.id, req.params.ym)),
+  )
 
   app.get<{ Params: EntryParams }>(
     '/entries/:id',

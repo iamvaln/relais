@@ -189,6 +189,16 @@ export async function getEntry(userId: string, id: string): Promise<EntryDetailV
   return { ...toView(row), content_enc: Buffer.from(row.content_enc).toString('base64') }
 }
 
+/** Backend v1.1 §6 : l'entrée d'un mois donné (YYYY-MM), avec son contenu. */
+export async function getEntryByMonth(userId: string, ym: string): Promise<EntryDetailView> {
+  const row = await prisma().journal_entries.findUnique({
+    where: { user_id_entry_month: { user_id: userId, entry_month: new Date(`${ym}-01T00:00:00Z`) } },
+    select: { ...entrySelect, content_enc: true },
+  })
+  if (!row) throw new AppError('NOT_FOUND', { message: 'Aucune entrée pour ce mois.' })
+  return { ...toView(row), content_enc: Buffer.from(row.content_enc).toString('base64') }
+}
+
 export async function updateEntry(userId: string, id: string, body: EntryUpdateBody): Promise<EntryView> {
   await ownEntry(userId, id)
   const contentEnc = decodeOrThrow('content_enc', body.content_enc)

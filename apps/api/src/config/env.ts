@@ -51,11 +51,19 @@ const schema = z.object({
   STORJ_SECRET_KEY: z.string().optional(),
   STORJ_BUCKET: z.string().default('relais-payloads'),
 
-  // relais_x25519_sk (DEC-28/30) : clé privée X25519 de Relais, 32 bytes en
-  // hex (64) ou base64 (44). Ouvre les sealed boxes notification_enc des
-  // contacts. En production HCV Secrets Engine la fournit (DEC-15) ; ici une
-  // variable d'env, lue uniquement par services/secrets.
-  RELAIS_X25519_SK: z.string().regex(/^(?:[0-9a-fA-F]{64}|[A-Za-z0-9+/]{43}=)$/, 'RELAIS_X25519_SK : 32 bytes en hex ou base64'),
+  // relais_x25519_sk (DEC-15/28/30, Backend v1.1 §9.1) : clé privée X25519 de
+  // Relais, 32 bytes. Ouvre les sealed boxes notification_enc des contacts.
+  // En production elle vient de HCV Secrets Engine (KV v2) — obligatoire ;
+  // en dev/test d'une variable d'env. Lue uniquement par services/secrets.
+  HCV_ADDR: z.string().url().optional(),
+  HCV_TOKEN: z.string().min(1).optional(),
+  /** Chemin KV v2 après /v1/ — le secret 'relais/x25519_sk' du moteur 'secret'. */
+  HCV_SECRET_PATH: z.string().min(1).default('secret/data/relais/x25519_sk'),
+  HCV_SECRET_FIELD: z.string().min(1).default('x25519_sk'),
+  RELAIS_X25519_SK_DEV: z
+    .string()
+    .regex(/^(?:[0-9a-fA-F]{64}|[A-Za-z0-9+/]{43}=)$/, 'RELAIS_X25519_SK_DEV : 32 bytes en hex ou base64')
+    .optional(),
 
   EMAIL_TRANSPORT: z.enum(['console', 'resend']).default('console'),
   RESEND_API_KEY: z.string().optional(),
@@ -70,6 +78,18 @@ const schema = z.object({
   })
   .refine((e) => e.STORAGE_BACKEND !== 's3' || (Boolean(e.STORJ_ACCESS_KEY) && Boolean(e.STORJ_SECRET_KEY)), {
     message: 'STORJ_ACCESS_KEY et STORJ_SECRET_KEY sont requis quand STORAGE_BACKEND=s3',
+  })
+  .refine((e) => !e.HCV_ADDR === !e.HCV_TOKEN, {
+    message: 'HCV_ADDR et HCV_TOKEN vont ensemble',
+  })
+  .refine((e) => e.NODE_ENV !== 'production' || Boolean(e.HCV_ADDR), {
+    message: 'HCV_ADDR et HCV_TOKEN sont requis en production : relais_x25519_sk vit dans HCV (DEC-15, DEC-30)',
+  })
+  .refine((e) => e.NODE_ENV !== 'production' || !e.RELAIS_X25519_SK_DEV, {
+    message: 'RELAIS_X25519_SK_DEV est interdit en production',
+  })
+  .refine((e) => Boolean(e.HCV_ADDR) || Boolean(e.RELAIS_X25519_SK_DEV), {
+    message: 'RELAIS_X25519_SK_DEV est requis hors production (ou HCV_ADDR + HCV_TOKEN)',
   })
 
 export type Env = z.infer<typeof schema>

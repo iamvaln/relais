@@ -118,14 +118,21 @@ export interface PasswordResetBody {
   signature?: string
 }
 
+/** Code de récupération (Point-2 v1.4) : xxxxx-xxxxx, casse indifférente. */
+const recoveryCode = { type: 'string', pattern: '^[A-Za-z0-9]{5}-[A-Za-z0-9]{5}$' } as const
+
 export const twoFactorVerifyBody = {
   type: 'object',
-  required: ['code'],
   additionalProperties: false,
-  properties: { code: otpCode, temp_token: { type: 'string', minLength: 16, maxLength: 128 } },
+  properties: {
+    code: otpCode,
+    recovery_code: recoveryCode,
+    temp_token: { type: 'string', minLength: 16, maxLength: 128 },
+  },
 } as const
 export interface TwoFactorVerifyBody {
-  code: string
+  code?: string
+  recovery_code?: string
   temp_token?: string
 }
 

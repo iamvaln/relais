@@ -203,7 +203,11 @@ function verifyNotificationSig(ed25519Pk: Buffer, notificationEnc: Uint8Array, s
 export interface Notification {
   email: string
   phone: string | null
+  /** Prénom que l'owner veut voir dans l'email de désignation (D.2) — même niveau de confidentialité que l'email (DEC-12). */
+  ownerDisplayName: string | null
 }
+
+const DISPLAY_NAME_MAX = 60
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
@@ -224,10 +228,11 @@ export async function openNotification(notificationEnc: Uint8Array): Promise<Not
   } catch {
     return reject('sealed box illisible avec la clé de Relais (GET /transmission/relais-key)')
   }
-  if (typeof parsed !== 'object' || parsed === null) return reject('doit sceller un objet { email, phone }')
-  const { email, phone } = parsed as { email?: unknown; phone?: unknown }
+  if (typeof parsed !== 'object' || parsed === null) return reject('doit sceller un objet { email, phone, owner_display_name? }')
+  const { email, phone, owner_display_name } = parsed as { email?: unknown; phone?: unknown; owner_display_name?: unknown }
   if (typeof email !== 'string' || !EMAIL_RE.test(email)) return reject('email manquant ou invalide dans la sealed box')
-  return { email, phone: typeof phone === 'string' ? phone : null }
+  const name = typeof owner_display_name === 'string' ? owner_display_name.trim().slice(0, DISPLAY_NAME_MAX) : ''
+  return { email, phone: typeof phone === 'string' ? phone : null, ownerDisplayName: name.length > 0 ? name : null }
 }
 
 function validateRoles(roles: Roles): void {
@@ -357,6 +362,8 @@ interface PreparedShare {
   path: string
   bytes: Uint8Array<ArrayBuffer>
   hash: string
+  /** SHA256(Si) signé par l'owner (Proposal-8). */
+  plainHash: string
 }
 
 interface PreparedContact {
@@ -390,7 +397,11 @@ function prepareShares(userId: string, c: ActivateContact, ed25519Pk: Buffer): P
     if (!ed25519Verify(ed25519Pk, Buffer.from(hash, 'hex'), Buffer.from(sig))) {
       throw new AppError('AUTH_TOKEN_INVALID', { message: `Signature de la part ${slot} invalide.` })
     }
-    out.push({ slot, path: sharePath(userId, c.id, slot), bytes, hash })
+    const plainSig = decodeOrThrow(`shares.${slot}.plain_sig`, share.plain_sig)
+    if (!ed25519Verify(ed25519Pk, Buffer.from(share.plain_hash, 'hex'), Buffer.from(plainSig))) {
+      throw new AppError('AUTH_TOKEN_INVALID', { message: `Signature du hash en clair de la part ${slot} invalide.` })
+    }
+    out.push({ slot, path: sharePath(userId, c.id, slot), bytes, hash, plainHash: share.plain_hash })
   }
   return out
 }
@@ -456,6 +467,9 @@ export async function activate(userId: string, body: ActivateBody): Promise<{ ac
             share_k1_hash: bySlot('k1')?.hash ?? null,
             share_k2_hash: bySlot('k2')?.hash ?? null,
             share_k3_hash: bySlot('k3')?.hash ?? null,
+            share_k1_plain_hash: bySlot('k1')?.plainHash ?? null,
+            share_k2_plain_hash: bySlot('k2')?.plainHash ?? null,
+            share_k3_plain_hash: bySlot('k3')?.plainHash ?? null,
           },
         })
       }),
@@ -481,16 +495,18 @@ export async function activate(userId: string, body: ActivateBody): Promise<{ ac
     throw new AppError('VAULT_SYNC_FAILED', { message: 'Échec du dépôt des parts.', cause: err })
   }
 
-  // DEC-30 : prévenir chaque contact, directement ici. L'adresse ne vit que
-  // le temps de l'envoi ; email_log n'en garde que le hash.
+  // DEC-30 / Point-1 : prévenir chaque contact, directement ici. L'adresse ne
+  // vit que le temps de l'envoi ; email_log n'en garde que le hash. Le prénom
+  // vient de la sealed box (D.2) : le serveur n'en a pas d'autre.
   let notified = 0
   for (const p of prepared) {
+    const { email, ownerDisplayName } = p.validated.notification
     const { sent } = await emailService().send({
       userId,
-      to: p.validated.notification.email,
-      type: 'transmission_contact',
+      to: email,
+      type: 'contact_designated',
       locale: owner.language,
-      params: { link: `${env().FRONTEND_URL}/contact` },
+      params: { link: `${env().FRONTEND_URL}/contact`, ...(ownerDisplayName ? { owner: ownerDisplayName } : {}) },
     })
     if (sent) notified++
   }
@@ -567,6 +583,9 @@ export async function deactivate(userId: string): Promise<{ deactivated: true }>
         share_k1_hash: null,
         share_k2_hash: null,
         share_k3_hash: null,
+        share_k1_plain_hash: null,
+        share_k2_plain_hash: null,
+        share_k3_plain_hash: null,
         verify_token: null,
         verify_last_checked_at: null,
       },

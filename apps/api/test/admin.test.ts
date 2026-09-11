@@ -7,7 +7,7 @@ import { vaultKey } from '../src/api/vault/service.js'
 import { prisma } from '../src/lib/prisma.js'
 import { objectStore } from '../src/services/storage/index.js'
 import { api, closeAll, lastEmailTo, lastOtp, mailbox, registerUser, resetState, STRONG_PASSWORD } from './helpers.js'
-import { activateTransmission, buildContactBody, makeOwner, opaque, openTransmission, relayTokenFromEmail, secretQuestionIds } from './transmission-helpers.js'
+import { activateTransmission, buildContactBody, makeOwner, openTransmission, plainShareBytes, relayTokenFromEmail, secretQuestionIds } from './transmission-helpers.js'
 import { redis } from '../src/lib/redis.js'
 
 beforeEach(resetState)
@@ -268,6 +268,8 @@ describe('DELETE /admin/users/:id (RGPD)', () => {
     const { trigger } = await import('../src/jobs/deadman.js')
     await trigger(new Date())
 
+    await prisma().two_factor_recovery_codes.create({ data: { user_id: o.userId, code_hash: 'a'.repeat(64) } })
+
     const adminRole = await adminWithRole('admin')
     await (await api()).delete(`/admin/users/${o.userId}`).set(adminRole.auth).send({ reason: 'demande RGPD' }).expect(403)
 
@@ -285,6 +287,7 @@ describe('DELETE /admin/users/:id (RGPD)', () => {
     expect(row.ed25519_pk).toBeNull()
     expect(await prisma().trusted_contacts.count({ where: { user_id: o.userId } })).toBe(0)
     expect(await prisma().sessions.count({ where: { user_id: o.userId } })).toBe(0)
+    expect(await prisma().two_factor_recovery_codes.count({ where: { user_id: o.userId } })).toBe(0)
     expect((await prisma().transmission_configs.findUniqueOrThrow({ where: { user_id: o.userId } })).status).toBe('inactive')
     const tr = await prisma().transmissions.findFirstOrThrow({ where: { user_id: o.userId } })
     expect(tr).toMatchObject({ status: 'cancelled', cancelled_by_admin: sa.id })
@@ -302,7 +305,7 @@ describe('DELETE /admin/users/:id (RGPD)', () => {
 // --- BO-03 Transmissions -----------------------------------------------------------
 
 const HOUR = 3600 * 1000
-const shareB64 = (seed: number) => opaque(seed, 32).toString('base64')
+const shareB64 = (seed: number) => plainShareBytes(seed).toString('base64')
 
 describe('GET /admin/transmissions', () => {
   it('liste : statuts, chiffres, escrow — sans identité de contact ni utilisateur ; filtre par statut', async () => {

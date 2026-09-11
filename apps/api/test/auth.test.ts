@@ -1,5 +1,6 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest'
 import * as OTPAuth from 'otpauth'
+import { createHash } from 'node:crypto'
 import { prisma } from '../src/lib/prisma.js'
 import { redis } from '../src/lib/redis.js'
 import { passwordResetMessage } from '../src/api/auth/service.js'
@@ -451,6 +452,48 @@ describe('2FA TOTP (E6-US02)', () => {
   function codeFor(secret: string): string {
     return new OTPAuth.TOTP({ secret, digits: 6, period: 30 }).generate()
   }
+
+  it('codes de récupération (Point-2) : 8 codes rendus une fois à l’activation, un code remplace le TOTP au login, usage unique, purgés à la désactivation', async () => {
+    const { email, password, accessToken, userId } = await registerUser(EMAIL)
+    const client = await api()
+    const auth = { Authorization: `Bearer ${accessToken}` }
+    const setup = await client.post('/auth/2fa/setup').set(auth).expect(200)
+    const secret = setup.body.data.secret as string
+
+    const on = await client.post('/auth/2fa/verify').set(auth).send({ code: codeFor(secret) }).expect(200)
+    const codes = on.body.data.recovery_codes as string[]
+    expect(codes).toHaveLength(8)
+    expect(new Set(codes).size).toBe(8)
+    for (const c of codes) expect(c).toMatch(/^[a-z0-9]{5}-[a-z0-9]{5}$/)
+    const rows = await prisma().two_factor_recovery_codes.findMany({ where: { user_id: userId } })
+    expect(rows).toHaveLength(8)
+    expect(rows.every((r) => r.used_at === null)).toBe(true)
+    expect(rows.map((r) => r.code_hash).sort()).toEqual(codes.map((c) => createHash('sha256').update(c).digest('hex')).sort())
+
+    // Au login, un code de secours remplace le TOTP — casse indifférente
+    const login = await client.post('/auth/login').send({ email, password }).expect(200)
+    const temp = login.body.data.temp_token as string
+    const bad = await client.post('/auth/2fa/verify').send({ temp_token: temp, recovery_code: 'aaaaa-aaaaa' }).expect(401)
+    expect(bad.body.error.code).toBe('AUTH_2FA_INVALID')
+    const done = await client.post('/auth/2fa/verify').send({ temp_token: temp, recovery_code: codes[0]!.toUpperCase() }).expect(200)
+    expect(done.body.data.access_token).toBeTypeOf('string')
+    expect((await prisma().two_factor_recovery_codes.findMany({ where: { user_id: userId, used_at: { not: null } } })).length).toBe(1)
+
+    // Un code ne sert qu'une fois
+    const temp2 = (await client.post('/auth/login').send({ email, password }).expect(200)).body.data.temp_token as string
+    const reuse = await client.post('/auth/2fa/verify').send({ temp_token: temp2, recovery_code: codes[0] }).expect(401)
+    expect(reuse.body.error.code).toBe('AUTH_2FA_INVALID')
+    await client.post('/auth/2fa/verify').send({ temp_token: temp2, recovery_code: codes[1] }).expect(200)
+
+    // Ni code ni code de secours : 400
+    const temp3 = (await client.post('/auth/login').send({ email, password }).expect(200)).body.data.temp_token as string
+    await client.post('/auth/2fa/verify').send({ temp_token: temp3 }).expect(400)
+
+    // La désactivation purge les codes
+    const su = await stepUp(accessToken, 'disable_2fa')
+    await client.delete('/auth/2fa').set(auth).set('X-Step-Up-Token', su).send({ code: codeFor(secret) }).expect(200)
+    expect(await prisma().two_factor_recovery_codes.count({ where: { user_id: userId } })).toBe(0)
+  })
 
   it('setup → verify active ; le login exige ensuite un code ; DELETE désactive avec step-up', async () => {
     const { email, password, accessToken } = await registerUser(EMAIL)

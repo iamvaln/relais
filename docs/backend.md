@@ -1,8 +1,9 @@
 # RELAIS — Backend : notes d'implémentation
 
-**Specs de référence** : Backend Specs v1.1 + patch DEC-28/29/30, Specs
-Techniques v1.2 + patch, Journal des Décisions v1.0 + Addendum v1.1 + patch
-(DEC-28 à DEC-30), Schéma PostgreSQL v1.3.
+**Specs de référence** (révision de septembre 2026) : Backend Specs v1.1
+réécrite, Specs Techniques v1.2, Journal des Décisions DEC-01 à DEC-35,
+Schéma PostgreSQL v1.4, Frontend Specs v1.1. Les écarts de contrat entre
+cette révision et l'API livrée sont listés dans `docs/open-questions.md` §B.
 
 Ce document ne redécrit pas l'API — il consigne ce qui a été décidé en la
 construisant, les écarts par rapport aux specs, et ce qui a été vérifié.
@@ -67,7 +68,7 @@ Le module **auth** de §3.1 v1.1, le module **vault** de §3.3 v1.1, le module
 | `POST /auth/password/reset` | OTP + signature Ed25519 — voir §3 |
 | `GET /auth/restore/challenge` | DEC-06 |
 | `POST /auth/restore/verify` | DEC-06 |
-| `POST /auth/2fa/setup` · `verify` · `DELETE /auth/2fa` | E6-US02 |
+| `POST /auth/2fa/setup` · `verify` · `DELETE /auth/2fa` | E6-US02 ; `verify` rend 8 codes de récupération à l'activation et en accepte un (`recovery_code`) au login — voir §3 |
 | `POST /vault/sync` | Blob chiffré + signature Ed25519 (DEC-07), taille plafonnée par `vault.max_size_mb` |
 | `GET /vault/sync-status` | Date et taille par catégorie, lues sur le stockage |
 | `POST /vault/restore` | Renvoie le blob tel quel |
@@ -78,7 +79,7 @@ Le module **auth** de §3.1 v1.1, le module **vault** de §3.3 v1.1, le module
 | `DELETE /transmission/contacts/:id` | Step-up `edit_contacts`, retrait logique |
 | `PUT /transmission/schema` | Step-up `edit_contacts`, N ≥ 2, M ≥ N |
 | `PUT /transmission/config` | Step-up `edit_transmission`, DEC-22 |
-| `POST /transmission/activate` | Step-up `activate_transmission` — DEC-29, DEC-30, voir §3 |
+| `POST /transmission/activate` | Step-up `activate_transmission` — DEC-29, DEC-30, Proposal-8 (`plain_hash` + `plain_sig` par part), email `contact_designated` — voir §3 |
 | `POST /transmission/pause` · `DELETE /transmission/pause` | E4-US04, 7 / 30 / 90 jours, plafond `dms.pause_max_months` |
 | `DELETE /transmission` | Step-up `delete_transmission`, parts purgées |
 | `POST /transmission/contacts/:id/verify` | Vérification annuelle — attestation signée, voir §3 |
@@ -87,12 +88,12 @@ Le module **auth** de §3.1 v1.1, le module **vault** de §3.3 v1.1, le module
 | `POST /checkin/complete` | Consomme le jeton du jeu ; ligne du mois, streak, badge ; replanifie l'échéance |
 | `GET /checkin/history` · `GET /checkin/streak` | Log des mois validés ; streak courant, record, badges |
 | `GET /relay/:token` | **Public** (token du lien), 30/min/IP : questions, rôles, `verify_token`, Si_enc, `secret_enc`, état |
-| `POST /relay/:token/verify` | `{ failed: true }` ou `{ shares }` ; 5 tentatives puis blocage 24 h ; parts en escrow — voir §3 |
+| `POST /relay/:token/verify` | `{ failed: true }` ou `{ shares }` ; part comparée au hash signé à l'activation (422 `RELAY_SHARE_INVALID`) ; 5 tentatives puis blocage 24 h, les autres contacts prévenus ; parts en escrow — voir §3 |
 | `GET /relay/:token/status` | Répondu / requis / total, catégories déverrouillées |
 | `GET /relay/:token/data` | Une fois N parts réunies : parts de l'escrow + P2 + `secret_enc`, par rôle détenu |
 | `POST /relay/:token/confirm` | 3/min/IP ; termine et purge quand chaque contact ayant répondu a confirmé |
 | `GET /journal/question` | Question du mois par mode (`essential`, `reflective` ; `free` → aucune), « déjà répondu » |
-| `POST /journal/entries` · `GET /journal/entries` · `GET /journal/entries/:id` | Écritures signées Ed25519 (DEC-31), une entrée par mois, liste sans contenu |
+| `POST /journal/entries` · `GET /journal/entries` · `GET /journal/entries/:id` · `GET /journal/entries/month/:ym` | Écritures signées Ed25519 (DEC-31), une entrée par mois, liste sans contenu, lecture par mois (`YYYY-MM`, 404 si vide) |
 | `PUT` · `DELETE /journal/entries/:id` | Signées ; `DELETE` signe l'identifiant — voir §3 |
 | `POST` · `GET /journal/wrapped/:year` · `GET`/`POST …/export` | Seuil de 6 entrées et `entry_count` côté serveur (DEC-32) |
 | `POST /admin/auth/login` · `logout` · `GET /admin/me` | TOTP obligatoire, 5/15 min/IP, token admin 8 h + session Redis |
@@ -114,12 +115,13 @@ Jobs (§4), BullMQ, worker dans le processus API derrière `JOBS_ENABLED=true` :
 | Job | Quand | Fait |
 |---|---|---|
 | `deadman:checkin` | 09:00 UTC | Relances J+7/14/21, passage `triggered`, puis ouverture des transmissions : ligne `transmissions`, un token de relay par contact, emails |
-| `relay:cleanup` | toutes les heures (h+30) | Escrows expirés → `expired` + nouveaux liens ; accès déverrouillé depuis plus de 30 jours → purge |
+| `relay:cleanup` | toutes les heures (h+30) | Escrows expirés → `expired` + nouveaux liens, jusqu'à `dms.relay_max_restarts` (3) expirations puis arrêt et alerte dashboard ; accès déverrouillé depuis plus de 30 jours → purge |
 | `billing:expire` | 09:45 UTC | Échéance dépassée → grâce (premium conservé, email) ; grâce écoulée → expiré, plan gratuit, email |
 
 Non livré : `/user/*`, `PUT /transmission/recipients` (sans objet depuis
-DEC-23), `GET /admin/logs/api` (aucune table), un fournisseur de paiement
-(voir §3),
+DEC-23), `GET /admin/logs/api` (tranché : export des logs Pino vers un outil
+externe, pas de table — `docs/open-questions.md` §D.5), un fournisseur de
+paiement (voir §3),
 `storj:cleanup` (la purge est faite directement, voir §3), l'enregistrement
 Arbitrum (voir §3).
 
@@ -203,8 +205,8 @@ Le CHECK v1.3 n'a aucun type pour cinq notifications que les user stories
 exigent : compte verrouillé (§2.5), mot de passe changé (E6-US03), coffre
 restauré (E6-US01), 2FA activée / désactivée (E6-US02). Sans eux, il aurait
 fallu soit ne pas envoyer ces emails, soit les envoyer sans les tracer
-(DEC-24). Ajoutés par la migration `20260425000000`, proposés pour la spec
-v1.4 — voir `docs/open-questions.md`.
+(DEC-24). Ajoutés par la migration `20260425000000` ; le Schéma v1.4
+(Point-1) reprend les cinq types à l'identique.
 
 ### Vault : la signature porte sur le blob envoyé
 
@@ -259,10 +261,15 @@ max-age=86400`, et renvoie `key_version` (16 hex de SHA256 de la clé
 publique) pour que l'app sache avec quelle clé chaque boîte a été scellée
 si la clé tourne un jour.
 
-DEC-30 : la clé privée est lue **uniquement** par
-`services/secrets` (`getRelaisX25519Sk()`), depuis `RELAIS_X25519_SK` (hex
-64 ou base64 44) en dev et test ; brancher HashiCorp Vault
-(`relais/x25519_sk`) en prod se fera dans ce seul module.
+DEC-30 / Backend v1.1 §9.1 : la clé privée est lue **uniquement** par
+`services/secrets` (`getRelaisX25519Sk()`). En production elle vient de
+HashiCorp Vault, KV v2 (`HCV_ADDR`, `HCV_TOKEN`, chemin
+`secret/data/relais/x25519_sk`, champ `x25519_sk`) — la configuration
+refuse de démarrer sans, et refuse `RELAIS_X25519_SK_DEV` ; en dev et test
+elle vient de `RELAIS_X25519_SK_DEV` (hex 64 ou base64 44). Une lecture HCV
+ratée se retente à l'appel suivant, jamais de repli sur une clé de dev.
+`/health` sonde `sys/health` dès que HCV est configuré, ce qui alimente
+l'alerte « HCV indisponible » de BO-01 via `service_down`.
 
 ### Transmission : la sealed box est ouverte à la création, pas seulement à l'activation
 
@@ -305,13 +312,15 @@ pas de service blockchain dans ce lot, `contract_registered` reste `false`.
 Les hashes sont en base et prêts à être poussés. Consigné dans
 `docs/open-questions.md`.
 
-### Transmission : l'email de désignation réutilise `transmission_contact`
+### Transmission : l'email de désignation porte le prénom que l'owner met dans la sealed box
 
-DEC-30 envoie un email à chaque contact dès l'activation. `email_log` ne
-connaît qu'un type pour les contacts, `transmission_contact`, dont le texte
-est écrit pour le déclenchement (« suivez ce lien »). Il est réutilisé tel
-quel avec `link = FRONTEND_URL/contact`, sans nom d'owner (le serveur n'en
-a pas). Un texte de désignation dédié est à écrire — point ouvert.
+DEC-30 envoie un email à chaque contact dès l'activation ; le Schéma v1.4
+(Point-1) lui donne son type, `contact_designated` (« rien à faire pour
+l'instant »). Le serveur ne connaît pas le nom de l'owner : la sealed box
+peut contenir `owner_display_name` en plus de `email` et `phone` — même
+niveau de confidentialité que l'email du contact (DEC-12, niveau 1),
+tronqué à 60 caractères, jamais stocké en clair. Sans lui, l'email dit
+« une personne qui vous fait confiance ».
 
 ### Transmission : contacts et schéma figés une fois active
 
@@ -398,10 +407,13 @@ que N contacts répondent, et ne les combine jamais. `GET /data` rend les N
 parts et P2 au contact déverrouillé ; Shamir et le déchiffrement final se
 font sur son device (§6.8).
 
-**Conséquence assumée** : le serveur ne peut pas vérifier qu'une part
-déposée est authentique. Une part fausse ne se détecte qu'à la fin, sur le
-device, quand P2 refuse de s'ouvrir. Consigné dans
-`docs/open-questions.md` avec une proposition (hash de Si à l'activation).
+**Proposal-8** (adoptée) : pour qu'une part fausse se voie ici et non au
+déchiffrement final, l'activation reçoit pour chaque part `plain_hash =
+SHA256(Si)` et `plain_sig = Ed25519.sign(plain_hash)` — même primitive que
+DEC-29 — stockés dans `trusted_contacts.share_kN_plain_hash`. Au dépôt, le
+serveur compare ; une part qui ne correspond pas répond 422
+`RELAY_SHARE_INVALID` et compte comme un échec. 32 bytes par part, aucune
+information sur Si (32 bytes d'entropie).
 
 ### Relay : « 5 tentatives puis blocage 24 h », tenu par le serveur sur déclaration de l'app
 
@@ -412,8 +424,10 @@ cinquième, 429 `RELAY_TOKEN_EXHAUSTED`, contact bloqué (`blocked` +
 `trusted_contacts.blocked_until` = 24 h, `security.contact_lock_hrs`), le
 lien répond 423 puis se rouvre seul, compteur à zéro. Le vrai frein contre
 la force brute reste Argon2id sur le device ; le serveur tient le compteur
-que la spec lui demande. La « notification à l'autre contact » lors d'un
-blocage n'a pas de type `email_log` : non envoyée, point ouvert.
+que la spec lui demande. Proposal-9 : au blocage (E5-US02) comme à une
+confirmation qui ne termine pas la transmission (E5-US03), les autres
+contacts non bloqués reçoivent un `contact_progress` — l'événement
+seulement, rien de personnel.
 
 ### Relay : fin de transmission et purge
 
@@ -427,8 +441,10 @@ Alors : P2 (`payloads/{user}/`), Si_enc (`shares/{user}/`), lignes
 
 Escrow expiré sans catégorie déverrouillée : transmission `expired`, escrow
 vidé, et le process repart — nouvelle ligne `transmissions`, nouveaux tokens,
-nouveaux emails (E5-US03). Sans plafond : tant que le config reste
-`triggered`, les contacts sont relancés à chaque expiration.
+nouveaux emails (E5-US03). Proposal-9 : au bout de `dms.relay_max_restarts`
+expirations (3, lu dans `app_config` avec repli), il ne repart plus — la
+config reste `triggered` sans transmission ouverte et le dashboard remonte
+`transmission_stalled` (BO-03) ; à l'admin de joindre les contacts.
 
 ### Relay : l'email de déclenchement ne contient pas le message personnel
 
@@ -558,11 +574,12 @@ de check-in est la part des transmissions **actives** dont l'échéance n'est
 pas dépassée (null sans transmission active). Les revenus du mois viennent
 des mêmes événements que BO-07.
 
-Sur les sept alertes de la spec, quatre supposent des métriques
-d'infrastructure que rien ne collecte (HCV, taux d'erreur Storj et API,
-espace Storj). Le dashboard livre celles que la base permet : service
-indisponible (`/health`), escrow à moins de 12 h, plus de 3 contacts
-bloqués dans l'heure (déduit de `blocked_until`), comptes suspendus depuis
+Sur les sept alertes de la spec, trois supposent des métriques
+d'infrastructure que rien ne collecte (taux d'erreur Storj et API, espace
+Storj). Le dashboard livre celles que la base et `/health` permettent :
+service indisponible (PostgreSQL, Redis, Storj, HCV quand il est configuré),
+escrow à moins de 12 h, transmission au point mort (Proposal-9), plus de 3
+contacts bloqués dans l'heure (déduit de `blocked_until`), comptes suspendus depuis
 plus de 24 h. Les autres sont consignées dans `docs/open-questions.md`.
 
 ### Tickets : ouverts sans compte, parce que ceux qui en ont besoin ne peuvent pas se connecter
@@ -580,12 +597,17 @@ cible `ticket` ont demandé une migration du CHECK de `audit_logs`
 (`20260430000000_audit_ticket_update`) — BO-06 exige que toute action soit
 journalisée, la liste v1.3 ne prévoyait rien pour les tickets.
 
-### Codes de récupération 2FA : pas de table
+### Codes de récupération 2FA : rendus une fois, consommés au login
 
-E6-US02 : « des codes de récupération d'urgence sont générés et affichés une
-fois ». Le schéma n'a aucune table pour les stocker, et `users` n'a pas de
-colonne. Non implémenté ; consigné dans `docs/open-questions.md`. Tant que ça
-manque, perdre son authenticateur signifie passer par le support.
+E6-US02 et Schéma v1.4 (Point-2). `POST /auth/2fa/verify` (activation)
+rend 8 codes `xxxxx-xxxxx` (alphabet sans caractères ambigus, 50 bits
+chacun) et stocke `SHA256(code)` dans `two_factor_recovery_codes`. Au
+login, `POST /auth/2fa/verify { temp_token, recovery_code }` remplace le
+code TOTP — casse indifférente, un code ne sert qu'une fois (`used_at`),
+`code` et `recovery_code` s'excluent. La désactivation et la suppression
+RGPD purgent les codes. Pas de regénération en V1 : désactiver puis
+réactiver la 2FA. Backend v1.1 §2.1 ne prévoyait aucun endpoint — choix
+consigné dans `docs/open-questions.md` §D.1.
 
 ## 4. Ce que le serveur ne voit jamais
 
@@ -608,7 +630,7 @@ manque, perdre son authenticateur signifie passer par le support.
 
 ## 5. Vérifications
 
-204 tests d'intégration, sur PostgreSQL 16 et Redis réels, base reconstruite
+216 tests d'intégration, sur PostgreSQL 16 et Redis réels, base reconstruite
 depuis les migrations et le seed à chaque run. Chaque test repart d'une base
 et d'un stockage vides. Ils couvrent notamment :
 
@@ -625,7 +647,7 @@ et d'un stockage vides. Ils couvrent notamment :
 - clé publique : 32 bytes exigés, enregistrement unique
 - restauration : bonne signature → vérifié + email ; mauvaise clé → refusé et challenge brûlé ; expiré → refusé
 - reset avec clé : signature obligatoire, mauvaise signature n'entame pas l'OTP
-- 2FA : activation, login en deux temps, `temp_token` à usage unique, désactivation avec step-up
+- 2FA : activation, login en deux temps, `temp_token` à usage unique, désactivation avec step-up ; codes de récupération : 8 rendus une fois et hachés, un code remplace le TOTP, usage unique, purgés à la désactivation
 - rate limit : en-têtes exposés, 429 dans l'enveloppe
 - vault : sync sans clé publique → `AUTH_KEY_NOT_SET` ; signature d'une
   autre clé → refusé ; **blob modifié après signature → refusé** ;
@@ -633,7 +655,7 @@ et d'un stockage vides. Ils couvrent notamment :
   catégorie ; sync-status vide puis renseigné ; restore rend les octets
   intacts ; catégorie absente → `NOT_FOUND` ; un utilisateur ne voit jamais
   le backup d'un autre
-- transmission (46 tests, écrits **avant** le code) : `relais-key` public et
+- transmission (47 tests, écrits **avant** le code) : `relais-key` public et
   cacheable ; Note-01 (journal, score < 6, doublon, inconnue → 400 avec les
   identifiants) ; aucun rôle → 400 ; limites de plan 2 / 5, contact retiré
   non compté ; signature d'une autre clé → 401 ; sealed box vers une autre
@@ -647,7 +669,9 @@ et d'un stockage vides. Ils couvrent notamment :
   tracés par hash ; seconde activation → 409 ; contacts et schéma figés ;
   pause 30 jours, plafond `dms.pause_max_months`, reprise réarme le
   check-in ; désactivation purge les parts et rend les contacts modifiables ;
-  vérification annuelle signée, mauvaise clé → 401, avant activation → 409
+  vérification annuelle signée, mauvaise clé → 401, avant activation → 409 ;
+  Proposal-8 : hash en clair mal signé → 401 sans rien écrire, hashes en
+  base par rôle ; email `contact_designated` avec le prénom de la sealed box
 - check-in (19 tests, test-first) : statut inactif / actif / en retard ;
   jeu refusé sans transmission active, défi sans la réponse, identique tant
   qu'il est en cours, mauvaise réponse comptée sans pénalité, bonne réponse
@@ -663,7 +687,7 @@ et d'un stockage vides. Ils couvrent notamment :
   silence écoulé mais relances incomplètes → relance d'abord ; BullMQ :
   deux jobs planifiés (`0 9 * * *`, `30 * * * *`), démarrage idempotent,
   arrêt propre
-- relay (23 tests, test-first) : ouverture au déclenchement (ligne
+- relay (24 tests, test-first) : ouverture au déclenchement (ligne
   `transmissions`, escrow = `dms.escrow_ttl_hours`, un token HMAC par
   contact, emails, idempotent ; le job quotidien enchaîne balayage et
   ouverture) ; lien inconnu / expiré / clos → 404, bloqué → 423, aucune
@@ -673,14 +697,20 @@ et d'un stockage vides. Ils couvrent notamment :
   N parts → catégorie déverrouillée, clé prolongée à 30 jours ; `data`
   refusé avant déverrouillage ou sans réponse, puis parts + P2 +
   `secret_enc`, escrow expiré → 409 ; `confirm` : refusé sans réponse,
-  purge totale au dernier confirmé, lien clos, 3/min/IP ; cleanup : rien
-  avant l'échéance, expiré → nouveaux liens, accès à 30 jours puis purge
-- journal (20 tests, test-first) : question du mois par mode, `free` sans
+  purge totale au dernier confirmé, lien clos, 3/min/IP ; Proposal-8 : part
+  qui ne correspond pas au hash signé → 422 comptée comme un échec, la
+  bonne part passe ensuite ; Proposal-9 : blocage et confirmation
+  intermédiaire → `contact_progress` aux autres contacts, pas au bloqué ni
+  à la confirmation finale ; cleanup : rien avant l'échéance, expiré →
+  nouveaux liens, troisième expiration → arrêt (config `triggered`, aucune
+  transmission ouverte, aucun email), accès à 30 jours puis purge
+- journal (21 tests, test-first) : question du mois par mode, `free` sans
   question, mode inconnu → 400 ; création avec métadonnées en clair et
   blob opaque, mois passé accepté, futur refusé, signature d'une autre
   clé → 401, sans clé → 409, second du mois → 409, question secrète
   refusée ; check-in puis entrée → rattachée, suppression → détachée ;
-  liste sans contenu triée, détail avec contenu, entrée d'un autre → 404
+  liste sans contenu triée, détail avec contenu, lecture par mois (404 si
+  vide, 400 si mal formé), entrée d'un autre → 404
   sur GET/PUT/DELETE ; PUT signé, mauvaise clé refusée sans modifier ;
   DELETE sans signature → 400, mauvaise clé → 401, bonne → supprimée ;
   Wrapped : < 6 → 409 `{ current, required }`, 6 → 201 avec compte
@@ -696,7 +726,7 @@ et d'un stockage vides. Ils couvrent notamment :
   audit), OTP regénéré (ancien mort, audit sans email), suspendre
   (transmission en pause, 403 pour support), email (audit en hashes,
   409), RGPD (purge stockage et données, transmission annulée, ligne
-  anonymisée, second appel → 409) ; transmissions : liste et détail sans
+  anonymisée, codes de récupération purgés, second appel → 409) ; transmissions : liste et détail sans
   identité, escrow +24/+48 h puis 409, relance avec nouveaux liens,
   annulation (config rendue active), déblocage de contact ; questions :
   liste, ajout, doublon → 409, catégorie inconnue → 400, modification
@@ -728,6 +758,13 @@ et d'un stockage vides. Ils couvrent notamment :
   email, finance → 403, prise en charge puis résolution avec `resolved_at`,
   deux lignes d'audit avant/après sans email, visible par l'utilisateur,
   corps vide → 400, assigné inconnu → 404
+- dashboard : alerte `transmission_stalled` (config déclenchée, 3 escrows
+  expirés, aucune transmission ouverte)
+- secrets (6 tests) : production sans HCV → refus au démarrage, clé de dev
+  interdite en production, hors production clé de dev ou HCV exigés ; faux
+  HCV en HTTP local : lecture KV v2 à `/v1/<path>` avec `X-Vault-Token`,
+  403 ou champ absent → erreur sans repli, `/health` → `ok` / `down` /
+  `unconfigured`, la clé publique servie vient bien de HCV
 
 ```bash
 scripts/dev-services.sh start     # PostgreSQL + Redis jetables

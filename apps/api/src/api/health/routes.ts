@@ -7,6 +7,7 @@ import { redis } from '../../lib/redis.js'
 import { limits } from '../../plugins/rate-limit.js'
 import { env } from '../../config/env.js'
 import { objectStore } from '../../services/storage/index.js'
+import { probeHcv } from '../../services/secrets/index.js'
 
 type ServiceStatus = 'ok' | 'degraded' | 'down' | 'unconfigured'
 
@@ -28,10 +29,12 @@ export interface HealthReport {
 }
 
 export async function healthReport(): Promise<HealthReport> {
-    const [postgres, redisStatus, storage] = await Promise.all([
+    const hcvAddr = env().HCV_ADDR
+    const [postgres, redisStatus, storage, hcv] = await Promise.all([
       probe(() => prisma().$queryRaw`SELECT 1`),
       probe(() => redis().ping()),
       probe(() => objectStore().ping()),
+      hcvAddr ? probe(() => probeHcv(hcvAddr)) : Promise.resolve<ServiceStatus>('unconfigured'),
     ])
 
     const services: Record<string, ServiceStatus> = {
@@ -39,6 +42,8 @@ export async function healthReport(): Promise<HealthReport> {
       redis: redisStatus,
       email: env().EMAIL_TRANSPORT === 'resend' ? 'ok' : 'unconfigured',
       storj: env().STORAGE_BACKEND === 's3' ? storage : storage === 'ok' ? 'unconfigured' : storage,
+      // BO-01 « HCV indisponible » : sondé dès que HCV est configuré (obligatoire en production)
+      hcv,
     }
 
     const critical = [postgres, redisStatus]
