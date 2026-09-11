@@ -50,6 +50,7 @@ import * as transmissions from './transmissions.js'
 import * as catalog from './catalog.js'
 import * as monitoring from './monitoring.js'
 import * as billing from './billing.js'
+import * as dashboard from './dashboard.js'
 import type { RequestContext } from './service.js'
 
 function ctx(req: FastifyRequest): RequestContext {
@@ -214,4 +215,7 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
       return csv
     },
   )
+
+  // --- BO-01 Dashboard -------------------------------------------------------------
+  app.get('/dashboard', { preHandler: adminOnly, config: { rateLimit: limits.admin } }, async () => ok(await dashboard.dashboard()))
 }
