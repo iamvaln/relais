@@ -29,7 +29,7 @@ apps/api/
     api/checkin/             statut, mini-jeu (games.ts), validation, streak
     api/relay/               côté contact : lien, réponses/escrow, données, confirmation
     api/journal/             carnet de vie : question du mois, entrées signées, Wrapped
-    api/admin/               back office : auth TOTP, utilisateurs, transmissions, questions, config, audit, facturation
+    api/admin/               back office : auth TOTP, dashboard, utilisateurs, transmissions, questions, config, audit, facturation
     jobs/billing.ts          cycle de vie des abonnements : grâce puis rétrogradation
     middleware/authenticate-admin.ts  token admin + session Redis, grille de rôles
     lib/audit.ts             journal d'audit append-only (jamais de donnée personnelle)
@@ -104,6 +104,7 @@ Le module **auth** de §3.1 v1.1, le module **vault** de §3.3 v1.1, le module
 | `GET /admin/logs/audit` · `GET /admin/health` | BO-06 |
 | `GET /admin/billing/overview` · `GET /admin/billing/subscriptions` · `GET /admin/billing/export` | BO-07, rôles finance / super_admin |
 | `PUT /admin/billing/:id/plan` · `POST /admin/billing/:id/extend` | Encaissement manuel, renouvellement, rétrogradation, geste commercial — voir §3 |
+| `GET /admin/dashboard` | BO-01 : les huit KPIs et les alertes calculables, triées par criticité — voir §3 |
 
 Jobs (§4), BullMQ, worker dans le processus API derrière `JOBS_ENABLED=true` :
 
@@ -114,8 +115,8 @@ Jobs (§4), BullMQ, worker dans le processus API derrière `JOBS_ENABLED=true` :
 | `billing:expire` | 09:45 UTC | Échéance dépassée → grâce (premium conservé, email) ; grâce écoulée → expiré, plan gratuit, email |
 
 Non livré : `/user/*`, `PUT /transmission/recipients` (sans objet depuis
-DEC-23), les KPIs du dashboard (BO-01), `GET /admin/logs/api` (aucune
-table), les tickets support, un fournisseur de paiement (voir §3),
+DEC-23), `GET /admin/logs/api` (aucune table), les tickets support (lecture
+et traitement), un fournisseur de paiement (voir §3),
 `storj:cleanup` (la purge est faite directement, voir §3), l'enregistrement
 Arbitrum (voir §3).
 
@@ -544,6 +545,23 @@ côtés, `subscription_expired`. Un renouvellement pendant la grâce prolonge
 extension admin (`POST …/extend`, sans paiement, `admin_extended`) réactive
 un compte en grâce ou expiré.
 
+### Dashboard : « actifs 30 j » = sessions utilisées, alertes limitées à ce que la base sait
+
+BO-01 compte les « comptes ayant ouvert l'app dans les 30 derniers jours ».
+Le schéma n'a aucune trace d'ouverture ; `sessions.last_used_at` est mis à
+jour à chaque rafraîchissement de token (toutes les 15 minutes d'usage) —
+c'est la mesure retenue, sans migration ni écriture supplémentaire. Le taux
+de check-in est la part des transmissions **actives** dont l'échéance n'est
+pas dépassée (null sans transmission active). Les revenus du mois viennent
+des mêmes événements que BO-07.
+
+Sur les sept alertes de la spec, quatre supposent des métriques
+d'infrastructure que rien ne collecte (HCV, taux d'erreur Storj et API,
+espace Storj). Le dashboard livre celles que la base permet : service
+indisponible (`/health`), escrow à moins de 12 h, plus de 3 contacts
+bloqués dans l'heure (déduit de `blocked_until`), comptes suspendus depuis
+plus de 24 h. Les autres sont consignées dans `docs/open-questions.md`.
+
 ### Codes de récupération 2FA : pas de table
 
 E6-US02 : « des codes de récupération d'urgence sont générés et affichés une
@@ -572,7 +590,7 @@ manque, perdre son authenticateur signifie passer par le support.
 
 ## 5. Vérifications
 
-193 tests d'intégration, sur PostgreSQL 16 et Redis réels, base reconstruite
+198 tests d'intégration, sur PostgreSQL 16 et Redis réels, base reconstruite
 depuis les migrations et le seed à chaque run. Chaque test repart d'une base
 et d'un stockage vides. Ils couvrent notamment :
 
@@ -680,6 +698,11 @@ et d'un stockage vides. Ils couvrent notamment :
   exact (3 premium dont 1 en grâce, MRR 2 500, 1 renouvellement, 1 churn,
   39 000 FCFA) ; export CSV en pièce jointe, période vide, bornes inversées
   → 400
+- dashboard (5 tests, test-first) : support et finance → 403 ; les huit
+  KPIs exacts sur un jeu de six comptes (supprimé exclu, dormant exclu des
+  actifs, déclenchée et complétée du mois, taux de check-in 50 %, revenus,
+  ticket ouvert) ; taux null sans transmission active ; aucune alerte au
+  calme ; escrow expirant + pic de blocages + suspension ancienne, triées
 
 ```bash
 scripts/dev-services.sh start     # PostgreSQL + Redis jetables
