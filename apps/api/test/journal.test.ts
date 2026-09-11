@@ -206,3 +206,84 @@ describe('PUT et DELETE /journal/entries/:id (DEC-31)', () => {
     await (await api()).delete(`/journal/entries/${e.id}`).set(o.auth).send(deleteBody(o.keys, e.id)).expect(404)
   })
 })
+
+// --- Wrapped annuel (Techniques §10.3, DEC-32) --------------------------------------
+
+const YEAR = new Date().getUTCFullYear()
+
+function wrappedBody(keys: DeviceKeys, seed = 50) {
+  const stats = opaque(seed, 64)
+  return { stats_enc: stats.toString('base64'), signature: signHash(keys, stats) }
+}
+
+/** n entrées dans l'année courante, sur les mois qui précèdent (et incluent) le mois courant. */
+async function entriesThisYear(o: Owner, n: number): Promise<void> {
+  const month = new Date().getUTCMonth() // 0-based : il y a month+1 mois disponibles cette année
+  if (n > month + 1) throw new Error(`pas assez de mois écoulés cette année pour ${n} entrées`)
+  for (let i = 0; i < n; i++) await createEntry(o, 10 + i, { entry_month: monthStart(-i), mode: 'free' })
+}
+
+describe('POST /journal/wrapped/:year (DEC-32)', () => {
+  it('moins de 6 entrées dans l’année → 409 WRAPPED_INSUFFICIENT_ENTRIES, rien n’est créé', async () => {
+    const o = await makeOwner()
+    await entriesThisYear(o, 2)
+    const r = await (await api()).post(`/journal/wrapped/${YEAR}`).set(o.auth).send(wrappedBody(o.keys)).expect(409)
+    expect(r.body.error.code).toBe('WRAPPED_INSUFFICIENT_ENTRIES')
+    expect(r.body.error.details).toEqual({ current: 2, required: 6 })
+    expect(await prisma().annual_wrappeds.count()).toBe(0)
+  })
+
+  it('6 entrées : le Wrapped est créé, entry_count recalculé côté serveur, puis mis à jour à la régénération', async () => {
+    const o = await makeOwner()
+    await entriesThisYear(o, 6)
+    const r = await (await api()).post(`/journal/wrapped/${YEAR}`).set(o.auth).send(wrappedBody(o.keys)).expect(201)
+    expect(r.body.data).toMatchObject({ year: YEAR, entry_count: 6, exported: false, exported_at: null })
+    const row = await prisma().annual_wrappeds.findFirstOrThrow({ where: { user_id: o.userId } })
+    expect(Buffer.from(row.stats_enc)).toEqual(opaque(50, 64))
+
+    await createEntry(o, 99, { entry_month: monthStart(-6), mode: 'free' })
+    const again = await (await api()).post(`/journal/wrapped/${YEAR}`).set(o.auth).send(wrappedBody(o.keys, 51)).expect(200)
+    expect(again.body.data.entry_count).toBe(7)
+    expect(await prisma().annual_wrappeds.count()).toBe(1)
+    expect(Buffer.from((await prisma().annual_wrappeds.findUniqueOrThrow({ where: { id: row.id } })).stats_enc)).toEqual(opaque(51, 64))
+  })
+
+  it('DEC-31 : stats_enc signées par la clé de l’owner, sinon 401', async () => {
+    const o = await makeOwner()
+    await entriesThisYear(o, 6)
+    const r = await (await api()).post(`/journal/wrapped/${YEAR}`).set(o.auth).send(wrappedBody(generateDeviceKeys())).expect(401)
+    expect(r.body.error.code).toBe('AUTH_TOKEN_INVALID')
+  })
+
+  it('refuse une année avant 2026 ou dans le futur', async () => {
+    const o = await makeOwner()
+    await (await api()).post('/journal/wrapped/2025').set(o.auth).send(wrappedBody(o.keys)).expect(400)
+    await (await api()).post(`/journal/wrapped/${YEAR + 1}`).set(o.auth).send(wrappedBody(o.keys)).expect(400)
+  })
+})
+
+describe('GET /journal/wrapped/:year et export', () => {
+  it('rend le Wrapped chiffré ; 404 s’il n’existe pas', async () => {
+    const o = await makeOwner()
+    await (await api()).get(`/journal/wrapped/${YEAR}`).set(o.auth).expect(404)
+    await entriesThisYear(o, 6)
+    await (await api()).post(`/journal/wrapped/${YEAR}`).set(o.auth).send(wrappedBody(o.keys)).expect(201)
+    const r = await (await api()).get(`/journal/wrapped/${YEAR}`).set(o.auth).expect(200)
+    expect(r.body.data).toMatchObject({ year: YEAR, entry_count: 6, stats_enc: opaque(50, 64).toString('base64'), exported: false })
+  })
+
+  it('export : métadonnées pour l’image (jamais de contenu), et POST marque l’export', async () => {
+    const o = await makeOwner()
+    await entriesThisYear(o, 6)
+    await (await api()).post(`/journal/wrapped/${YEAR}`).set(o.auth).send(wrappedBody(o.keys)).expect(201)
+    const meta = await (await api()).get(`/journal/wrapped/${YEAR}/export`).set(o.auth).expect(200)
+    expect(meta.body.data).toMatchObject({ year: YEAR, entry_count: 6, watermark: 'relais.app', exported: false })
+    expect(meta.body.data.stats_enc).toBeUndefined()
+
+    const before = Date.now()
+    const mark = await (await api()).post(`/journal/wrapped/${YEAR}/export`).set(o.auth).expect(200)
+    expect(mark.body.data.exported).toBe(true)
+    expect(Date.parse(mark.body.data.exported_at)).toBeGreaterThanOrEqual(before - 1000)
+    expect((await (await api()).get(`/journal/wrapped/${YEAR}`).set(o.auth).expect(200)).body.data.exported).toBe(true)
+  })
+})

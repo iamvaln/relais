@@ -9,11 +9,15 @@ import {
   entryParams,
   entryUpdateBody,
   questionQuery,
+  wrappedBody,
+  yearParams,
   type EntryBody,
   type EntryDeleteBody,
   type EntryParams,
   type EntryUpdateBody,
   type QuestionQuery,
+  type WrappedBody,
+  type YearParams,
 } from './schemas.js'
 import * as journal from './service.js'
 
@@ -47,5 +51,33 @@ export async function journalRoutes(app: FastifyInstance): Promise<void> {
     '/entries/:id',
     { schema: { params: entryParams, body: entryDeleteBody }, preHandler: [authenticate] },
     async (req) => ok(await journal.deleteEntry(req.user!.id, req.params.id, req.body.signature)),
+  )
+
+  app.post<{ Params: YearParams; Body: WrappedBody }>(
+    '/wrapped/:year',
+    { schema: { params: yearParams, body: wrappedBody }, preHandler: [authenticate] },
+    async (req, reply) => {
+      const { view, created } = await journal.saveWrapped(req.user!.id, journal.parseYear(req.params.year), req.body)
+      reply.status(created ? 201 : 200)
+      return ok(view)
+    },
+  )
+
+  app.get<{ Params: YearParams }>(
+    '/wrapped/:year',
+    { schema: { params: yearParams }, preHandler: [authenticate] },
+    async (req) => ok(await journal.getWrapped(req.user!.id, journal.parseYear(req.params.year))),
+  )
+
+  app.get<{ Params: YearParams }>(
+    '/wrapped/:year/export',
+    { schema: { params: yearParams }, preHandler: [authenticate] },
+    async (req) => ok(await journal.wrappedExportMeta(req.user!.id, journal.parseYear(req.params.year))),
+  )
+
+  app.post<{ Params: YearParams }>(
+    '/wrapped/:year/export',
+    { schema: { params: yearParams }, preHandler: [authenticate] },
+    async (req) => ok(await journal.markWrappedExported(req.user!.id, journal.parseYear(req.params.year))),
   )
 }

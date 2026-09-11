@@ -9,7 +9,7 @@ import { decodeBase64, ed25519Verify } from '../../lib/crypto.js'
 import { AppError } from '../../lib/errors.js'
 import { prisma } from '../../lib/prisma.js'
 import { monthOf } from '../checkin/service.js'
-import type { EntryBody, EntryUpdateBody, JournalMode } from './schemas.js'
+import type { EntryBody, EntryUpdateBody, JournalMode, WrappedBody } from './schemas.js'
 
 // --- Question du mois -------------------------------------------------------------
 
@@ -216,4 +216,102 @@ export async function deleteEntry(userId: string, id: string, signatureB64: stri
     prisma().journal_entries.delete({ where: { id } }),
   ])
   return { deleted: true }
+}
+
+// --- Wrapped annuel (Techniques §10.3, DEC-32) ---------------------------------------
+
+const WRAPPED_MIN_ENTRIES = 6
+const WATERMARK = 'relais.app'
+
+export interface WrappedView {
+  year: number
+  entry_count: number
+  stats_enc: string
+  exported: boolean
+  exported_at: string | null
+  generated_at: string
+}
+
+export interface WrappedExportView {
+  year: number
+  entry_count: number
+  generated_at: string
+  exported: boolean
+  watermark: string
+}
+
+type WrappedRow = {
+  year: number
+  entry_count: number
+  stats_enc: Uint8Array
+  exported: boolean
+  exported_at: Date | null
+  generated_at: Date
+}
+
+function toWrappedView(r: WrappedRow): WrappedView {
+  return {
+    year: r.year,
+    entry_count: r.entry_count,
+    stats_enc: Buffer.from(r.stats_enc).toString('base64'),
+    exported: r.exported,
+    exported_at: r.exported_at?.toISOString() ?? null,
+    generated_at: r.generated_at.toISOString(),
+  }
+}
+
+const FIRST_YEAR = 2026 // chk annual_wrappeds.year >= 2026
+
+/** Année valide : entre 2026 et l'année courante. */
+export function parseYear(raw: string, now = new Date()): number {
+  const year = Number.parseInt(raw, 10)
+  if (!Number.isInteger(year) || year < FIRST_YEAR || year > now.getUTCFullYear()) {
+    throw new AppError('VALIDATION_ERROR', { details: { year: `entre ${FIRST_YEAR} et ${now.getUTCFullYear()}` } })
+  }
+  return year
+}
+
+/** DEC-32 : le nombre d'entrées vient de la base, jamais de l'app. */
+async function entryCountForYear(userId: string, year: number): Promise<number> {
+  return prisma().journal_entries.count({
+    where: { user_id: userId, entry_month: { gte: new Date(Date.UTC(year, 0, 1)), lt: new Date(Date.UTC(year + 1, 0, 1)) } },
+  })
+}
+
+export async function saveWrapped(userId: string, year: number, body: WrappedBody, now = new Date()): Promise<{ view: WrappedView; created: boolean }> {
+  const statsEnc = decodeOrThrow('stats_enc', body.stats_enc)
+  await requireSignature(userId, Buffer.from(statsEnc), body.signature, 'des statistiques')
+  const count = await entryCountForYear(userId, year)
+  if (count < WRAPPED_MIN_ENTRIES) {
+    throw new AppError('WRAPPED_INSUFFICIENT_ENTRIES', { details: { current: count, required: WRAPPED_MIN_ENTRIES } })
+  }
+  const existing = await prisma().annual_wrappeds.findUnique({ where: { user_id_year: { user_id: userId, year } }, select: { id: true } })
+  const row = await prisma().annual_wrappeds.upsert({
+    where: { user_id_year: { user_id: userId, year } },
+    create: { user_id: userId, year, stats_enc: statsEnc, entry_count: count, generated_at: now },
+    update: { stats_enc: statsEnc, entry_count: count, generated_at: now },
+  })
+  return { view: toWrappedView(row), created: existing === null }
+}
+
+async function ownWrapped(userId: string, year: number) {
+  const row = await prisma().annual_wrappeds.findUnique({ where: { user_id_year: { user_id: userId, year } } })
+  if (!row) throw new AppError('NOT_FOUND', { message: 'Pas de Wrapped pour cette année.' })
+  return row
+}
+
+export async function getWrapped(userId: string, year: number): Promise<WrappedView> {
+  return toWrappedView(await ownWrapped(userId, year))
+}
+
+/** Ce qu'il faut pour composer l'image localement — jamais de contenu, jamais de stats en clair. */
+export async function wrappedExportMeta(userId: string, year: number): Promise<WrappedExportView> {
+  const r = await ownWrapped(userId, year)
+  return { year: r.year, entry_count: r.entry_count, generated_at: r.generated_at.toISOString(), exported: r.exported, watermark: WATERMARK }
+}
+
+export async function markWrappedExported(userId: string, year: number, now = new Date()): Promise<WrappedView> {
+  const r = await ownWrapped(userId, year)
+  const row = await prisma().annual_wrappeds.update({ where: { id: r.id }, data: { exported: true, exported_at: now } })
+  return toWrappedView(row)
 }

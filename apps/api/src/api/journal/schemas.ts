@@ -73,3 +73,30 @@ export const entryParams = {
 export interface EntryParams {
   id: string
 }
+
+/** Année du Wrapped, en 4 chiffres ; bornes (2026 → année courante) vérifiées en service — les params ne sont pas coercés. */
+export const yearParams = {
+  type: 'object',
+  required: ['year'],
+  additionalProperties: false,
+  properties: { year: { type: 'string', pattern: '^[0-9]{4}$' } },
+} as const
+export interface YearParams {
+  year: string
+}
+
+export const wrappedBody = {
+  type: 'object',
+  required: ['stats_enc', 'signature'],
+  additionalProperties: false,
+  properties: {
+    /** XChaCha20(K2, stats agrégées) — calculé localement. */
+    stats_enc: { ...base64, maxLength: 16384 },
+    /** DEC-31 : Ed25519.sign(SHA256(stats_enc), owner_sk). */
+    signature: { ...base64, maxLength: 128 },
+  },
+} as const
+export interface WrappedBody {
+  stats_enc: string
+  signature: string
+}
