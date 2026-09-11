@@ -22,6 +22,13 @@ justifier explicitement.
   Pur TypeScript, ni UI ni réseau ; `libsodium-wrappers-sumo` (Argon2id).
   Tests unitaires dans `test/`, bout en bout contre l'API dans
   `apps/api/test/e2e-crypto-core.test.ts`. Notes : `docs/crypto-core.md`.
+- `packages/api-client/` — client TypeScript de l'API (enveloppe, bearer,
+  refresh sur 401, step-up), partagé par le mobile et le back office web ;
+  testé contre l'API réelle dans `apps/api/test/api-client.test.ts`.
+- `apps/mobile/` — l'app React Native (Expo SDK 57, Expo Router, Zustand,
+  TanStack Query). Logique hors des écrans (`src/state`, `src/lib`, `src/i18n`)
+  testée sous Node avec Vitest ; écrans minces dans `app/`. Notes, lots et
+  décisions : `docs/mobile.md`.
 - `docs/backend.md` — décisions et écarts par rapport aux specs, par module.
   **À lire avant de toucher un module.** `docs/open-questions.md` — points
   tranchés et points ouverts, numérotés. `docs/specs/` — les specs en
@@ -68,5 +75,6 @@ localhost -p 55432 || scripts/dev-services.sh start` avant les tests.
 ## Ce qui n'est pas fait
 
 Logs API (export externe), fournisseur de paiement (encaissement manuel en
-V1), enregistrement Arbitrum, app mobile (UI, stockage, HTTP — le cœur
-crypto est fait), interface du back office. La liste à jour est dans le README et `docs/backend.md` §2.
+V1), enregistrement Arbitrum, app mobile lots 2 à 6 (onboarding, coffre,
+transmission, check-in, parcours du contact — le socle et le cœur crypto
+sont faits), interface du back office. La liste à jour est dans le README et `docs/backend.md` §2.

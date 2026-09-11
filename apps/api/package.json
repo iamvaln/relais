@@ -38,6 +38,7 @@
     "zod": "^3.25.0"
   },
   "devDependencies": {
+    "@relais/api-client": "0.1.0",
     "@relais/crypto-core": "0.1.0",
     "@types/libsodium-wrappers": "^0.7.14",
     "@types/node": "^22.15.0",
