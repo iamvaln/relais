@@ -29,6 +29,10 @@ apps/api/
     api/checkin/             statut, mini-jeu (games.ts), validation, streak
     api/relay/               côté contact : lien, réponses/escrow, données, confirmation
     api/journal/             carnet de vie : question du mois, entrées signées, Wrapped
+    api/admin/               back office : auth TOTP, utilisateurs, transmissions, questions, config, audit
+    middleware/authenticate-admin.ts  token admin + session Redis, grille de rôles
+    lib/audit.ts             journal d'audit append-only (jamais de donnée personnelle)
+    scripts/create-admin.ts  bootstrap du premier admin (npm run admin:create)
     jobs/relay-cleanup.ts    escrows expirés, fin d'accès à 30 jours
     jobs/deadman.ts          balayage quotidien : relances, déclenchement
     jobs/queue.ts            BullMQ — jobs planifiés deadman:checkin, relay:cleanup
@@ -89,6 +93,14 @@ Le module **auth** de §3.1 v1.1, le module **vault** de §3.3 v1.1, le module
 | `POST /journal/entries` · `GET /journal/entries` · `GET /journal/entries/:id` | Écritures signées Ed25519 (DEC-31), une entrée par mois, liste sans contenu |
 | `PUT` · `DELETE /journal/entries/:id` | Signées ; `DELETE` signe l'identifiant — voir §3 |
 | `POST` · `GET /journal/wrapped/:year` · `GET`/`POST …/export` | Seuil de 6 entrées et `entry_count` côté serveur (DEC-32) |
+| `POST /admin/auth/login` · `logout` · `GET /admin/me` | TOTP obligatoire, 5/15 min/IP, token admin 8 h + session Redis |
+| `GET /admin/users` · `GET /admin/users/:id` | BO-02 : liste paginée et filtrée, fiche en métadonnées |
+| `POST …/unblock` · `POST /admin/users/otp-regen` · `POST …/suspend` · `PUT …/email` · `DELETE /admin/users/:id` | Support, admin, super_admin ; chaque action auditée — voir §3 |
+| `GET /admin/transmissions` · `GET …/:id` | BO-03 : statuts et compteurs, aucune identité de contact |
+| `POST …/extend-escrow` · `POST …/notify` · `DELETE …/:id` · `POST …/contacts/:cid/unblock` | Escrow +24/48 h (2 max), nouveaux liens, annulation, déblocage |
+| `GET` · `POST /admin/questions` · `PUT …/:id` · `PUT …/:id/archive` | BO-04, rôle admin, audité |
+| `GET /admin/config` · `PUT /admin/config/:key` | BO-05, super_admin, validé par type, avant/après audité |
+| `GET /admin/logs/audit` · `GET /admin/health` | BO-06 |
 
 Jobs (§4), BullMQ, worker dans le processus API derrière `JOBS_ENABLED=true` :
 
@@ -98,8 +110,10 @@ Jobs (§4), BullMQ, worker dans le processus API derrière `JOBS_ENABLED=true` :
 | `relay:cleanup` | toutes les heures (h+30) | Escrows expirés → `expired` + nouveaux liens ; accès déverrouillé depuis plus de 30 jours → purge |
 
 Non livré : `/user/*`, `PUT /transmission/recipients` (sans objet depuis
-DEC-23), `/admin/*`, `storj:cleanup` (la purge est faite directement, voir
-§3), l'enregistrement Arbitrum (voir §3).
+DEC-23), la facturation (`/admin/billing/*`, BO-07), les KPIs du dashboard
+(BO-01), `GET /admin/logs/api` (aucune table), les tickets support,
+`storj:cleanup` (la purge est faite directement, voir §3), l'enregistrement
+Arbitrum (voir §3).
 
 ## 3. Décisions et écarts par rapport aux specs
 
@@ -447,6 +461,60 @@ reste opaque (calculé et chiffré localement). L'export image est local :
 `GET …/export` ne rend que des métadonnées (année, compte, filigrane
 `relais.app`), `POST …/export` date l'export.
 
+### Admin : le premier compte naît d'un script, pas d'un endpoint
+
+§3.8 n'a aucun endpoint de création d'admin et exige le TOTP à la
+connexion. `npm run admin:create -- --email … --name … --role super_admin`
+(mot de passe dans `ADMIN_PASSWORD` ou saisi) crée le compte (Argon2id,
+même politique de mot de passe que les utilisateurs), génère le secret
+TOTP, affiche l'URI otpauth une seule fois et écrit `ADMIN_CREATED` dans
+`audit_logs`. Aucune surface HTTP. Les admins suivants passent par le même
+script en V1 (Valentine seule Super Admin).
+
+### Admin : un token à part, révocable, une grille de rôles
+
+Le token admin a sa propre audience JWT (`admin`, 8 h) : un token
+utilisateur n'ouvre jamais `/admin/*`, et inversement. Il est adossé à une
+session Redis (`admin:session:{sid}`) : `logout` la supprime et le token
+meurt aussitôt. Mot de passe et TOTP sont vérifiés ensemble et refusés
+d'un seul 401, 5 échecs verrouillent 15 minutes. `requireRole` applique la
+grille BO (support / admin / super_admin / finance) ; le super_admin passe
+partout ; un refus est un 403.
+
+### Admin : tout est audité, rien de personnel dans l'audit
+
+Chaque mutation écrit `audit_logs` (append-only par trigger) : action du
+CHECK, cible, avant/après, motif, hash d'IP. Les emails n'y figurent qu'en
+SHA256 (changement d'email, regénération d'OTP), les valeurs de
+configuration en clair (ce sont des paramètres, pas des données).
+
+### Admin : la regénération d'OTP se fait par email, pas par identifiant
+
+`POST /admin/users/:id/otp-regen` (spec) suppose une ligne `users`. Or
+l'inscription attend dans Redis jusqu'à l'OTP (voir plus haut) : il n'y a
+pas encore d'identifiant. L'endpoint est donc `POST /admin/users/otp-regen
+{ email }` ; il renvoie le code de l'inscription en attente avec la même
+limite anti-abus que l'utilisateur, et 404 sinon.
+
+### Admin : suppression RGPD = purge + anonymisation, pas de DELETE physique
+
+`users` est référencée par `transmissions` (sans cascade) et par les logs.
+La suppression purge tout ce qui est personnel ou chiffré (stockage : P2 et
+parts ; base : contacts, carnet, Wrapped, check-ins, relances, sessions,
+défis, OTP, push tokens), annule les transmissions ouvertes (escrow et clé
+compris), remet la configuration de transmission à zéro, puis anonymise la
+ligne (`deleted-{id}@anonymized.invalid`, nom générique, téléphone et clé
+publique effacés, statut `deleted`, motif, admin, date). `email_log` garde
+ses hashes, `subscriptions` et `payment_events` restent (comptabilité).
+
+### Admin : annuler une transmission rend la main à l'owner
+
+BO-03 « Annuler » suppose l'owner vivant (vérification manuelle). La
+transmission passe `cancelled`, l'escrow est purgé, les liens meurent, et
+la configuration redevient `active` avec un cycle de check-in relancé —
+l'owner n'a rien à reconfigurer. Relancer les contacts (`notify`) émet de
+**nouveaux** liens pour ceux qui n'ont pas répondu ; les anciens meurent.
+
 ### Codes de récupération 2FA : pas de table
 
 E6-US02 : « des codes de récupération d'urgence sont générés et affichés une
@@ -471,10 +539,11 @@ manque, perdre son authenticateur signifie passer par le support.
 | Parts Si en escrow | scellées par une clé éphémère Redis ; jamais combinées par le serveur ; supprimées à la fin |
 | Tokens de relay | HMAC en base, le token clair ne vit que dans l'email |
 | Carnet de vie, Wrapped | `content_enc` et `stats_enc` opaques (K2) ; le serveur ne connaît que mois, mode, question, taille approximative |
+| Back office | métadonnées seulement : jamais un blob, jamais l'identité d'un contact, emails hachés dans l'audit |
 
 ## 5. Vérifications
 
-156 tests d'intégration, sur PostgreSQL 16 et Redis réels, base reconstruite
+181 tests d'intégration, sur PostgreSQL 16 et Redis réels, base reconstruite
 depuis les migrations et le seed à chaque run. Chaque test repart d'une base
 et d'un stockage vides. Ils couvrent notamment :
 
@@ -553,6 +622,22 @@ et d'un stockage vides. Ils couvrent notamment :
   serveur, régénération → 200 et compte mis à jour, signature → 401,
   année hors bornes → 400, GET 404 puis 200, export sans contenu, POST
   export daté
+- admin (25 tests, test-first) : bootstrap (Argon2id, TOTP, audit ;
+  mot de passe faible, rôle inconnu, email pris → refus) ; login TOTP,
+  `ADMIN_LOGIN`, un seul 401 pour mot de passe ou code faux, verrouillé →
+  423, suspendu → 403, 5/15 min/IP ; token utilisateur refusé, logout
+  immédiat ; utilisateurs : liste filtrée sans champ sensible, fiche en
+  chiffres, finance → 403, débloquer (compteurs, suspension, email,
+  audit), OTP regénéré (ancien mort, audit sans email), suspendre
+  (transmission en pause, 403 pour support), email (audit en hashes,
+  409), RGPD (purge stockage et données, transmission annulée, ligne
+  anonymisée, second appel → 409) ; transmissions : liste et détail sans
+  identité, escrow +24/+48 h puis 409, relance avec nouveaux liens,
+  annulation (config rendue active), déblocage de contact ; questions :
+  liste, ajout, doublon → 409, catégorie inconnue → 400, modification
+  auditée, archivage (usage conservé, plus proposée) ; config : lecture
+  typée, mauvais type → 400, clé inconnue → 404, avant/après audité, effet
+  immédiat ; audit filtrable ; santé admin
 
 ```bash
 scripts/dev-services.sh start     # PostgreSQL + Redis jetables

@@ -4,7 +4,7 @@
 
 import { createHash } from 'node:crypto'
 import sodium from '../src/lib/sodium.js'
-import { api, generateDeviceKeys, registerUser, signWith, stepUp, type DeviceKeys } from './helpers.js'
+import { api, generateDeviceKeys, lastEmailTo, mailbox, registerUser, signWith, stepUp, type DeviceKeys } from './helpers.js'
 
 export async function sealToRelais(relaisPkBase64: string, payload: object): Promise<string> {
   await sodium.ready
@@ -156,4 +156,23 @@ export async function activateTransmission(o: Owner, opts: { silence?: number; f
     .send(buildActivationBody(o.keys, contacts, opts))
     .expect(200)
   return contacts
+}
+
+/** Le token de relay tel qu'il figure dans le dernier email reçu par `to`. */
+export function relayTokenFromEmail(to: string): string {
+  const m = /\/relay\/([A-Za-z0-9_-]{32,})/.exec(lastEmailTo(to)?.text ?? '')
+  if (!m) throw new Error(`pas de lien relay dans l'email à ${to}`)
+  return m[1]!
+}
+
+/** Transmission activée, déclenchée et ouverte : un token par contact (contact1@, contact2@). */
+export async function openTransmission(o: Owner) {
+  const { prisma } = await import('../src/lib/prisma.js')
+  const { trigger } = await import('../src/jobs/deadman.js')
+  const contacts = await activateTransmission(o)
+  await prisma().transmission_configs.update({ where: { user_id: o.userId }, data: { status: 'triggered' } })
+  mailbox.clear()
+  await trigger(new Date())
+  const tr = await prisma().transmissions.findFirstOrThrow({ where: { user_id: o.userId } })
+  return { contacts, transmissionId: tr.id, tokens: { contact1: relayTokenFromEmail('contact1@example.cm'), contact2: relayTokenFromEmail('contact2@example.cm') } }
 }

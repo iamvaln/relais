@@ -43,6 +43,41 @@ export interface AccessClaims {
   sid: string
 }
 
+/** Token du back office : audience distincte, 8 h, session Redis révocable. */
+export interface AdminClaims {
+  sub: string
+  role: string
+  sid: string
+}
+
+export const ADMIN_TOKEN_SECONDS = 8 * 3600
+
+export async function signAdminToken(claims: AdminClaims): Promise<{ token: string; expiresIn: number }> {
+  const token = await new SignJWT({ role: claims.role, sid: claims.sid })
+    .setProtectedHeader({ alg: 'HS256', typ: 'JWT' })
+    .setSubject(claims.sub)
+    .setIssuer(ISSUER)
+    .setAudience('admin')
+    .setIssuedAt()
+    .setExpirationTime(`${ADMIN_TOKEN_SECONDS}s`)
+    .sign(secret('access'))
+  return { token, expiresIn: ADMIN_TOKEN_SECONDS }
+}
+
+export async function verifyAdminToken(token: string): Promise<AdminClaims> {
+  try {
+    const { payload } = await jwtVerify(token, secret('access'), { issuer: ISSUER, audience: 'admin' })
+    if (typeof payload.sub !== 'string' || typeof payload.sid !== 'string' || typeof payload.role !== 'string') {
+      throw new AppError('AUTH_TOKEN_INVALID')
+    }
+    return { sub: payload.sub, role: payload.role, sid: payload.sid }
+  } catch (err) {
+    if (err instanceof AppError) throw err
+    if (err instanceof joseErrors.JWTExpired) throw new AppError('AUTH_TOKEN_EXPIRED')
+    throw new AppError('AUTH_TOKEN_INVALID')
+  }
+}
+
 export interface StepUpClaims {
   sub: string
   action: StepUpAction

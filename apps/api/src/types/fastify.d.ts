@@ -6,7 +6,17 @@ declare module 'fastify' {
     user?: AuthenticatedUser
     /** Renseigné par `requireStepUp` une fois le jti consommé. */
     stepUp?: { action: StepUpAction; jti: string }
+    /** Renseigné par `authenticateAdmin` (back office). */
+    admin?: AuthenticatedAdmin
   }
+}
+
+export interface AuthenticatedAdmin {
+  id: string
+  email: string
+  fullName: string
+  role: string
+  sessionId: string
 }
 
 export interface AuthenticatedUser {
