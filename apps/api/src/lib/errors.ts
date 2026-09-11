@@ -26,6 +26,7 @@ export const ErrorCodes = {
   RELAY_TOKEN_EXHAUSTED: { http: 429, message: 'Trop de tentatives sur ce lien.' },
   RELAY_CONTACT_BLOCKED: { http: 423, message: 'Contact bloqué — trop d’échecs.' },
   RELAY_ALREADY_ANSWERED: { http: 409, message: 'Ce contact a déjà répondu.' },
+  JOURNAL_MONTH_TAKEN: { http: 409, message: 'Une entrée existe déjà pour ce mois — modifiez-la.' },
   RELAY_NOT_UNLOCKED: { http: 409, message: 'Accès pas encore déverrouillé — en attente des autres contacts.' },
   PLAN_LIMIT_REACHED: { http: 403, message: 'Limite du plan atteinte.' },
   NOT_FOUND: { http: 404, message: 'Ressource introuvable.' },

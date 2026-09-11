@@ -1,9 +1,11 @@
 // Carnet de vie (Backend Specs §3.6, Techniques §10, E2-US07).
 
 import { afterAll, beforeEach, describe, expect, it } from 'vitest'
+import { createHash } from 'node:crypto'
+import { GAMES } from '../src/api/checkin/games.js'
 import { prisma } from '../src/lib/prisma.js'
-import { api, closeAll, resetState } from './helpers.js'
-import { makeOwner } from './transmission-helpers.js'
+import { api, closeAll, generateDeviceKeys, resetState, signWith, type DeviceKeys } from './helpers.js'
+import { activateTransmission, makeOwner, opaque, signHash, type Owner } from './transmission-helpers.js'
 
 beforeEach(resetState)
 afterAll(closeAll)
@@ -38,5 +40,169 @@ describe('GET /journal/question', () => {
     const o = await makeOwner()
     const r = await (await api()).get('/journal/question?mode=poetic').set(o.auth).expect(400)
     expect(r.body.error.code).toBe('VALIDATION_ERROR')
+  })
+})
+
+// --- Entrées (DEC-31 : écritures signées Ed25519) ---------------------------------
+
+const content = (seed: number) => opaque(seed, 96)
+
+/** Corps d'une entrée telle que l'app l'envoie : blob K2 + signature sur SHA256(blob). */
+function entryBody(keys: DeviceKeys, seed: number, extra: Record<string, unknown> = {}) {
+  const enc = content(seed)
+  return { content_enc: enc.toString('base64'), signature: signHash(keys, enc), mode: 'essential', word_count_approx: 120, ...extra }
+}
+
+/** DELETE : signature sur SHA256 de l'identifiant (UUID en UTF-8). */
+function deleteBody(keys: DeviceKeys, id: string) {
+  return { signature: signWith(keys, createHash('sha256').update(id, 'utf8').digest()) }
+}
+
+async function journalQuestionId(mode = 'essential'): Promise<string> {
+  const r = await prisma().checkin_questions.findFirstOrThrow({
+    where: { usage_type: 'journal', status: 'active', cycle_month: new Date().getUTCMonth() + 1, mode_target: mode },
+    select: { id: true },
+  })
+  return r.id
+}
+
+async function createEntry(o: Owner, seed = 1, extra: Record<string, unknown> = {}) {
+  const r = await (await api()).post('/journal/entries').set(o.auth).send(entryBody(o.keys, seed, extra)).expect(201)
+  return r.body.data as { id: string; month: string }
+}
+
+describe('POST /journal/entries', () => {
+  it('crée l’entrée du mois : métadonnées en clair, contenu opaque, question rattachée', async () => {
+    const o = await makeOwner()
+    const qid = await journalQuestionId()
+    const before = Date.now()
+    const r = await (await api()).post('/journal/entries').set(o.auth).send(entryBody(o.keys, 1, { question_id: qid })).expect(201)
+    expect(r.body.data).toMatchObject({ month: monthStart(), mode: 'essential', question_id: qid, word_count_approx: 120 })
+    expect(r.body.data.content_enc).toBeUndefined()
+    expect(Date.parse(r.body.data.created_at)).toBeGreaterThanOrEqual(before - 1000)
+    const row = await prisma().journal_entries.findUniqueOrThrow({ where: { id: r.body.data.id } })
+    expect(Buffer.from(row.content_enc)).toEqual(content(1))
+    expect(row.entry_month.toISOString().slice(0, 10)).toBe(monthStart())
+
+    const q = await (await api()).get('/journal/question').set(o.auth).expect(200)
+    expect(q.body.data.answered).toBe(true)
+  })
+
+  it('accepte un mois passé explicite (rattrapage) et refuse un mois futur', async () => {
+    const o = await makeOwner()
+    const past = await createEntry(o, 2, { entry_month: monthStart(-2), mode: 'free' })
+    expect(past.month).toBe(monthStart(-2))
+    const r = await (await api()).post('/journal/entries').set(o.auth).send(entryBody(o.keys, 3, { entry_month: monthStart(1) })).expect(400)
+    expect(r.body.error.code).toBe('VALIDATION_ERROR')
+  })
+
+  it('DEC-31 : signature d’une autre clé → 401 ; sans clé enregistrée → 409', async () => {
+    const o = await makeOwner()
+    const impostor = generateDeviceKeys()
+    const r = await (await api()).post('/journal/entries').set(o.auth).send(entryBody(impostor, 1)).expect(401)
+    expect(r.body.error.code).toBe('AUTH_TOKEN_INVALID')
+    expect(await prisma().journal_entries.count()).toBe(0)
+
+    const { registerUser } = await import('./helpers.js')
+    const u = await registerUser('sans-cle@example.cm')
+    const r2 = await (await api()).post('/journal/entries').set('Authorization', `Bearer ${u.accessToken}`).send(entryBody(generateDeviceKeys(), 1)).expect(409)
+    expect(r2.body.error.code).toBe('AUTH_KEY_NOT_SET')
+  })
+
+  it('une seule entrée par mois : la seconde → 409 JOURNAL_MONTH_TAKEN', async () => {
+    const o = await makeOwner()
+    await createEntry(o, 1)
+    const r = await (await api()).post('/journal/entries').set(o.auth).send(entryBody(o.keys, 2)).expect(409)
+    expect(r.body.error.code).toBe('JOURNAL_MONTH_TAKEN')
+  })
+
+  it('refuse une question qui n’est pas une question de carnet', async () => {
+    const o = await makeOwner()
+    const secret = await prisma().checkin_questions.findFirstOrThrow({ where: { usage_type: 'secret_question' }, select: { id: true } })
+    const r = await (await api()).post('/journal/entries').set(o.auth).send(entryBody(o.keys, 1, { question_id: secret.id })).expect(400)
+    expect(r.body.error.details.question_id).toBeDefined()
+  })
+})
+
+describe('lien check-in ↔ carnet (Fix-09a, FK différée)', () => {
+  async function checkedIn(o: Owner): Promise<string> {
+    await activateTransmission(o)
+    const game = (await (await api()).get('/checkin/game').set(o.auth).expect(200)).body.data
+    const answer = GAMES.find((g) => g.id === game.game_id)!.answers.fr[0]!
+    const token = (await (await api()).post('/checkin/game/answer').set(o.auth).send({ answer }).expect(200)).body.data.checkin_token
+    await (await api()).post('/checkin/complete').set(o.auth).send({ checkin_token: token }).expect(200)
+    const log = await prisma().checkin_log.findFirstOrThrow({ where: { user_id: o.userId } })
+    return log.id
+  }
+
+  it('check-in d’abord, entrée ensuite (transactions séparées) : l’entrée se rattache au check-in du mois', async () => {
+    const o = await makeOwner()
+    const logId = await checkedIn(o)
+    const entry = await createEntry(o, 1)
+    const log = await prisma().checkin_log.findUniqueOrThrow({ where: { id: logId } })
+    expect(log.journal_entry_id).toBe(entry.id)
+  })
+
+  it('supprimer l’entrée détache le check-in sans le supprimer', async () => {
+    const o = await makeOwner()
+    const logId = await checkedIn(o)
+    const entry = await createEntry(o, 1)
+    await (await api()).delete(`/journal/entries/${entry.id}`).set(o.auth).send(deleteBody(o.keys, entry.id)).expect(200)
+    const log = await prisma().checkin_log.findUniqueOrThrow({ where: { id: logId } })
+    expect(log.journal_entry_id).toBeNull()
+  })
+})
+
+describe('GET /journal/entries et /journal/entries/:id', () => {
+  it('la liste ne porte que des métadonnées, du plus récent au plus ancien ; le détail porte le contenu', async () => {
+    const o = await makeOwner()
+    await createEntry(o, 1, { entry_month: monthStart(-1) })
+    const cur = await createEntry(o, 2)
+    const list = await (await api()).get('/journal/entries').set(o.auth).expect(200)
+    expect(list.body.data.map((e: { month: string }) => e.month)).toEqual([monthStart(), monthStart(-1)])
+    expect(JSON.stringify(list.body.data)).not.toContain(content(2).toString('base64'))
+
+    const one = await (await api()).get(`/journal/entries/${cur.id}`).set(o.auth).expect(200)
+    expect(one.body.data.content_enc).toBe(content(2).toString('base64'))
+  })
+
+  it('l’entrée d’un autre utilisateur est introuvable', async () => {
+    const a = await makeOwner('a@example.cm')
+    const b = await makeOwner('b@example.cm')
+    const e = await createEntry(a, 1)
+    await (await api()).get(`/journal/entries/${e.id}`).set(b.auth).expect(404)
+    await (await api()).put(`/journal/entries/${e.id}`).set(b.auth).send(entryBody(b.keys, 2)).expect(404)
+    await (await api()).delete(`/journal/entries/${e.id}`).set(b.auth).send(deleteBody(b.keys, e.id)).expect(404)
+    expect(await prisma().journal_entries.count()).toBe(1)
+  })
+})
+
+describe('PUT et DELETE /journal/entries/:id (DEC-31)', () => {
+  it('PUT remplace le contenu signé ; une signature d’une autre clé est refusée', async () => {
+    const o = await makeOwner()
+    const e = await createEntry(o, 1)
+    const r = await (await api()).put(`/journal/entries/${e.id}`).set(o.auth).send(entryBody(o.keys, 2, { mode: 'reflective', word_count_approx: 300 })).expect(200)
+    expect(r.body.data).toMatchObject({ id: e.id, mode: 'reflective', word_count_approx: 300 })
+    const row = await prisma().journal_entries.findUniqueOrThrow({ where: { id: e.id } })
+    expect(Buffer.from(row.content_enc)).toEqual(content(2))
+
+    const bad = await (await api()).put(`/journal/entries/${e.id}`).set(o.auth).send(entryBody(generateDeviceKeys(), 3)).expect(401)
+    expect(bad.body.error.code).toBe('AUTH_TOKEN_INVALID')
+    expect(Buffer.from((await prisma().journal_entries.findUniqueOrThrow({ where: { id: e.id } })).content_enc)).toEqual(content(2))
+  })
+
+  it('DELETE exige la signature de l’identifiant ; un token seul ne suffit pas', async () => {
+    const o = await makeOwner()
+    const e = await createEntry(o, 1)
+    const noSig = await (await api()).delete(`/journal/entries/${e.id}`).set(o.auth).send({}).expect(400)
+    expect(noSig.body.error.code).toBe('VALIDATION_ERROR')
+    const wrong = await (await api()).delete(`/journal/entries/${e.id}`).set(o.auth).send(deleteBody(generateDeviceKeys(), e.id)).expect(401)
+    expect(wrong.body.error.code).toBe('AUTH_TOKEN_INVALID')
+    expect(await prisma().journal_entries.count()).toBe(1)
+
+    const ok = await (await api()).delete(`/journal/entries/${e.id}`).set(o.auth).send(deleteBody(o.keys, e.id)).expect(200)
+    expect(ok.body.data).toEqual({ deleted: true })
+    expect(await prisma().journal_entries.count()).toBe(0)
+    await (await api()).delete(`/journal/entries/${e.id}`).set(o.auth).send(deleteBody(o.keys, e.id)).expect(404)
   })
 })
