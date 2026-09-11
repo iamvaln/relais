@@ -49,3 +49,8 @@ export async function authenticate(req: FastifyRequest, _reply: FastifyReply): P
   const claims = await verifyAccessToken(header.slice('Bearer '.length).trim())
   req.user = await loadAuthenticatedUser(claims.sub, claims.sid)
 }
+
+/** Authentifie si un Bearer est présent, laisse passer sinon (tickets support ouverts aux comptes verrouillés). */
+export async function authenticateIfPresent(req: FastifyRequest, reply: FastifyReply): Promise<void> {
+  if (req.headers.authorization) await authenticate(req, reply)
+}
