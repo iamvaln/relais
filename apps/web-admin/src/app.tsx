@@ -5,7 +5,11 @@ import { homeModule, MODULES, modulesFor, type Module } from '@relais/admin-core
 import { createBrowserRouter, Navigate, NavLink, Outlet, useLocation, useParams } from 'react-router-dom'
 import { useApp } from './app-state'
 import { DashboardScreen } from './screens/dashboard'
+import { ConfigScreen } from './screens/config'
 import { LoginScreen } from './screens/login'
+import { QuestionsScreen } from './screens/questions'
+import { TransmissionScreen } from './screens/transmission'
+import { TransmissionsScreen } from './screens/transmissions'
 import { UserScreen } from './screens/user'
 import { UsersScreen } from './screens/users'
 
@@ -92,6 +96,10 @@ export const router = createBrowserRouter([
       { path: 'dashboard', element: <Guarded module="dashboard"><DashboardScreen /></Guarded> },
       { path: 'users', element: <Guarded module="users"><UsersScreen /></Guarded> },
       { path: 'users/:id', element: <Guarded module="users"><UserScreen /></Guarded> },
+      { path: 'transmissions', element: <Guarded module="transmissions"><TransmissionsScreen /></Guarded> },
+      { path: 'transmissions/:id', element: <Guarded module="transmissions"><TransmissionScreen /></Guarded> },
+      { path: 'questions', element: <Guarded module="questions"><QuestionsScreen /></Guarded> },
+      { path: 'config', element: <Guarded module="config"><ConfigScreen /></Guarded> },
       { path: ':module', element: <Soon /> },
     ],
   },

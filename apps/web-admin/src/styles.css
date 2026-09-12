@@ -36,6 +36,7 @@ tr.row { cursor: pointer; } tr.row:hover { background: #fbf7f1; }
 .side .brand { font-weight: 700; letter-spacing: .12em; margin-bottom: 14px; color: var(--gold); }
 .side a { color: #f5efe6; text-decoration: none; padding: 9px 12px; border-radius: 8px; display: block; }
 .side a.active, .side a:hover { background: rgba(255,255,255,.08); }
+.side .foot button.secondary { color: #f5efe6; border-color: rgba(255,255,255,.25); }
 .side .foot { margin-top: auto; display: flex; flex-direction: column; gap: 8px; font-size: 13px; color: #cbbba4; }
 .main { padding: 24px 28px; max-width: 1200px; }
 .toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: end; margin-bottom: 14px; }
@@ -48,3 +49,4 @@ tr.row { cursor: pointer; } tr.row:hover { background: #fbf7f1; }
 .lang button { border: 0; border-radius: 0; background: transparent; color: inherit; padding: 4px 10px; font-size: 12px; }
 .lang button.active { background: var(--gold); color: #2a1f12; }
 @media (max-width: 760px) { .shell { grid-template-columns: 1fr; } .side { flex-direction: row; flex-wrap: wrap; } .side .foot { margin: 0; flex-direction: row; } .main { padding: 16px; } }
+code { font-size: 13px; background: #f1ebe2; padding: 1px 5px; border-radius: 4px; }

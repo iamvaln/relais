@@ -14,7 +14,7 @@ d'implémentation.
 |---|---|
 | Specs produit, techniques, backend, frontend, back office | ✅ v1 (`docs/specs/`) |
 | Schéma PostgreSQL v1.4 | ✅ Implémenté et testé (`prisma/`), Proposals 8 et 9 incluses |
-| API backend — auth, vault, transmission, check-in, relay, journal, admin, facturation, dashboard, tickets, jobs | ✅ 94 endpoints, 286 tests d'intégration (`apps/api/`) |
+| API backend — auth, vault, transmission, check-in, relay, journal, admin, facturation, dashboard, tickets, jobs | ✅ 94 endpoints, 291 tests d'intégration (`apps/api/`) |
 | Cœur crypto de l'app (seed, clés, coffre, Shamir, contacts, relay, carnet) | ✅ `packages/crypto-core`, 32 tests + 1 bout en bout contre l'API |
 | Client API partagé (mobile, back office web) | ✅ `packages/api-client`, testé contre l'API |
 | Logique de l'app (PIN, device, onboarding, session, coffre, transmission, check-in, carnet, parcours du contact) | ✅ `packages/app-core`, testé sous Node et contre l'API |
@@ -22,7 +22,7 @@ d'implémentation.
 | Page web du contact (pour qui n'installe pas l'app) | ✅ `apps/web-relay`, Vite, même logique que l'app (`app-core`) |
 | API backend — logs API, fournisseur de paiement | ⬜ À faire |
 | App mobile | ⬜ Non démarré |
-| Back office (interface) | 🟡 Lot 1 livré (connexion TOTP, tableau de bord, utilisateurs) — `packages/admin-core` + `apps/web-admin` (React, Vite), décisions dans `docs/backoffice.md` ; lots 2 et 3 à faire |
+| Back office (interface) | 🟡 Lots 1 et 2 livrés (connexion TOTP, tableau de bord, utilisateurs, transmissions, questions, configuration) — `packages/admin-core` + `apps/web-admin` (React, Vite), décisions dans `docs/backoffice.md` ; lot 3 (facturation, tickets, monitoring) à faire |
 | Smart contract Arbitrum | ⬜ Proposition reçue le 12/09, revue dans `docs/smart-contract.md` — à retravailler avant intégration |
 
 ## Documentation

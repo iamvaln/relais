@@ -45,7 +45,9 @@ export class ApiClient {
     this.baseUrl = options.baseUrl.replace(/\/+$/, '')
     this.jar = options.cookieJar ?? new NativeCookieJar()
     this.language = options.language ?? 'fr'
-    this.fetchImpl = options.fetch ?? fetch
+    // Détaché de l'instance : dans un navigateur, window.fetch appelé comme méthode d'un autre objet lève « Illegal invocation ».
+    const impl = options.fetch ?? fetch
+    this.fetchImpl = (input, init) => impl(input, init)
     this.onSessionLost = options.onSessionLost
   }
 

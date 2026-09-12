@@ -24,7 +24,7 @@ tickets — `docs/backend.md` §3). Deux workspaces :
 | Lot | Contenu | État |
 |---|---|---|
 | 1 | Connexion email + mot de passe + TOTP, session 8 h, coquille et menu par rôle, tableau de bord (KPIs, alertes, santé des services), utilisateurs (liste filtrable et paginée, fiche, débloquer, regénérer l'OTP, suspendre, changer l'email, supprimer RGPD avec double confirmation) | ✅ |
-| 2 | Transmissions (liste, détail, étendre l'escrow, relancer, annuler, débloquer un contact), questions (bibliothèque, ajout, modification, archivage), configuration (BO-05) | ⬜ |
+| 2 | Transmissions (liste filtrée et paginée, détail en statuts et compteurs, étendre l'escrow +24/48 h, relancer, annuler, débloquer un contact), questions (bibliothèque filtrable, ajout, modification, archivage), configuration (BO-05, par catégorie, validation typée, double confirmation) | ✅ |
 | 3 | Facturation (vue d'ensemble, abonnements, changement de plan, extension, export CSV), tickets, monitoring (santé, audit) | ⬜ |
 
 ## 2. Décisions (12 septembre 2026)
@@ -39,6 +39,19 @@ tickets — `docs/backend.md` §3). Deux workspaces :
 | Filtres | Les filtres et la page de la liste des utilisateurs vivent dans l'URL (partageables, le bouton retour les garde). |
 | Suppression RGPD | Double confirmation : motif obligatoire et saisie du mot SUPPRIMER (DELETE en anglais). |
 | Zéro-connaissance | Les écrans ne montrent que des métadonnées ; la fiche le rappelle. Aucun champ chiffré n'est demandé à l'API. |
+
+### Lot 2 (12 septembre 2026)
+
+| Sujet | Décision |
+|---|---|
+| Configuration : double confirmation (BO-05) | **Toutes les clés, quelle que soit la catégorie** : motif obligatoire et ressaisie du nom de la clé (`configChangeConfirmed`). Réservé au super_admin et rare ; la règle unique évite de débattre clé par clé. Alternatives écartées : `dms.*` et `security.*` seulement ; motif seul. |
+| Configuration : saisie typée | Le formulaire saisit du texte ; admin-core le convertit selon `config_type` (`int`, `bool`, `array_int` « 7, 14, 21 » ou `[7,14,21]`, `json`, `string`) et refuse avant l'appel ce que l'API refuserait (`VALIDATION_ERROR`). L'effet est immédiat, rappelé en tête d'écran. |
+| Questions : import CSV en lot | **Reporté.** L'API n'a pas d'endpoint d'import ; la bibliothèque seedée couvre le lancement et l'ajout unitaire suffit. Un `POST /admin/questions/import` (validation ligne par ligne, rapport d'erreurs) viendra si le besoin se confirme — consigné dans `docs/open-questions.md` §E. |
+| Questions : statut par défaut | La liste ouvre sur les questions **actives** (`status=all` dans l'URL retire le filtre) ; l'archivage demande un motif et rappelle que les usages existants restent. |
+| Transmissions : actions par rôle | Même grille que l'API (`allowedTransmissionActions`) : support débloque un contact ; admin étend l'escrow et relance ; super_admin annule, avec motif et saisie du mot ANNULER (CANCEL). Une transmission complétée, annulée ou expirée n'a plus d'action. |
+| Transmissions : rafraîchissement | La liste se recharge toutes les 60 s (TTL de l'escrow) ; le détail se met à jour depuis la réponse de chaque action. |
+| `api-client` dans un navigateur | Bug corrigé dans ce lot : `fetch` était appelé comme méthode de l'instance, ce que Chrome et Firefox refusent (« Illegal invocation ») — les tests sous Node ne le voyaient pas. Le lot 1 et la page web du contact ne pouvaient donc pas joindre l'API depuis un navigateur. Test reproduit avec un `fetch` strict sur `this` (`apps/api/test/api-client.test.ts`). |
+| Vérification visuelle | Parcours joué dans Chromium (Playwright, hors dépôt) contre l'API réelle : connexion, déblocage d'un contact, extension d'escrow, ajout d'une question, modification de `dms.escrow_ttl_hours` avec ressaisie de la clé, bascule EN. |
 
 ## 3. Lancer
 

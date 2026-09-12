@@ -7,7 +7,9 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { ApiError } from '@relais/api-client'
 import { AdminClient, AdminSession, MemorySessionStore, canAccess } from '@relais/admin-core'
 import { createAdmin } from '../src/api/admin/bootstrap.js'
-import { closeAll, getApp, registerUser, resetState } from './helpers.js'
+import { api, closeAll, getApp, registerUser, resetState } from './helpers.js'
+import { makeOwner, openTransmission } from './transmission-helpers.js'
+import { prisma } from '../src/lib/prisma.js'
 
 let baseUrl = ''
 beforeAll(async () => {
@@ -146,5 +148,115 @@ describe('BO-02 utilisateurs', () => {
     expect((await d.client.users.unblock(u.userId, 'x')).id).toBe(u.userId)
     expect(await d.client.users.suspend(u.userId, 'x').catch((e: unknown) => e)).toMatchObject({ status: 403, code: 'AUTH_FORBIDDEN' })
     expect(await d.client.users.remove(u.userId, 'x').catch((e: unknown) => e)).toMatchObject({ status: 403, code: 'AUTH_FORBIDDEN' })
+  })
+})
+
+// --- Lot 2 : BO-03, BO-04, BO-05 ------------------------------------------------------
+
+describe('BO-03 transmissions', () => {
+  it('liste filtrée, détail sans identité, étendre l’escrow, relancer, débloquer un contact, annuler', async () => {
+    const o = await makeOwner()
+    const { transmissionId, tokens } = await openTransmission(o)
+    for (let i = 0; i < 5; i++) await (await api()).post(`/relay/${tokens.contact2}/verify`).send({ failed: true })
+    const a = await adminAccount()
+    const d = device()
+    await d.session.login({ email: a.email, password: PASSWORD, code: codeFor(a.totp_secret) })
+
+    const list = await d.client.transmissions.list()
+    expect(list.total).toBe(1)
+    expect(list.items[0]).toMatchObject({ id: transmissionId, status: 'triggered', schema: { n: 2, m: 2 }, contacts_notified: 2, escrow_active: true })
+    expect((await d.client.transmissions.list({ status: 'completed' })).items).toEqual([])
+
+    const detail = await d.client.transmissions.get(transmissionId)
+    expect(detail.user_id).toBe(o.userId)
+    expect(detail.contacts).toHaveLength(2)
+    const blocked = detail.contacts.find((c) => c.blocked)!
+    expect(blocked).toMatchObject({ status: 'failed', fail_count: 5 })
+    expect(JSON.stringify(detail)).not.toContain('example.cm')
+
+    const extended = await d.client.transmissions.extendEscrow(transmissionId, 24, 'délai demandé par la famille')
+    expect(extended.escrow_extended_count).toBe(1)
+    expect(new Date(extended.escrow_expires_at).getTime() - new Date(detail.escrow_expires_at).getTime()).toBe(24 * 3600 * 1000)
+    expect(await d.client.transmissions.notify(transmissionId, 'relance')).toEqual({ notified: 1 })
+    expect(await d.client.transmissions.unblockContact(transmissionId, blocked.id, 'appel du contact')).toMatchObject({ id: blocked.id, blocked: false, fail_count: 0, status: 'notified' })
+
+    const cancelled = await d.client.transmissions.cancel(transmissionId, 'owner vivant, joint par téléphone')
+    expect(cancelled).toMatchObject({ status: 'cancelled', cancellation_reason: 'owner vivant, joint par téléphone', escrow_active: false })
+    expect(cancelled.audit.map((l) => l.action).sort()).toEqual(['CONTACT_UNBLOCK', 'ESCROW_EXTEND', 'TRANSMISSION_CANCEL', 'TRANSMISSION_NOTIFY'])
+    const again = await d.client.transmissions.notify(transmissionId, 'x').catch((e: unknown) => e)
+    expect(again).toMatchObject({ status: 409, code: 'TRANSMISSION_ALREADY_ACTIVE' })
+  })
+
+  it('support : débloque un contact, mais ni extension ni annulation (403)', async () => {
+    const o = await makeOwner()
+    const { transmissionId } = await openTransmission(o)
+    const a = await adminAccount('support')
+    const d = device()
+    await d.session.login({ email: a.email, password: PASSWORD, code: codeFor(a.totp_secret) })
+    const detail = await d.client.transmissions.get(transmissionId)
+    expect(await d.client.transmissions.unblockContact(transmissionId, detail.contacts[0]!.id, 'x')).toMatchObject({ blocked: false })
+    expect(await d.client.transmissions.extendEscrow(transmissionId, 24, 'x').catch((e: unknown) => e)).toMatchObject({ status: 403, code: 'AUTH_FORBIDDEN' })
+    expect(await d.client.transmissions.cancel(transmissionId, 'x').catch((e: unknown) => e)).toMatchObject({ status: 403, code: 'AUTH_FORBIDDEN' })
+  })
+})
+
+// La bibliothèque survit à resetState : un libellé distinct de celui d'admin.test.ts.
+const QUESTION = {
+  text_fr: 'Quel était le nom de votre premier instituteur ?',
+  text_en: 'What was the name of your first teacher?',
+  category: 'childhood',
+  usage_type: 'secret_question',
+  reliability_score: 9,
+  risk_notes: 'Stable, privé, non public.',
+} as const
+
+describe('BO-04 questions', () => {
+  it('bibliothèque filtrable, ajout, doublon refusé, modification, archivage', async () => {
+    const a = await adminAccount('admin')
+    const d = device()
+    await d.session.login({ email: a.email, password: PASSWORD, code: codeFor(a.totp_secret) })
+
+    const secret = await d.client.questions.list({ usage_type: 'secret_question', status: 'active' })
+    expect(secret.length).toBeGreaterThanOrEqual(31)
+    expect(secret.every((q) => q.usage_type === 'secret_question' && q.status === 'active')).toBe(true)
+
+    const created = await d.client.questions.create(QUESTION)
+    expect(created).toMatchObject({ ...QUESTION, status: 'active', usage_count: 0 })
+    const dup = await d.client.questions.create({ ...QUESTION, text_en: 'Other wording' }).catch((e: unknown) => e)
+    expect(dup).toMatchObject({ status: 409, code: 'QUESTION_DUPLICATE' })
+
+    const updated = await d.client.questions.update(created.id, { reliability_score: 4, status: 'review' })
+    expect(updated).toMatchObject({ id: created.id, reliability_score: 4, status: 'review' })
+    const archived = await d.client.questions.archive(created.id, 'score trop bas')
+    expect(archived.status).toBe('archived')
+    expect((await d.client.questions.list({ status: 'archived' })).map((q) => q.id)).toContain(created.id) // d'autres tests archivent aussi
+    expect(await prisma().audit_logs.count({ where: { target_id: created.id, action: { in: ['QUESTION_ADD', 'QUESTION_UPDATE', 'QUESTION_ARCHIVE'] } } })).toBe(3)
+  })
+})
+
+describe('BO-05 configuration', () => {
+  it('super_admin : lecture typée, modification avec motif, valeur mal typée refusée ; admin : 403', async () => {
+    const sa = await adminAccount()
+    const d = device()
+    await d.session.login({ email: sa.email, password: PASSWORD, code: codeFor(sa.totp_secret) })
+    const all = await d.client.config.list()
+    expect(all.find((c) => c.key === 'vault.question_min_score')).toMatchObject({ value: 6, config_type: 'int', category: 'vault', updated_by: null })
+    expect(all.find((c) => c.key === 'dms.relance_intervals_days')?.value).toEqual([7, 14, 21])
+
+    try {
+      const updated = await d.client.config.update('vault.question_min_score', 10, 'durcissement')
+      expect(updated).toMatchObject({ key: 'vault.question_min_score', value: 10, updated_by: sa.id })
+      const bad = await d.client.config.update('vault.question_min_score', 'sept', 'x').catch((e: unknown) => e)
+      expect(bad).toMatchObject({ status: 400, code: 'VALIDATION_ERROR' })
+      const log = await prisma().audit_logs.findFirstOrThrow({ where: { action: 'CONFIG_UPDATE' } })
+      expect(log).toMatchObject({ target_id: 'vault.question_min_score', reason: 'durcissement' })
+    } finally {
+      await prisma().app_config.update({ where: { key: 'vault.question_min_score' }, data: { value: '6', updated_by: null } })
+    }
+
+    const admin = await adminAccount('admin')
+    const d2 = device()
+    await d2.session.login({ email: admin.email, password: PASSWORD, code: codeFor(admin.totp_secret) })
+    expect(await d2.client.config.list().catch((e: unknown) => e)).toMatchObject({ status: 403, code: 'AUTH_FORBIDDEN' })
   })
 })

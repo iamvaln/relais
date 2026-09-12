@@ -72,3 +72,23 @@ describe('auth', () => {
     expect(denied).toMatchObject({ status: 403, code: 'AUTH_STEPUP_REQUIRED' })
   })
 })
+
+describe('dans un navigateur', () => {
+  it('window.fetch refuse d’être appelé comme méthode (Illegal invocation) : le client l’appelle détaché, fourni ou global', async () => {
+    const real = globalThis.fetch
+    // Même contrainte que Chrome et Firefox : `this` doit être absent ou l'objet global.
+    const strict = function (this: unknown, ...args: Parameters<typeof fetch>) {
+      if (this !== undefined && this !== globalThis) throw new TypeError("Failed to execute 'fetch' on 'Window': Illegal invocation")
+      return real(...args)
+    } as typeof fetch
+    globalThis.fetch = strict
+    try {
+      const provided = new ApiClient({ baseUrl, cookieJar: new MemoryCookieJar(), fetch: strict })
+      expect((await provided.get<{ status: string }>('/health')).status).toBe('ok')
+      const global = new ApiClient({ baseUrl, cookieJar: new MemoryCookieJar() })
+      expect((await global.get<{ status: string }>('/health')).status).toBe('ok')
+    } finally {
+      globalThis.fetch = real
+    }
+  })
+})

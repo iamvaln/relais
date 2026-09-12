@@ -18,3 +18,27 @@ describe('allowedActions', () => {
     expect(allowedActions('finance')).toEqual([])
   })
 })
+
+describe('lot 2 — transmissions', () => {
+  it('filtre de la liste depuis l’URL : statut et page', async () => {
+    const { transmissionsFilterFromParams } = await import('../src/screens/transmissions')
+    expect(transmissionsFilterFromParams(new URLSearchParams('?status=in_progress&page=2'))).toEqual({ status: 'in_progress', page: 2, limit: 20 })
+    expect(transmissionsFilterFromParams(new URLSearchParams(''))).toEqual({ status: '', page: 1, limit: 20 })
+  })
+
+  it('actions par rôle (grille BO-03) : support débloque ; admin étend et relance ; super_admin annule ; finance rien', async () => {
+    const { allowedTransmissionActions } = await import('../src/screens/transmission')
+    expect(allowedTransmissionActions('support')).toEqual(['unblock'])
+    expect(allowedTransmissionActions('admin')).toEqual(['extend', 'notify', 'unblock'])
+    expect(allowedTransmissionActions('super_admin')).toEqual(['extend', 'notify', 'cancel', 'unblock'])
+    expect(allowedTransmissionActions('finance')).toEqual([])
+  })
+})
+
+describe('lot 2 — questions', () => {
+  it('filtre depuis l’URL : usage, statut (actives par défaut), catégorie', async () => {
+    const { questionsFilterFromParams } = await import('../src/screens/questions')
+    expect(questionsFilterFromParams(new URLSearchParams('?usage_type=journal&category=work'))).toEqual({ usage_type: 'journal', status: 'active', category: 'work' })
+    expect(questionsFilterFromParams(new URLSearchParams('?status=all'))).toEqual({ usage_type: '', status: '', category: '' })
+  })
+})
