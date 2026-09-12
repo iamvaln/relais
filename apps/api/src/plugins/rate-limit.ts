@@ -62,6 +62,8 @@ export const limits = {
   relayRead: { max: 30, timeWindow: '1 minute', keyGenerator: (r: FastifyRequest) => `ip:${r.ip}` },
   /** POST /relay/:token/* — 3 / min / IP (§7.1) */
   relayWrite: { max: 3, timeWindow: '1 minute', keyGenerator: (r: FastifyRequest) => `ip:${r.ip}` },
+  /** Audit LOW-15 : en plus des 5 tentatives par token, un plafond par IP devant le handler. */
+  relayVerify: { max: 10, timeWindow: '1 minute', keyGenerator: (r: FastifyRequest) => `ip:${r.ip}` },
   /** POST /admin/auth/login — 5 / 15 min / IP (§7.1) */
   adminLogin: { max: 5, timeWindow: '15 minutes', keyGenerator: (r: FastifyRequest) => `ip:${r.ip}` },
   /** GET /admin/* — 120 / min / admin (§7.1) */

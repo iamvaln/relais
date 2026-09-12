@@ -458,6 +458,14 @@ export async function activate(userId: string, body: ActivateBody): Promise<{ ac
   if (body.contacts.length < 2) notConfigured('Au moins deux contacts de confiance sont nécessaires.')
   if (body.schema.m > body.contacts.length) notConfigured('M ne peut pas dépasser le nombre de contacts.')
   if (!body.contacts.some((c) => c.roles.k1)) notConfigured('Au moins un contact doit détenir le rôle K1 (comptes & accès).')
+  // Audit LOW-12 : le déverrouillage exige N parts par catégorie — un rôle
+  // détenu par moins de N contacts ne s'ouvrirait jamais.
+  for (const slot of KEY_SLOTS) {
+    const holders = body.contacts.filter((c) => c.roles[slot]).length
+    if (holders > 0 && holders < body.schema.n) {
+      notConfigured(`Le rôle ${slot.toUpperCase()} est détenu par ${holders} contact(s) : il en faut au moins ${body.schema.n} (N) pour le déverrouiller.`)
+    }
+  }
 
   // Toutes les vérifications avant la moindre écriture.
   const owner = await ownerKey(userId)

@@ -258,4 +258,18 @@ describe('GET /admin/billing/export', () => {
     expect(empty.text.trim().split('\n')).toHaveLength(1)
     await (await api()).get('/admin/billing/export?from=2026-02-01&to=2026-01-01').set(sa.auth).expect(400)
   })
+
+  it('audit LOW-11 : une cellule texte qui commence par = + - @ est neutralisée (apostrophe), \\r est cité ; les montants restent bruts', async () => {
+    const sa = await loginAdmin()
+    const a = await registerUser('a@example.cm')
+    const subA = await subscriptionOf(a.userId)
+    await (await api()).put(`/admin/billing/${subA.id}/plan`).set(sa.auth).send({ plan: 'premium', provider_ref: '@SUM(1)', reason: '=HYPERLINK("http://evil")' }).expect(200)
+    await (await api()).put(`/admin/billing/${subA.id}/plan`).set(sa.auth).send({ plan: 'free', reason: 'ligne\rsuivante' }).expect(200)
+    const today = new Date().toISOString().slice(0, 10)
+    const r = await (await api()).get(`/admin/billing/export?from=${today}&to=${today}`).set(sa.auth).expect(200)
+    const lines = r.text.split('\n')
+    expect(lines[1]).toContain(`,10000,XAF,'@SUM(1),"'=HYPERLINK(""http://evil"")"`)
+    expect(lines[2]).toContain(',"ligne\rsuivante"')
+    expect(r.text).not.toMatch(/,=HYPERLINK/)
+  })
 })

@@ -291,7 +291,7 @@ export async function changeEmail(adminId: string, id: string, body: EmailChange
  */
 export async function deleteUser(adminId: string, id: string, reason: string, ctx: RequestContext): Promise<{ deleted: true }> {
   const u = await userOrThrow(id)
-  if (u.account_status === 'deleted') throw new AppError('TRANSMISSION_ALREADY_ACTIVE', { message: 'Compte déjà supprimé.' })
+  if (u.account_status === 'deleted') throw new AppError('USER_ALREADY_DELETED')
   const now = new Date()
   const store = objectStore()
   await store.deletePrefix(vaultPrefix(id))

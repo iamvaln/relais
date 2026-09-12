@@ -26,6 +26,14 @@ class QuietLogController extends LogController {
   }
 }
 
+/**
+ * Audit LOW-15 : sur une route inconnue, Fastify n'a pas de motif de route —
+ * on n'écrit jamais l'URL brute (un lien /relay/<token> mal tapé y passerait).
+ */
+export function loggedPath(req: { routeOptions: { url: string | undefined }; url: string }): string {
+  return req.routeOptions.url ?? '(unmatched)'
+}
+
 export async function buildApp(): Promise<FastifyInstance> {
   const app = Fastify({
     logger: {
@@ -54,7 +62,7 @@ export async function buildApp(): Promise<FastifyInstance> {
         requestId: req.id,
         userId: req.user ? sha256Hex(req.user.id).slice(0, 16) : undefined,
         method: req.method,
-        path: req.routeOptions.url ?? req.url,
+        path: loggedPath(req),
         statusCode: reply.statusCode,
         duration: Math.round(reply.elapsedTime),
         ip: sha256Hex(req.ip).slice(0, 16),

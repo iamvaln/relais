@@ -440,9 +440,18 @@ describe('POST /transmission/activate', () => {
     expect(r.body.error.code).toBe('TRANSMISSION_NOT_CONFIGURED')
   })
 
-  it('refuse une part manquante pour un rôle détenu', async () => {
+  it('audit LOW-12 : refuse un rôle détenu par moins de N contacts (jamais déverrouillable), en nommant le rôle', async () => {
     const o = await owner()
     const cs = await contacts(o, [{ k1: true, k2: true }, { k1: true }])
+    const r = await activate(o, buildActivationBody(o.keys, cs, { n: 2, m: 2 }))
+    expect(r.status).toBe(409)
+    expect(r.body.error.code).toBe('TRANSMISSION_NOT_CONFIGURED')
+    expect(r.body.error.message).toContain('K2')
+  })
+
+  it('refuse une part manquante pour un rôle détenu', async () => {
+    const o = await owner()
+    const cs = await contacts(o, [{ k1: true, k2: true }, { k1: true, k2: true }])
     const body = buildActivationBody(o.keys, cs)
     body.contacts[0]!.shares.k2 = null
     const r = await activate(o, body)
@@ -473,7 +482,7 @@ describe('POST /transmission/activate', () => {
 
   it('DEC-29 : une seule signature de part invalide rejette toute l’activation, sans rien persister', async () => {
     const o = await owner()
-    const cs = await contacts(o, [{ k1: true }, { k1: true, k2: true }])
+    const cs = await contacts(o, [{ k1: true, k2: true }, { k1: true, k2: true }])
     const body = buildActivationBody(o.keys, cs)
     const impostor = buildShare(generateDeviceKeys(), 22)
     body.contacts[1]!.shares.k2 = { ...body.contacts[1]!.shares.k2!, sig: impostor.sig }
@@ -507,7 +516,7 @@ describe('POST /transmission/activate', () => {
 
   it('active : parts stockées et hachées, verify_token, statut, check-in planifié, contacts prévenus (DEC-30)', async () => {
     const o = await owner()
-    const cs = await contacts(o, [{ k1: true, k2: true }, { k1: true, k3: true }])
+    const cs = await contacts(o, [{ k1: true, k2: true }, { k1: true, k2: true }])
     const body = buildActivationBody(o.keys, cs, { silence: 6, frequency: 2 })
     const before = Date.now()
     const r = await activate(o, body)
@@ -523,7 +532,7 @@ describe('POST /transmission/activate', () => {
     })
     expect(Date.parse(cfg.body.data.activated_at)).toBeGreaterThanOrEqual(before - 1000)
     expect(cfg.body.data.contacts[0].shares).toEqual({ k1: true, k2: true, k3: false })
-    expect(cfg.body.data.contacts[1].shares).toEqual({ k1: true, k2: false, k3: true })
+    expect(cfg.body.data.contacts[1].shares).toEqual({ k1: true, k2: true, k3: false })
 
     // Chaque part est sur le stockage objet, à un chemin choisi par le serveur, et hachée en base
     const row = await prisma().trusted_contacts.findUniqueOrThrow({ where: { id: cs[0]!.id } })
@@ -590,7 +599,7 @@ describe('POST /transmission/activate', () => {
 const DAY = 24 * 3600 * 1000
 
 async function activated(o: Owner): Promise<ActivationContact[]> {
-  const cs = await contacts(o, [{ k1: true, k2: true }, { k1: true }])
+  const cs = await contacts(o, [{ k1: true, k2: true }, { k1: true, k2: true }])
   const r = await activate(o, buildActivationBody(o.keys, cs))
   expect(r.status).toBe(200)
   return cs

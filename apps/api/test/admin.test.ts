@@ -155,7 +155,7 @@ describe('GET /admin/users', () => {
     await (await api()).get('/admin/users').set(support.auth).expect(200)
     const finance = await adminWithRole('finance')
     const r = await (await api()).get('/admin/users').set(finance.auth).expect(403)
-    expect(r.body.error.code).toBe('AUTH_STEPUP_REQUIRED')
+    expect(r.body.error.code).toBe('AUTH_FORBIDDEN') // audit LOW-15 : un refus de rôle n'est pas un défaut de step-up
   })
 })
 
@@ -301,7 +301,8 @@ describe('DELETE /admin/users/:id (RGPD)', () => {
     expect(log).toMatchObject({ admin_id: sa.id, target_id: o.userId, reason: 'demande RGPD' })
     expect(JSON.stringify(log)).not.toContain('adjoua')
 
-    await (await api()).delete(`/admin/users/${o.userId}`).set(sa.auth).send({ reason: 'x' }).expect(409)
+    const twice = await (await api()).delete(`/admin/users/${o.userId}`).set(sa.auth).send({ reason: 'x' }).expect(409)
+    expect(twice.body.error.code).toBe('USER_ALREADY_DELETED') // audit LOW-15
   })
 })
 

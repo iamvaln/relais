@@ -13,10 +13,10 @@ export async function relayRoutes(app: FastifyInstance): Promise<void> {
     async (req) => ok(await relay.readLink(req.params.token)),
   )
 
-  // Les tentatives sont comptées par le handler (5 par token, puis 24 h) : pas de limiteur générique ici.
+  // Les tentatives sont comptées par le handler (5 par token, puis 24 h) ; le limiteur par IP est un plafond en amont (audit LOW-15).
   app.post<{ Params: TokenParams; Body: VerifyBody }>(
     '/:token/verify',
-    { schema: { params: tokenParams, body: verifyBody } },
+    { schema: { params: tokenParams, body: verifyBody }, config: { rateLimit: limits.relayVerify } },
     async (req) => ok(await relay.verify(req.params.token, req.body)),
   )
 
