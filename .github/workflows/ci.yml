@@ -1,6 +1,7 @@
 # CI — typecheck, lint, tests d'intégration sur PostgreSQL 16 + Redis réels,
-# et tests SQL du schéma. Reproduit ce qu'un contributeur lance en local
-# (scripts/dev-services.sh start && npm test).
+# tests SQL du schéma, et contrat Arbitrum (Foundry). Reproduit ce qu'un
+# contributeur lance en local (scripts/dev-services.sh start && npm test ;
+# cd contracts && forge test).
 
 name: CI
 
@@ -96,3 +97,24 @@ jobs:
         run: |
           psql -d relais_ci -v ON_ERROR_STOP=1 -q -f prisma/tests/smoke.sql
           psql -d relais_ci -v ON_ERROR_STOP=1 -q -f prisma/tests/seed_checks.sql
+
+  contract:
+    name: Contrat — forge fmt, build, tests, gaz
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: contracts
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: v1.5.1   # même version qu'en local ; forge fmt et le gaz en dépendent
+      - run: forge --version
+      - run: forge fmt --check
+      - run: forge build --sizes
+      - run: forge test -vv
+      - name: Gaz des tests unitaires inchangé (.gas-snapshot)
+        run: forge snapshot --check --no-match-test "testFuzz_|invariant_"

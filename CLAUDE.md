@@ -56,6 +56,12 @@ justifier explicitement.
   sans framework) : même logique que l'app (`app-core` `relay/`), tout le
   déchiffrement dans le navigateur, `VITE_API_URL` au build, rien de lisible
   écrit dans le navigateur.
+- `contracts/` — le contrat Arbitrum `RelaisDms.sol` (Foundry, `forge-std`
+  en sous-module) : minuteur public, registre d'intégrité, annuaire de
+  pointeurs. L'opérateur écrit, l'owner signe (Ed25519 publiée dans
+  l'événement), `trigger` est sans permission. Tests unitaires, fuzz et
+  invariants dans `test/`, `.gas-snapshot` vérifié en CI. Design et
+  décisions : `docs/smart-contract-v2.md`.
 - `docs/backend.md` — décisions et écarts par rapport aux specs, par module.
   **À lire avant de toucher un module.** `docs/open-questions.md` — points
   tranchés et points ouverts, numérotés. `docs/specs/` — les specs en
@@ -97,6 +103,7 @@ npm test                             # base recréée depuis les migrations à c
 npm run typecheck && npm run lint
 npm run dev                          # http://localhost:3000/health
 npm run admin:create -w apps/api -- --email … --name … --role super_admin
+git submodule update --init && cd contracts && forge test   # contrat (Foundry)
 ```
 
 Les services de dev s'arrêtent parfois avec le conteneur : `pg_isready -h
@@ -105,8 +112,8 @@ localhost -p 55432 || scripts/dev-services.sh start` avant les tests.
 ## Ce qui n'est pas fait
 
 Logs API (export externe), fournisseur de paiement (encaissement manuel en
-V1), enregistrement Arbitrum (revue de la proposition dans
-`docs/smart-contract.md`, design de la v2 dans `docs/smart-contract-v2.md`,
-rien de codé). L'app mobile (six lots), la page web du contact
+V1), enregistrement Arbitrum (contrat fait, lot 1 ; l'API — clé opérateur, file
+`chain:sync`, réconciliation, packs — et les clients restent à écrire,
+`docs/smart-contract-v2.md` §3 et §4). L'app mobile (six lots), la page web du contact
 et le back office (trois lots) sont faits ; tests Maestro et vérification
 sur device restent à mener. La liste à jour est dans le README et `docs/backend.md` §2.

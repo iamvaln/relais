@@ -321,7 +321,9 @@ L'activation vaut premier check-in : `last_checkin_at = maintenant`,
 L'étape 5 de l'activation (`contract.register()`) n'est pas implémentée :
 pas de service blockchain dans ce lot, `contract_registered` reste `false`.
 Les hashes sont en base et prêts à être poussés. Consigné dans
-`docs/open-questions.md`.
+`docs/open-questions.md`. Le contrat v2 existe depuis le 12/09/2026
+(`contracts/`, `docs/smart-contract-v2.md` §9) ; son branchement dans l'API
+est le lot 2 (§3 du design).
 
 ### Transmission : l'email de désignation porte le prénom que l'owner met dans la sealed box
 

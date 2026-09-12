@@ -1,0 +1,28 @@
+# Contrat RelaisDms (Arbitrum) — design dans docs/smart-contract-v2.md.
+# forge fmt --check, forge build, forge test : voir le job « Contrat » de la CI.
+[profile.default]
+src = "src"
+test = "test"
+out = "out"
+libs = ["lib"]
+solc_version = "0.8.30"
+evm_version = "cancun"
+optimizer = true
+optimizer_runs = 10_000
+bytecode_hash = "none"
+cbor_metadata = false
+gas_reports = ["RelaisDms"]
+
+[fuzz]
+runs = 512
+
+[invariant]
+runs = 128
+depth = 64
+fail_on_revert = false
+
+[fmt]
+line_length = 100
+tab_width = 4
+bracket_spacing = false
+int_types = "long"
