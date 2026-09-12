@@ -18,6 +18,7 @@ import {
   fromBase64,
   generateMnemonic,
   mnemonicToSeed,
+  open,
   openBackup,
   openSecret,
   reconstruct,
@@ -118,10 +119,10 @@ describe('crypto-core ↔ API', () => {
     }
     expect(deposits[1].unlocked).toEqual({ k1: true, k2: true, k3: false })
 
-    // Reconstitution sur le device du contact : N parts → K1 → P2 → D ; secret_enc lisible via K2
+    // Reconstitution sur le device du contact : N parts → K1 → P2 ouvert (P1) → D ; secret_enc lisible via K2
     const data = (await client.get(`/relay/${tokens[0]}/data`).expect(200)).body.data
     const out = await reconstruct(data)
-    expect(Buffer.from(out.categories.k1!.data!)).toEqual(Buffer.from(D))
+    expect(Buffer.from(await open(keys.k1, out.categories.k1!.data!))).toEqual(Buffer.from(D))
     expect(out.categories.k2!.data).toBeNull()
     expect(await openSecret(out.categories.k2!.key, data.secret_enc)).toEqual({ nom: 'Contact 1', role: 'famille', message_personnel: 'Merci 1' })
 

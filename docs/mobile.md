@@ -60,9 +60,17 @@ client HTTP dans `packages/api-client`. L'app ne fait que les brancher.
    API le job quotidien pousse le jour de l'échéance, à la relance 1 et trois
    jours avant la fin d'une pause (avec un email), et reprend une pause
    arrivée à son terme.
-6. **Parcours du contact** (E5, F4) : lien reçu, trois questions, attente,
-   accès déverrouillé, checklist par urgence, « J'ai terminé » — dans l'app
-   par deep link, et sur une page web pour qui n'installe rien.
+6. **Parcours du contact** (E5-US01 à US05, F4, E2-US07) — fait : lien reçu
+   (`relais://relay/:token` dans l'app, `https://<front>/relay/:token` sur
+   la page web `apps/web-relay`), trois questions vérifiées sur le device
+   (les réponses ne partent jamais), échecs déclarés et blocage 24 h,
+   attente des autres contacts, accès déverrouillé (coffre reconstitué en
+   mémoire, checklist Immédiat / Sous 30 jours / À votre discrétion, mots
+   de passe masqués, message personnel, carnet de vie pour le Gardien du
+   souvenir), progression « Fait » gardée localement jusqu'à la fin de
+   l'accès, « J'ai terminé » avec confirmation ; côté API le carnet est
+   remis avec K2 et purgé à la fin. La logique vit dans `app-core`
+   (`relay/`), partagée par l'app et la page web.
 
 ## 3. Décisions (11 et 12 septembre 2026)
 
@@ -89,6 +97,10 @@ client HTTP dans `packages/api-client`. L'app ne fait que les brancher.
 | Push : traçabilité (lot 5) | **Fenêtres du jour, sans table** : le job tourne une fois par jour, chaque envoi est déterminé par le retard (0 jour), le numéro de relance (1) ou les jours restants (3). Aucune migration, aucune trace ; un second run manuel le même jour renverrait le push. Alternative écartée : une table `push_log`. |
 | Push : ce qui part (lot 5) | Vers OneSignal : `external_id = SHA256(user_id)`, un titre et une phrase identiques pour tous, la route à ouvrir. Jamais d'email, de nom, de contenu. L'API n'envoie que si le compte a un abonnement actif (`push_tokens`, déposé par `POST /auth/push-token`, désactivé à la déconnexion). Le SDK est initialisé sans App ID en dev : rien ne part tant que `extra.oneSignalAppId` (ou `EXPO_PUBLIC_ONESIGNAL_APP_ID`) est vide. |
 | Carnet sur le device (lot 5) | **Serveur seulement, déchiffré à la lecture** : les entrées restent des blobs chez Relais, l'app les liste et les déchiffre avec K2 à l'affichage. Pas de cache local : lecture impossible hors ligne, aucun cas de conflit. |
+| Page web du contact (lot 6) | **`apps/web-relay`, page Vite sans framework** : un HTML, TypeScript, crypto-core et app-core embarqués (libsodium en WASM, `Buffer` polyfillé), `VITE_API_URL` au build, construite en CI. Le lien de l'email l'ouvre ; elle propose « Ouvrir dans l'app ». Alternatives écartées : export web de l'app Expo (SQLCipher, OneSignal, SecureStore absents du web), app seule (revenait sur la décision du 11/09). |
+| Données du contact (lot 6) | **En mémoire seulement** : le coffre est reconstitué à chaque ouverture depuis l'escrow (accès 30 jours), rien de lisible n'est écrit sur le téléphone ni dans le navigateur. Seule la progression « Fait » est gardée (SecureStore / localStorage), sous le hachage du token, et expire avec l'accès ; « J'ai terminé » l'efface. |
+| Carnet au Gardien du souvenir (lot 6) | `GET /relay/:token/data` rend `journal` (mois, mode, blob sous K2) au contact qui porte K2 une fois la catégorie déverrouillée ; la purge finale supprime carnet et rétrospectives (E5-US05 « toutes les données chiffrées »). |
+| P2 et fiches (lot 6) | `reconstruct` (crypto-core) ouvre P2 une fois et rend ce que l'owner a scellé : dans l'app, la liste JSON des fiches chiffrées une à une ; app-core déchiffre chaque fiche (Techniques §5.2 décrit P2 = seal(P1) pour un blob unique — la spec est à préciser). |
 | Check-in et carnet (lot 5) | Une entrée déjà écrite ce mois est passée à `POST /checkin/complete` (`journal_entry_id`) pour se rattacher au check-in ; écrite après, elle s'y rattache seule (Fix-09a). « Validé par simple ouverture de l'app » n'est pas retenu, comme côté API. |
 | Rôle dans `secret_enc` (lot 4) | `role` = les rôles détenus, `k1,k2,k3` joints par des virgules ; l'app du contact (lot 6) traduit. |
 | Écart de spec | E6-US03 dit qu'après un changement de mot de passe « K1 K2 K3 sont recalculées, P1 rechiffré ». Depuis DEC-02/05 les clés viennent du seed : rien à rechiffrer. À corriger dans les User Stories. |
@@ -114,6 +126,30 @@ mappe pas `./x.js` vers `x.ts`) ; `Buffer` polyfillé par `src/lib/polyfills.ts`
 `libsodium-wrappers-sumo` aliasé vers `react-native-libsodium`.
 
 ## 5. Vérifications
+
+Lot 6 :
+
+- API (1 test de plus, relay : 25) : `journal` rendu au porteur de K2
+  déverrouillé, absent pour un porteur K1 ; la purge finale supprime
+  carnet et rétrospectives.
+- `app-core` (3 tests sous Node) : checklist par urgence toutes catégories
+  confondues ; progression par lien sans le token en clair, oubliée après
+  l'expiration ; phase du contact (questions → attente → accès → terminé).
+- `app-core` contre l'API réelle (2 tests,
+  `apps/api/test/app-core-relay.test.ts`) : Adjoua (coffre synchronisé,
+  carnet, deux contacts K1+K2), déclenchement, puis Hervé : lien (nom,
+  questions), mauvaises réponses détectées sur le device et déclarées
+  (tentatives comptées), bonnes réponses (casse et accents indifférents),
+  attente 1/2, accès refusé ; Paul répond → 2/2 ; Hervé déverrouille :
+  comptes avec mots de passe, messages, pas de finances (K3 sans porteur),
+  message personnel, carnet, checklist par urgence, accès à + 30 jours ;
+  progression relue par une autre instance ; « J'ai terminé » ×2 → purge,
+  lien clos, progression effacée. Cinq mauvaises réponses → blocage 24 h.
+- `crypto-core` : `reconstruct` rend P2 ouvert (test et parcours bout en
+  bout ajustés).
+- web-relay (2 tests) : token lu depuis `/relay/:token` ou `?token=`,
+  deep link de l'app.
+- Bundle Metro Android et build Vite : construits.
 
 Lot 5 :
 

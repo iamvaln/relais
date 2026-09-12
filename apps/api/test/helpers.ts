@@ -52,6 +52,12 @@ export async function resetState(): Promise<void> {
 }
 
 /** Extrait le code à 6 chiffres du dernier email envoyé. */
+/** Remet les compteurs de débit à zéro (clés rl:*) — pour les parcours qui enchaînent plus de POST /relay que la limite ; la limite elle-même est testée dans relay.test.ts. */
+export async function resetRateLimits(): Promise<void> {
+  const keys = await redis().keys('rl:*')
+  if (keys.length > 0) await redis().del(...keys)
+}
+
 export function lastOtp(): string {
   const last = mailbox.last()
   if (!last) throw new Error('aucun email envoyé')

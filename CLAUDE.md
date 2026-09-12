@@ -31,8 +31,10 @@ justifier explicitement.
   fiches chiffrées dans SQLite, sync 3 s par catégorie, restauration),
   transmission (`transmission/` : contacts chiffrés sur le device, réponses
   secrètes jamais envoyées, activation, vérification annuelle, pause),
-  check-in (`checkin/`) et carnet (`journal/` : entrées sous K2 déchiffrées
-  à la lecture, Wrapped calculé sur le device).
+  check-in (`checkin/`), carnet (`journal/` : entrées sous K2 déchiffrées
+  à la lecture, Wrapped calculé sur le device) et parcours du contact
+  (`relay/` : réponses vérifiées sur le device, coffre reconstitué en
+  mémoire, progression locale).
   Tests sous Node dans `test/` (vraie SQLite via `node:sqlite`), parcours
   contre l'API réelle dans `apps/api/test/app-core*.test.ts`.
 - `apps/mobile/` — l'app React Native (Expo SDK 57, Expo Router, Zustand,
@@ -41,6 +43,10 @@ justifier explicitement.
   sans extension (Metro), `Buffer` polyfillé, alias libsodium dans
   `metro.config.js` ; `npx expo export` vérifie le bundle. Notes, lots et
   décisions : `docs/mobile.md`.
+- `apps/web-relay/` — la page web du parcours du contact (Vite, TypeScript
+  sans framework) : même logique que l'app (`app-core` `relay/`), tout le
+  déchiffrement dans le navigateur, `VITE_API_URL` au build, rien de lisible
+  écrit dans le navigateur.
 - `docs/backend.md` — décisions et écarts par rapport aux specs, par module.
   **À lire avant de toucher un module.** `docs/open-questions.md` — points
   tranchés et points ouverts, numérotés. `docs/specs/` — les specs en
@@ -90,6 +96,6 @@ localhost -p 55432 || scripts/dev-services.sh start` avant les tests.
 ## Ce qui n'est pas fait
 
 Logs API (export externe), fournisseur de paiement (encaissement manuel en
-V1), enregistrement Arbitrum, app mobile lot 6 (parcours du contact — socle,
-cœur crypto, onboarding, sécurité, coffre, transmission, check-in et carnet
-sont faits), interface du back office. La liste à jour est dans le README et `docs/backend.md` §2.
+V1), enregistrement Arbitrum, interface du back office. L'app mobile (six
+lots) et la page web du contact sont faites ; tests Maestro et vérification
+sur device restent à mener. La liste à jour est dans le README et `docs/backend.md` §2.

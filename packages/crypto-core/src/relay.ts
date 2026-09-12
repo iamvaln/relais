@@ -6,13 +6,16 @@
 //                 { failed: true }) ; sinon les parts détenues, déchiffrées,
 //                 prêtes pour POST /relay/:token/verify { shares }
 //   reconstruct : GET /relay/:token/data → pour chaque catégorie, N parts →
-//                 Kj → P2 → P1 → D (mémoire vive)
+//                 Kj → P2 ouvert (mémoire vive). Ce que P2 scelle est ce que
+//                 l'owner a déposé : dans l'app, la liste JSON des fiches
+//                 chiffrées une à une (P1 par fiche, packages/app-core) — la
+//                 couche suivante appartient donc à l'app, pas au cœur.
 
 import { open } from './aead.js'
 import { type Answers, type QuestionIds, type SecretClear, checkVerifyToken, deriveContactKey } from './contacts.js'
 import { type KeySlot, wipe } from './keys.js'
 import { combine } from './shamir.js'
-import { fromBase64, openBackup, toBase64 } from './vault.js'
+import { fromBase64, toBase64 } from './vault.js'
 
 const SLOTS: KeySlot[] = ['k1', 'k2', 'k3']
 
@@ -55,9 +58,9 @@ export interface RelayData {
 
 export interface ReconstructedCategory {
   category: string
-  /** Kj recombinée — à effacer dès que D est lu. */
+  /** Kj recombinée — à effacer dès que le contenu est lu. */
   key: Uint8Array
-  /** D en clair, ou null si l'owner n'avait rien synchronisé dans cette catégorie. */
+  /** Le contenu scellé dans P2 (les lignes chiffrées du coffre), ou null si l'owner n'avait rien synchronisé dans cette catégorie. */
   data: Uint8Array | null
 }
 
@@ -69,12 +72,7 @@ export async function reconstruct(data: RelayData): Promise<{ categories: Partia
     const shares = cat.shares.map(fromBase64)
     const key = combine(shares)
     wipe(...shares)
-    let clear: Uint8Array | null = null
-    if (cat.p2) {
-      const backup = await openBackup(key, fromBase64(cat.p2))
-      wipe(backup.p1)
-      clear = backup.data
-    }
+    const clear = cat.p2 ? await open(key, fromBase64(cat.p2)) : null
     categories[slot] = { category: cat.category, key, data: clear }
   }
   return { categories }
