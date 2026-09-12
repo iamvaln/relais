@@ -54,6 +54,8 @@ const schema = z.object({
   TRUST_PROXY: z.string().optional(),
   APP_URL: z.string().url().default('http://localhost:3000'),
   FRONTEND_URL: z.string().url().default('http://localhost:3000'),
+  /** Origine du back office web (apps/web-admin) — seconde origine CORS. */
+  ADMIN_URL: z.string().url().optional(),
 
   DATABASE_URL: z.string().min(1),
   REDIS_URL: z.string().min(1).default('redis://localhost:6379'),
@@ -138,6 +140,9 @@ const schema = z.object({
   })
   .refine((e) => e.NODE_ENV !== 'production' || (e.FRONTEND_URL.startsWith('https://') && e.APP_URL.startsWith('https://')), {
     message: 'FRONTEND_URL et APP_URL doivent être en https en production',
+  })
+  .refine((e) => e.NODE_ENV !== 'production' || !e.ADMIN_URL || e.ADMIN_URL.startsWith('https://'), {
+    message: 'ADMIN_URL doit être en https en production',
   })
 
 export type Env = z.infer<typeof schema>

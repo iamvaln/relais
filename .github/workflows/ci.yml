@@ -51,12 +51,14 @@ jobs:
         run: sudo apt-get update -q && sudo apt-get install -y -q postgresql-client redis-tools
       - run: npm ci
       - run: npm run db:generate
-      - name: Packages partagés (crypto-core, api-client, app-core) → dist/
+      - name: Packages partagés (crypto-core, api-client, app-core, admin-core) → dist/
         run: npm run core:build
       - name: Bundle Metro de l'app mobile (Android) — imports, alias libsodium, polyfills
         run: cd apps/mobile && CI=1 npx expo export --platform android --output-dir /tmp/expo-export
       - name: Page web du contact (apps/web-relay) — build Vite
         run: npm run build --workspace apps/web-relay
+      - name: Back office (apps/web-admin) — build Vite
+        run: npm run build --workspace apps/web-admin
       - run: npm run typecheck
       - run: npm run lint
       - run: npm test

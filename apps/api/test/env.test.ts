@@ -44,6 +44,12 @@ describe('audit MEDIUM-8 : garde-fous de configuration en production', () => {
     expect(loadEnv(prod).NODE_ENV).toBe('production')
   })
 
+  it('ADMIN_URL (back office) est facultative, mais en https en production quand elle est posée', () => {
+    expect(loadEnv({ ...prod, ADMIN_URL: undefined }).ADMIN_URL).toBeUndefined()
+    expect(loadEnv({ ...prod, ADMIN_URL: 'https://admin.getrelais.app' }).ADMIN_URL).toBe('https://admin.getrelais.app')
+    expect(() => loadEnv({ ...prod, ADMIN_URL: 'http://admin.getrelais.app' })).toThrow(/ADMIN_URL/)
+  })
+
   it('audit LOW-14b : TOTP_ENC_KEY est obligatoire, 32 caractères minimum, distinct des secrets JWT', () => {
     expect(() => loadEnv({ ...prod, TOTP_ENC_KEY: undefined })).toThrow(/TOTP_ENC_KEY/)
     expect(() => loadEnv({ ...prod, TOTP_ENC_KEY: 'court' })).toThrow(/TOTP_ENC_KEY/)
