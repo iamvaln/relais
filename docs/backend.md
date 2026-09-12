@@ -105,7 +105,7 @@ Le module **auth** de §3.1 v1.1, le module **vault** de §3.3 v1.1, le module
 | `GET /admin/transmissions` · `GET …/:id` | BO-03 : statuts et compteurs, aucune identité de contact |
 | `POST …/extend-escrow` · `POST …/notify` · `DELETE …/:id` · `POST …/contacts/:cid/unblock` | Escrow +24/48 h (2 max), nouveaux liens, annulation, déblocage |
 | `GET` · `POST /admin/questions` · `PUT …/:id` · `PUT …/:id/archive` | BO-04, rôle admin, audité |
-| `GET /admin/config` · `PUT /admin/config/:key` | BO-05, super_admin, validé par type, avant/après audité |
+| `GET /admin/config` · `PUT /admin/config/:key` | BO-05, super_admin, validé par type, avant/après audité ; `billing.trial_days` retirée le 12/09/2026 (sans règle ni effet) |
 | `GET /admin/logs/audit` · `GET /admin/health` | BO-06 |
 | `GET /admin/billing/overview` · `GET /admin/billing/subscriptions` · `GET /admin/billing/export` | BO-07, rôles finance / super_admin ; la liste porte `user_email` et `full_name` et accepte `search` (BO lot 3) ; l'export reste sans email |
 | `PUT /admin/billing/:id/plan` · `POST /admin/billing/:id/extend` | Encaissement manuel, renouvellement, rétrogradation, geste commercial — voir §3 |

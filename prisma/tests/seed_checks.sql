@@ -33,6 +33,10 @@ BEGIN
     SELECT value::INT INTO STRICT m FROM app_config WHERE key = 'dms.relay_max_restarts';
     ASSERT m = 3, 'dms.relay_max_restarts devrait valoir 3, vaut ' || m;
 
+    -- 12/09/2026 : billing.trial_days est retirée — aucune règle d'essai en V1
+    SELECT count(*) INTO n FROM app_config WHERE key = 'billing.trial_days';
+    ASSERT n = 0, 'billing.trial_days devrait avoir été retirée de app_config';
+
     -- E2-US07 : une question de carnet par mois, dans chaque mode
     SELECT count(DISTINCT cycle_month) INTO n FROM checkin_questions
     WHERE usage_type IN ('journal','both') AND status = 'active' AND cycle_month IS NOT NULL;

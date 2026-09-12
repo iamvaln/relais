@@ -245,7 +245,7 @@ corrigent, voir chaque écart en §B) ; spec suivie pour B.5 et B.6, faits.
 |---|---|
 | Assignation d'un ticket à un collègue (BO-02) | **Fait le 12/09/2026** : `GET /admin/admins` (id, nom, rôle, statut — jamais d'email ; rôles support, admin, super_admin) et sélecteur d'assignation dans le détail du ticket. La gestion des comptes admin (création, suspension, reset TOTP) reste en ligne de commande. |
 | Import CSV des questions (BO-04, super_admin) | Aucun endpoint dans l'API ; le back office (lot 2) n'offre que l'ajout unitaire. Reporté (décision du 12/09/2026, `docs/backoffice.md`) : `POST /admin/questions/import` si le besoin se confirme. |
-| `billing.trial_days` (BO-05, défaut 0) | Aucune règle ne dit ce qu'un essai débloque ni comment il finit. Sans effet dans l'API. |
+| `billing.trial_days` (BO-05, défaut 0) | **Retirée le 12/09/2026** (migration `20260916000000`) : aucune règle ne disait ce qu'un essai débloque ni comment il finit, l'API ne la lisait pas, et une clé visible sans effet induit en erreur. À réintroduire avec une règle si le produit veut un essai. BO-05 §5.5 à corriger. |
 | Parcours d'achat in-app (`subscription_upgraded` PostHog) | Aucun fournisseur de paiement ; encaissement manuel via `PUT /admin/billing/:id/plan`. |
 | Alertes dashboard « Storj dégradé » et « espace Storj > 80 % » | **Dégradé : fait le 12/09/2026** — l'API compte ses propres erreurs de stockage (sorted set Redis, 15 min) et le tableau de bord lève `storage_degraded` (haute) à partir de 5. **Espace du bucket** : aucune API d'usage côté Storj ; alerte à configurer chez eux. |
 | « Utilisateurs actifs 30 j » | Mesuré par `sessions.last_used_at`. `users.last_active_at` si une mesure exacte est voulue. |
@@ -265,6 +265,10 @@ corrigent, voir chaque écart en §B) ; spec suivie pour B.5 et B.6, faits.
 ---
 
 ## F. Révision des specs du 12 septembre 2026 — ce qui reste à aligner
+
+> Le texte à remplacer, document par document, est dans
+> [`docs/specs/errata-2026-09.md`](specs/errata-2026-09.md) (12/09/2026) ; cette
+> section se ferme quand les `.docx` l'ont intégré.
 
 La révision reprend B.1 à B.7, D.1 à D.5 et la plupart des points de §E,
 sous forme d'annexes « Corrections vX » ajoutées en fin de document. Vérifiée
