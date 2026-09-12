@@ -72,6 +72,31 @@ export interface StepUpBody {
   action: (typeof STEP_UP_ACTIONS)[number]
 }
 
+/** Abonnement push OneSignal du device (lot 5 mobile) : l'identifiant d'abonnement, jamais un email. */
+export const pushTokenBody = {
+  type: 'object',
+  required: ['token', 'platform'],
+  additionalProperties: false,
+  properties: {
+    token: { type: 'string', minLength: 1, maxLength: 256 },
+    platform: { type: 'string', enum: ['ios', 'android'] },
+  },
+} as const
+export interface PushTokenBody {
+  token: string
+  platform: 'ios' | 'android'
+}
+
+export const pushTokenDeleteBody = {
+  type: 'object',
+  required: ['token'],
+  additionalProperties: false,
+  properties: { token: { type: 'string', minLength: 1, maxLength: 256 } },
+} as const
+export interface PushTokenDeleteBody {
+  token: string
+}
+
 export const keysBody = {
   type: 'object',
   required: ['ed25519_pk'],

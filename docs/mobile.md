@@ -18,7 +18,7 @@ client HTTP dans `packages/api-client`. L'app ne fait que les brancher.
 | Secrets locaux | `expo-secure-store` (`seed_enc_pin` + sel, `seed_enc_bio` + clé gardée avec authentification requise — DEC-01) | `src/lib/device.ts` |
 | Base locale | `expo-sqlite` + SQLCipher (`useSQLCipher`), clé = Argon2id(seed, `relais_sqlite_v1`) posée par `PRAGMA key` ; une fiche = un blob P1 | `src/lib/vault-db.ts`, `src/state/vault.ts` |
 | Biométrie | `expo-local-authentication` (disponibilité) + `requireAuthentication` d'`expo-secure-store` (déverrouillage) | lot 2 |
-| Push | OneSignal (`react-native-onesignal` + `onesignal-expo-plugin`) | lot 5, voir §3 |
+| Push | OneSignal (`react-native-onesignal` + `onesignal-expo-plugin`) | fait au lot 5, voir §3 |
 
 ## 2. Lots (une PR chacun)
 
@@ -48,8 +48,18 @@ client HTTP dans `packages/api-client`. L'app ne fait que les brancher.
    ne peut pas » ; statut sur le tableau de bord ; restauration des contacts
    sur un nouveau device. E3-US04 est sans objet (DEC-23 : le destinataire
    est toujours un contact avec rôle).
-5. **Check-in et carnet** (E4, journal, Wrapped) : mini-jeu, streak, badges,
-   relances push.
+5. **Check-in et carnet** (E4-US01, US02, US04, US05, E2-US07, DEC-31/32) —
+   fait : statut et ligne du tableau de bord, mini-jeu tiré par le serveur
+   avec essais sans limite, validation (série, badges, historique, échéance
+   replanifiée), question du mois proposée juste après ; carnet de vie par
+   mode (essentiel, réflexif, libre), réponse chiffrée sous K2 et signée,
+   relecture déchiffrée, réécriture du mois, suppression signée,
+   rattachement au check-in ; rétrospective annuelle calculée sur le device,
+   déposée chiffrée et signée, export daté ; push OneSignal : alias
+   `SHA256(user_id)`, abonnement déposé à l'API, clic → écran indiqué ; côté
+   API le job quotidien pousse le jour de l'échéance, à la relance 1 et trois
+   jours avant la fin d'une pause (avec un email), et reprend une pause
+   arrivée à son terme.
 6. **Parcours du contact** (E5, F4) : lien reçu, trois questions, attente,
    accès déverrouillé, checklist par urgence, « J'ai terminé » — dans l'app
    par deep link, et sur une page web pour qui n'installe rien.
@@ -75,6 +85,11 @@ client HTTP dans `packages/api-client`. L'app ne fait que les brancher.
 | Email et téléphone du contact (lot 4) | Ajoutés à `secret_enc` (déjà sous K2, déjà remis au contact au relay : il connaît son propre email) et `GET /transmission/config` rend `secret_enc` à l'owner. Un nouveau device restaure nom, email, téléphone, message et rôles avec les 12 mots. Le serveur reste aveugle. Alternative écartée : une quatrième catégorie de backup (migration, API et sync à étendre). |
 | Modifier une transmission active (lot 4) | **Parcours guidé** : un bouton « Modifier la transmission », l'avertissement, le PIN, la désactivation (parts purgées), l'édition libre, puis le récapitulatif et le PIN pour réactiver ; tant que ce n'est pas réactivé, le tableau de bord dit « inactive ». Les écrans d'édition sont verrouillés quand la transmission est active. |
 | PIN et step-up (lot 4) | Le PIN est vérifié sur le device (`PinConfirm`, DEC-26) avant chaque action qui porte un step-up (`edit_contacts`, `edit_transmission`, `activate_transmission`, `delete_transmission`). Créer un contact avant activation ne demande pas de PIN ; le modifier, le retirer, changer schéma ou délais, activer, désactiver, mettre en pause, oui. La reprise après pause, non (l'API non plus). |
+| Push : quoi et quand (lot 5) | Trois envois depuis le job quotidien `deadman:checkin` (09:00 UTC) : le premier balayage après l'échéance (« Un petit signe ? »), la relance 1 (E4-US02 : push + email), et J-3 avant la fin d'une pause (E4-US04 : push + email `pause_ending`). Le job reprend aussi une pause arrivée à son terme (check-in replanifié à + fréquence). |
+| Push : traçabilité (lot 5) | **Fenêtres du jour, sans table** : le job tourne une fois par jour, chaque envoi est déterminé par le retard (0 jour), le numéro de relance (1) ou les jours restants (3). Aucune migration, aucune trace ; un second run manuel le même jour renverrait le push. Alternative écartée : une table `push_log`. |
+| Push : ce qui part (lot 5) | Vers OneSignal : `external_id = SHA256(user_id)`, un titre et une phrase identiques pour tous, la route à ouvrir. Jamais d'email, de nom, de contenu. L'API n'envoie que si le compte a un abonnement actif (`push_tokens`, déposé par `POST /auth/push-token`, désactivé à la déconnexion). Le SDK est initialisé sans App ID en dev : rien ne part tant que `extra.oneSignalAppId` (ou `EXPO_PUBLIC_ONESIGNAL_APP_ID`) est vide. |
+| Carnet sur le device (lot 5) | **Serveur seulement, déchiffré à la lecture** : les entrées restent des blobs chez Relais, l'app les liste et les déchiffre avec K2 à l'affichage. Pas de cache local : lecture impossible hors ligne, aucun cas de conflit. |
+| Check-in et carnet (lot 5) | Une entrée déjà écrite ce mois est passée à `POST /checkin/complete` (`journal_entry_id`) pour se rattacher au check-in ; écrite après, elle s'y rattache seule (Fix-09a). « Validé par simple ouverture de l'app » n'est pas retenu, comme côté API. |
 | Rôle dans `secret_enc` (lot 4) | `role` = les rôles détenus, `k1,k2,k3` joints par des virgules ; l'app du contact (lot 6) traduit. |
 | Écart de spec | E6-US03 dit qu'après un changement de mot de passe « K1 K2 K3 sont recalculées, P1 rechiffré ». Depuis DEC-02/05 les clés viennent du seed : rien à rechiffrer. À corriger dans les User Stories. |
 
@@ -99,6 +114,33 @@ mappe pas `./x.js` vers `x.ts`) ; `Buffer` polyfillé par `src/lib/polyfills.ts`
 `libsodium-wrappers-sumo` aliasé vers `react-native-libsodium`.
 
 ## 5. Vérifications
+
+Lot 5 :
+
+- API (13 tests) : `POST/DELETE /auth/push-token` (un token change de
+  compte, désactivation, plateforme inconnue → 400, session exigée) ;
+  `pushService` (alias = SHA256(user_id), rien sans abonnement actif, rien
+  d'identifiant dans la charge) ; `OneSignalTransport` contre un faux
+  serveur HTTP (clé REST en en-tête, `app_id`, `include_aliases`, textes,
+  route ; erreur HTTP → exception sans la clé) ; job : push le jour de
+  l'échéance et pas le lendemain, rien sans abonnement, relance 1 = email +
+  push, rappel J-3 de fin de pause (email `pause_ending` tracé + push) une
+  seule fois, reprise automatique d'une pause échue (check-in replanifié,
+  relances à zéro), une seule fois.
+- `app-core` (1 test) : `pushExternalId` = SHA256 hex, sans l'identifiant.
+- `app-core` contre l'API réelle (5 tests,
+  `apps/api/test/app-core-checkin.test.ts`) : statut, jeu, mauvaise puis
+  bonne réponse, validation (série 1, badge `first_checkin`, historique,
+  échéance replanifiée) ; sans transmission → code d'erreur ; carnet :
+  question du mois par mode, entrée chiffrée (rien de lisible en base) et
+  signée, relecture, entrée du mois, réécriture du même mois (409 géré),
+  rattachement au check-in, suppression signée qui détache le check-in ;
+  Wrapped refusé sous 6 entrées, puis calculé sur le device (mots, modes,
+  mois, mois le plus long), déposé chiffré, relu déchiffré, export daté ;
+  `wrappedStats` pur.
+- mobile (3 tests) : ligne de check-in selon le statut, une phrase par
+  badge FR/EN, une notification n'ouvre que `/checkin` ou `/transmission`.
+- Bundle Metro Android : construit avec OneSignal et les cinq écrans.
 
 Lot 4 :
 

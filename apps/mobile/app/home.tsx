@@ -2,12 +2,14 @@
 // transmission et check-in (lots 4 et 5), tutoriel du premier compte (E1-US06).
 import { router } from 'expo-router'
 import { useEffect, useState } from 'react'
-import type { VaultCategory } from '@relais/app-core'
+import type { CheckinStatus, VaultCategory } from '@relais/app-core'
 import { t } from '@/i18n'
+import { checkinLine } from '@/lib/checkin'
 import { transmissionStatusLine } from '@/lib/transmission'
 import { secureStorage } from '@/lib/device'
 import { keyStore } from '@/state/keystore'
 import { useSession } from '@/state/session'
+import { checkin } from '@/state/checkin'
 import { refreshTransmission, useTransmission } from '@/state/transmission'
 import { openVault, useSyncError, useVaultVersion } from '@/state/vault'
 import { Body, Button, ErrorText, Screen, Title } from '@/ui'
@@ -24,6 +26,7 @@ export default function Home() {
   const [counts, setCounts] = useState<Record<VaultCategory, number> | null>(null)
   const [lastSync, setLastSync] = useState<string | null | undefined>(undefined)
   const [tutorial, setTutorial] = useState(false)
+  const [checkinStatus, setCheckinStatus] = useState<CheckinStatus | null>(null)
 
   useEffect(() => {
     void (async () => {
@@ -48,6 +51,7 @@ export default function Home() {
   // Statut de la transmission (E3-US06) : hors ligne, la dernière valeur connue reste affichée.
   useEffect(() => {
     refreshTransmission().catch(() => undefined)
+    checkin.status().then(setCheckinStatus, () => undefined)
   }, [])
 
   const dismissTutorial = async () => {
@@ -63,7 +67,7 @@ export default function Home() {
       {lastSync !== undefined && <Body>{lastSync ? t(lang, 'dashboard.lastSync', { date: new Date(lastSync).toLocaleString() }) : t(lang, 'dashboard.neverSynced')}</Body>}
       <ErrorText>{syncError ? t(lang, 'vault.sync.error', { category: t(lang, `vault.category.${syncError}`) }) : null}</ErrorText>
       <Body>{transmissionStatusLine(lang, { status: transmission.config?.status ?? 'inactive', pause_until: transmission.config?.pause_until ?? null, contacts: transmission.contacts.length })}</Body>
-      <Body>{t(lang, 'dashboard.checkin')}</Body>
+      {checkinStatus && <Body>{checkinLine(lang, checkinStatus)}</Body>}
       {tutorial ? (
         <>
           <Title>{t(lang, 'tutorial.title')}</Title>
@@ -80,6 +84,8 @@ export default function Home() {
       ) : (
         <Button title={t(lang, 'dashboard.openVault')} onPress={() => router.push('/vault')} />
       )}
+      <Button title={t(lang, 'checkin.title')} secondary onPress={() => router.push('/checkin')} />
+      <Button title={t(lang, 'journal.title')} secondary onPress={() => router.push('/journal')} />
       <Button title={t(lang, 'transmission.title')} secondary onPress={() => router.push('/transmission')} />
       <Button title={t(lang, 'home.security')} secondary onPress={() => router.push('/settings/security')} />
       <Button

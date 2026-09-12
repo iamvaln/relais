@@ -26,6 +26,8 @@ export type EmailType =
   // v1.4 (Point-1) et Proposal-9 — migration 20260911000000
   | 'contact_designated'
   | 'contact_progress'
+  // Lot 5 mobile (E4-US04) — migration 20260912000000
+  | 'pause_ending'
 
 export interface RenderedEmail {
   subject: string

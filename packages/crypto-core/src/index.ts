@@ -1,6 +1,7 @@
 // @relais/crypto-core — cœur cryptographique côté device.
 // Ni UI, ni stockage, ni réseau : des octets entrent, des octets sortent.
 
+export { ready } from './sodium.js'
 export * from './seed.js'
 export * from './keys.js'
 export * from './aead.js'
