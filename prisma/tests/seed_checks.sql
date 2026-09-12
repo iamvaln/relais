@@ -27,6 +27,12 @@ BEGIN
     ASSERT n >= m, 'moins de ' || m || ' questions secrètes disponibles';
     ASSERT n >= 20, 'seulement ' || n || ' questions secrètes — choix trop pauvre';
 
+    -- D.4 / Schéma v1.5 : le plafond de redémarrage du relay est une ligne de
+    -- config lisible par le back office (l'API a un repli à 3, mais BO-05 la
+    -- montre comme paramètre)
+    SELECT value::INT INTO STRICT m FROM app_config WHERE key = 'dms.relay_max_restarts';
+    ASSERT m = 3, 'dms.relay_max_restarts devrait valoir 3, vaut ' || m;
+
     -- E2-US07 : une question de carnet par mois, dans chaque mode
     SELECT count(DISTINCT cycle_month) INTO n FROM checkin_questions
     WHERE usage_type IN ('journal','both') AND status = 'active' AND cycle_month IS NOT NULL;
