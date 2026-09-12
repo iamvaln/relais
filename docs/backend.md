@@ -62,7 +62,7 @@ Le module **auth** de §3.1 v1.1, le module **vault** de §3.3 v1.1, le module
 | `GET /auth/me` | Profil public — ajout, pratique pour l'app |
 | `POST /auth/pin/step-up` | DEC-25 |
 | `POST /auth/seed/display` | DEC-27 — retourne `{ authorized: true }` |
-| `POST /auth/keys` | **Ajout** — voir §3 |
+| `POST /auth/keys` | **Ajout** — step-up `set_key`, écriture unique et atomique (audit LOW-13) — voir §3 |
 | `PUT /auth/password` | Step-up, ancien mot de passe, révoque les autres sessions |
 | `POST /auth/password/reset-request` | Réponse générique |
 | `POST /auth/password/reset` | OTP + signature Ed25519 — voir §3 |
@@ -71,7 +71,7 @@ Le module **auth** de §3.1 v1.1, le module **vault** de §3.3 v1.1, le module
 | `POST /auth/2fa/setup` · `verify` · `DELETE /auth/2fa` | E6-US02 ; `verify` rend 8 codes de récupération à l'activation et en accepte un (`recovery_code`) au login — voir §3 |
 | `POST /vault/sync` | Blob chiffré + `ts` + signature Ed25519 liant catégorie et horodatage (DEC-07, audit MEDIUM-7 : fenêtre ± 5 min, jamais en arrière), taille plafonnée par `vault.max_size_mb` |
 | `GET /vault/sync-status` | Date et taille par catégorie, lues sur le stockage |
-| `POST /vault/restore` | Renvoie le blob tel quel |
+| `POST /vault/restore` | Renvoie le blob tel quel — exige un challenge Ed25519 vérifié dans les 15 minutes (403 `AUTH_RESTORE_REQUIRED`, audit LOW-13) |
 | `GET /transmission/relais-key` | **Public**, 60/min/IP, cache 24 h — DEC-28 |
 | `GET /transmission/config` | État complet, contacts inclus (jamais `removed`), `secret_enc` de chaque contact rendu à l'owner — voir §3 |
 | `GET /transmission/questions` | Bibliothèque des questions secrètes (BO-04) : actives, `secret_question` ou `both`, score ≥ `vault.question_min_score`, groupées par catégorie |
@@ -83,14 +83,14 @@ Le module **auth** de §3.1 v1.1, le module **vault** de §3.3 v1.1, le module
 | `POST /transmission/activate` | Step-up `activate_transmission` — DEC-29, DEC-30, Proposal-8 (`plain_hash` + `plain_sig` par part), email `contact_designated` — voir §3 |
 | `POST /transmission/pause` · `DELETE /transmission/pause` | E4-US04, 7 / 30 / 90 jours, plafond `dms.pause_max_months` |
 | `DELETE /transmission` | Step-up `delete_transmission`, parts purgées |
-| `POST /transmission/contacts/:id/verify` | Vérification annuelle — attestation signée, voir §3 |
+| `GET /transmission/contacts/:id/verify-challenge` · `POST /transmission/contacts/:id/verify` | Vérification annuelle — challenge serveur (5 min, usage unique) puis attestation signée `SHA256(verify_token ‖ challenge)`, voir §3 |
 | `GET /checkin/status` | Échéance, retard en jours, relances, « validé ce mois » |
 | `GET /checkin/game` · `POST /checkin/game/answer` | Défi côté serveur, 10 réponses/h/user (§7.1) — voir §3 |
 | `POST /checkin/complete` | Consomme le jeton du jeu ; ligne du mois, streak, badge ; replanifie l'échéance |
 | `GET /checkin/history` · `GET /checkin/streak` | Log des mois validés ; streak courant, record, badges |
 | `POST /auth/push-token` · `DELETE /auth/push-token` | Lot 5 mobile : identifiant d'abonnement OneSignal du device (un token, un compte), désactivé au retrait — voir §3 |
 | `GET /relay/:token` | **Public** (token du lien), 30/min/IP : questions, rôles, `verify_token`, Si_enc, `secret_enc`, état |
-| `POST /relay/:token/verify` | `{ failed: true }` ou `{ shares }` (33 octets par rôle : index Shamir + 32) ; part comparée au hash signé à l'activation (422 `RELAY_SHARE_INVALID`) ; 5 tentatives puis blocage 24 h, les autres contacts prévenus ; parts en escrow — voir §3 |
+| `POST /relay/:token/verify` | 10/min/IP (audit LOW-15) ; `{ failed: true }` ou `{ shares }` (33 octets par rôle : index Shamir + 32) ; part comparée au hash signé à l'activation (422 `RELAY_SHARE_INVALID`) ; 5 tentatives puis blocage 24 h, les autres contacts prévenus ; parts en escrow — voir §3 |
 | `GET /relay/:token/status` | Répondu / requis / total, catégories déverrouillées |
 | `GET /relay/:token/data` | Une fois N parts réunies : parts de l'escrow + P2 + `secret_enc`, par rôle détenu ; `journal` (carnet sous K2) pour le porteur de K2 — lot 6, voir §3 |
 | `POST /relay/:token/confirm` | 3/min/IP ; termine et purge quand chaque contact ayant répondu a confirmé |
@@ -152,6 +152,12 @@ Il faut donc un endpoint pour la déposer une fois l'onboarding fini. Sans
 lui, ni la restauration (DEC-06) ni la signature des syncs (DEC-07) ne
 peuvent fonctionner. Enregistrement unique : `AUTH_KEY_ALREADY_SET` ensuite
 (même seed = même clé, il n'y a rien à changer).
+
+Audit LOW-13 : l'endpoint exige un step-up `set_key` — le PIN vient d'être
+posé, l'app l'obtient sans rien demander — et n'écrit que si la clé est
+encore nulle, en une seule requête (`updateMany … WHERE ed25519_pk IS
+NULL`) : un access token volé pendant l'onboarding ne fixe plus la clé, et
+deux enregistrements parallèles ne gagnent pas tous les deux.
 
 ### `sid` dans l'access token, et révocation immédiate
 
@@ -348,10 +354,14 @@ conservés) → modifier → `POST /activate` avec de nouvelles parts signées.
 
 §7.2 : l'owner ressaisit ses réponses, l'app dérive K_i et ouvre
 `verify_token` localement. Le serveur ne voit ni réponses ni K_i ; il ne
-peut que dater l'attestation. `GET /config` expose `verify_token` à l'owner,
-et `POST /contacts/:id/verify` exige `Ed25519.sign(SHA256(verify_token))`
-avec la clé de l'owner — même preuve de possession que le vault (DEC-07).
-Sans cela, n'importe quel porteur d'access token pourrait « vérifier ».
+peut que dater l'attestation. `GET /config` expose `verify_token` à l'owner ;
+l'app demande `GET /contacts/:id/verify-challenge` (nonce de 32 octets,
+Redis `tx:verify`, 5 minutes, consommé à la première tentative) et
+`POST /contacts/:id/verify` exige `{ challenge_id, signature }` avec
+`Ed25519.sign(SHA256(verify_token ‖ challenge))` de la clé de l'owner — même
+preuve de possession que le vault (DEC-07). Sans cela, n'importe quel
+porteur d'access token pourrait « vérifier » ; sans le challenge (audit
+LOW-15), une attestation capturée se rejouait indéfiniment.
 
 ### Transmission : pause = `edit_transmission`
 
@@ -538,6 +548,43 @@ les autres suivent dans des PR dédiées.
   (rotation de clé, ligne corrompue) est journalisée (identifiant haché) et
   ignorée, à l'ouverture d'une transmission comme à la relance admin ; les
   autres contacts reçoivent leur lien.
+
+### Audit de sécurité (12/09/2026) : les constats LOW corrigés
+
+- **Export CSV** (`GET /admin/billing/export`) : une cellule texte qui
+  commence par `=`, `+`, `-`, `@`, tabulation ou `\r` est préfixée d'une
+  apostrophe (un tableur l'exécuterait comme formule) ; `\r` déclenche le
+  quoting. Les montants restent bruts.
+- **Activation** : un rôle détenu par moins de N contacts est refusé
+  (`TRANSMISSION_NOT_CONFIGURED`, le rôle nommé) — le déverrouillage exige N
+  parts par catégorie, il ne s'ouvrirait jamais. Même règle que
+  `checkActivation` dans l'app.
+- **Clé publique** : step-up `set_key` et écriture atomique — voir
+  « `POST /auth/keys` » plus haut. **Restauration** : `POST /vault/restore`
+  exige d'avoir prouvé le seed (`POST /auth/restore/verify`) dans le quart
+  d'heure (Redis `auth:restore:proved`, 403 `AUTH_RESTORE_REQUIRED`) — la
+  preuve prévue par DEC-06 conditionne enfin quelque chose ; l'app la faisait
+  déjà avant de restaurer (`proveSeed`, extrait de `restoreWithWords`).
+- **TOTP** : un code accepté brûle son pas pour ce compte (Redis
+  `auth:2fa:step:u:{id}` / `a:{id}`, écriture Lua atomique, 2 minutes) —
+  rejoué dans sa fenêtre il est refusé, et deux validations parallèles du
+  même code ne donnent qu'une session. Activation, login, désactivation et
+  login admin passent par `verifyTotpOnce`. Les secrets TOTP sont chiffrés en
+  base (AES-256-GCM, `enc1:` ‖ iv ‖ tag ‖ chiffré, clé = SHA256 de
+  `TOTP_ENC_KEY`, nouveau secret obligatoire de 32 caractères, distinct des
+  secrets JWT et HMAC) ; une valeur legacy en clair reste lisible. Le script
+  `admin:create` affiche toujours le secret base32 une fois.
+- **Attestation annuelle** : challenge serveur à usage unique — voir
+  « vérification annuelle » plus haut.
+- **Divers** : un refus de rôle répond `AUTH_FORBIDDEN` (plus
+  `AUTH_STEPUP_REQUIRED`), une seconde suppression `USER_ALREADY_DELETED`
+  (plus `TRANSMISSION_ALREADY_ACTIVE`) ; sur 404 le journal porte
+  `(unmatched)` au lieu de l'URL brute (un lien relay mal tapé n'y finit
+  plus) ; `POST /relay/:token/verify` est plafonné à 10/min/IP devant le
+  compteur de tentatives.
+
+Après cette PR, les quinze constats de l'audit sont traités ; le 423 du login
+reste un choix documenté (E1-US03).
 
 ### Relay : fin de transmission et purge
 
@@ -754,10 +801,10 @@ et d'un stockage vides. Ils couvrent notamment :
 - révocation immédiate après logout, changement et réinitialisation de mot de passe
 - compte suspendu coupé sur un token encore valide
 - step-up : absent → `AUTH_STEPUP_REQUIRED`, mauvaise action → refusé **sans consommer le jti**, replay → refusé, token d'un autre utilisateur → refusé
-- clé publique : 32 bytes exigés, enregistrement unique
-- restauration : bonne signature → vérifié + email ; mauvaise clé → refusé et challenge brûlé ; expiré → refusé
+- clé publique : 32 bytes exigés, step-up `set_key`, enregistrement unique, deux enregistrements parallèles → un seul gagne
+- restauration : bonne signature → vérifié + email ; mauvaise clé → refusé et challenge brûlé ; expiré → refusé ; `POST /vault/restore` refusé sans preuve du seed
 - reset avec clé : signature obligatoire, mauvaise signature n'entame pas l'OTP
-- 2FA : activation, login en deux temps, `temp_token` à usage unique, désactivation avec step-up ; codes de récupération : 8 rendus une fois et hachés, un code remplace le TOTP, usage unique, purgés à la désactivation
+- 2FA : activation, login en deux temps, `temp_token` à usage unique, désactivation avec step-up ; codes de récupération : 8 rendus une fois et hachés, un code remplace le TOTP, usage unique, purgés à la désactivation ; un code TOTP ne sert qu'une fois (rejeu refusé, validations parallèles → une session) ; secret chiffré `enc1:` en base, legacy en clair lisible
 - rate limit : en-têtes exposés, 429 dans l'enveloppe
 - vault : sync sans clé publique → `AUTH_KEY_NOT_SET` ; signature d'une
   autre clé → refusé ; **blob modifié après signature → refusé** ;

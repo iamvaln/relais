@@ -195,7 +195,8 @@ Lot 4 :
   `isEditable`) ; parcours désactiver → modifier / retirer / ajouter →
   réactiver, contacts reprévenus ; vérification annuelle : mauvaises
   réponses détectées sur le device sans appel serveur, bonnes réponses
-  (casse et accents indifférents) attestées et datées ; pause 30 jours et
+  (casse et accents indifférents) attestées sur un challenge serveur à usage
+  unique et datées (audit LOW-15) ; pause 30 jours et
   reprise ; nouveau device : contacts restaurés depuis `secret_enc` avec
   rôles et questions, réponses `null`, activation refusée tant qu'elles
   manquent, restauration idempotente qui garde les réponses ressaisies ;
@@ -235,9 +236,10 @@ Lot 2 :
   authentification, refus → erreur, désactivation), `wipe`.
 - `app-core` contre l'API réelle (4 tests, `apps/api/test/app-core.test.ts`) :
   onboarding complet (compte → OTP → 12 mots → quiz → PIN → clé publique
-  enregistrée → biométrie, mots effacés) ; nouveau device : login puis
-  restauration par les 12 mots (mauvais mots refusés, email de notification,
-  PIN posé) ; mot de passe oublié signé par les 12 mots puis changement avec
+  enregistrée sous step-up `set_key`, audit LOW-13 → biométrie, mots
+  effacés) ; nouveau device : login puis restauration par les 12 mots
+  (mauvais mots refusés, email de notification, PIN posé ; la preuve du seed
+  `proveSeed` ouvre ensuite `POST /vault/restore` pour quinze minutes) ; mot de passe oublié signé par les 12 mots puis changement avec
   step-up qui révoque les autres sessions ; TOTP avec 8 codes de
   récupération, login en deux temps par TOTP puis par code de secours,
   désactivation.
