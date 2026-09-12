@@ -694,44 +694,61 @@ describe('DELETE /transmission', () => {
   })
 })
 
-describe('POST /transmission/contacts/:id/verify (Techniques §7.2)', () => {
-  it('la config expose verify_token ; la vérification signée par l’owner date verify_last_checked_at', async () => {
+describe('POST /transmission/contacts/:id/verify (Techniques §7.2, audit LOW-15 : challenge à usage unique)', () => {
+  /** Le challenge serveur (5 min, usage unique) que l'app signe avec verify_token : SHA256(verify_token ‖ challenge). */
+  async function challengeFor(o: Owner, contactId: string) {
+    const r = await (await api()).get(`/transmission/contacts/${contactId}/verify-challenge`).set(o.auth).expect(200)
+    expect(Buffer.from(r.body.data.challenge, 'base64')).toHaveLength(32)
+    expect(Date.parse(r.body.data.expires_at)).toBeGreaterThan(Date.now())
+    return { challenge_id: r.body.data.challenge_id as string, challenge: Buffer.from(r.body.data.challenge as string, 'base64') }
+  }
+  const attest = (keys: DeviceKeys, token: string, challenge: Buffer) => signHash(keys, Buffer.concat([Buffer.from(token, 'base64'), challenge]))
+
+  it('la config expose verify_token ; la vérification signée par l’owner sur le challenge date verify_last_checked_at ; le challenge ne sert qu’une fois', async () => {
     const o = await owner()
     const cs = await activated(o)
     const cfg = await (await api()).get('/transmission/config').set(o.auth).expect(200)
     const token: string = cfg.body.data.contacts[0].verify_token
     expect(token).toBe(buildActivationBody(o.keys, cs).contacts[0]!.verify_token)
 
+    const ch = await challengeFor(o, cs[0]!.id)
+    const body = { challenge_id: ch.challenge_id, signature: attest(o.keys, token, ch.challenge) }
     const before = Date.now()
-    const r = await (await api())
-      .post(`/transmission/contacts/${cs[0]!.id}/verify`)
-      .set(o.auth)
-      .send({ signature: signHash(o.keys, Buffer.from(token, 'base64')) })
-      .expect(200)
+    const r = await (await api()).post(`/transmission/contacts/${cs[0]!.id}/verify`).set(o.auth).send(body).expect(200)
     expect(Date.parse(r.body.data.verify_last_checked_at)).toBeGreaterThanOrEqual(before - 1000)
+
+    // Rejeu de la même attestation : le challenge est consommé
+    const replay = await (await api()).post(`/transmission/contacts/${cs[0]!.id}/verify`).set(o.auth).send(body).expect(401)
+    expect(replay.body.error.code).toBe('AUTH_TOKEN_INVALID')
+    // L'ancienne attestation statique (signature de verify_token seul) n'est plus acceptée
+    await (await api()).post(`/transmission/contacts/${cs[0]!.id}/verify`).set(o.auth).send({ signature: signHash(o.keys, Buffer.from(token, 'base64')) }).expect(400)
   })
 
-  it('refuse une signature d’une autre clé', async () => {
+  it('refuse une signature d’une autre clé, et brûle le challenge', async () => {
     const o = await owner()
     const cs = await activated(o)
     const token = buildActivationBody(o.keys, cs).contacts[0]!.verify_token
+    const ch = await challengeFor(o, cs[0]!.id)
     const r = await (await api())
       .post(`/transmission/contacts/${cs[0]!.id}/verify`)
       .set(o.auth)
-      .send({ signature: signHash(generateDeviceKeys(), Buffer.from(token, 'base64')) })
+      .send({ challenge_id: ch.challenge_id, signature: attest(generateDeviceKeys(), token, ch.challenge) })
       .expect(401)
     expect(r.body.error.code).toBe('AUTH_TOKEN_INVALID')
     const row = await prisma().trusted_contacts.findUniqueOrThrow({ where: { id: cs[0]!.id } })
     expect(row.verify_last_checked_at).toBeNull()
+    await (await api()).post(`/transmission/contacts/${cs[0]!.id}/verify`).set(o.auth).send({ challenge_id: ch.challenge_id, signature: attest(o.keys, token, ch.challenge) }).expect(401)
   })
 
   it('refuse avant activation (pas encore de verify_token)', async () => {
     const o = await owner()
     const id = await createContact(o)
+    const noChallenge = await (await api()).get(`/transmission/contacts/${id}/verify-challenge`).set(o.auth).expect(409)
+    expect(noChallenge.body.error.code).toBe('TRANSMISSION_NOT_CONFIGURED')
     const r = await (await api())
       .post(`/transmission/contacts/${id}/verify`)
       .set(o.auth)
-      .send({ signature: signHash(o.keys, Buffer.alloc(40)) })
+      .send({ challenge_id: 'a'.repeat(43), signature: signHash(o.keys, Buffer.alloc(40)) })
       .expect(409)
     expect(r.body.error.code).toBe('TRANSMISSION_NOT_CONFIGURED')
   })

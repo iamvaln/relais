@@ -150,13 +150,17 @@ export interface PauseBody {
   duration_days: 7 | 30 | 90
 }
 
-/** Vérification annuelle : Ed25519.sign(SHA256(verify_token), owner_sk). */
+/** Vérification annuelle : Ed25519.sign(SHA256(verify_token ‖ challenge), owner_sk) — challenge serveur à usage unique (audit LOW-15). */
 export const verifyBody = {
   type: 'object',
-  required: ['signature'],
+  required: ['challenge_id', 'signature'],
   additionalProperties: false,
-  properties: { signature: { ...base64, maxLength: 128 } },
+  properties: {
+    challenge_id: { type: 'string', minLength: 16, maxLength: 64 },
+    signature: { ...base64, maxLength: 128 },
+  },
 } as const
 export interface VerifyBody {
+  challenge_id: string
   signature: string
 }

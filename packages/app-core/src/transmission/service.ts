@@ -257,8 +257,15 @@ export class Transmission {
       wipe(contactKey)
     }
     if (!verified) return { verified: false }
-    const signature = await signPayload(fromBase64(server.verify_token), this.deps.signer().privateKey)
-    await this.deps.api.post(`/transmission/contacts/${local.serverId}/verify`, { signature: toBase64(signature) })
+    // Audit LOW-15 : l'attestation signe verify_token ‖ challenge serveur (usage unique) — jamais rejouable.
+    const ch = await this.deps.api.get<{ challenge_id: string; challenge: string }>(`/transmission/contacts/${local.serverId}/verify-challenge`)
+    const token = fromBase64(server.verify_token)
+    const challenge = fromBase64(ch.challenge)
+    const message = new Uint8Array(token.length + challenge.length)
+    message.set(token)
+    message.set(challenge, token.length)
+    const signature = await signPayload(message, this.deps.signer().privateKey)
+    await this.deps.api.post(`/transmission/contacts/${local.serverId}/verify`, { challenge_id: ch.challenge_id, signature: toBase64(signature) })
     if (!local.answers) await this.deps.store.update(id, { answers })
     return { verified: true }
   }

@@ -96,8 +96,10 @@ describe('crypto-core ↔ API', () => {
     const c1 = cfg.body.data.contacts.find((c: { id: string }) => c.id === plans[0]!.id)
     const kc1 = await deriveContactKey(plans[0]!.answers, qids)
     expect(await checkVerifyToken(kc1, c1.verify_token)).toBe(true)
-    const attestation = await signPayload(fromBase64(c1.verify_token), signer.privateKey)
-    await client.post(`/transmission/contacts/${plans[0]!.id}/verify`).set(auth).send({ signature: toBase64(attestation) }).expect(200)
+    // Audit LOW-15 : l'attestation signe SHA256(verify_token ‖ challenge serveur), challenge à usage unique
+    const vch = (await client.get(`/transmission/contacts/${plans[0]!.id}/verify-challenge`).set(auth).expect(200)).body.data
+    const attestation = await signPayload(Buffer.concat([fromBase64(c1.verify_token), fromBase64(vch.challenge)]), signer.privateKey)
+    await client.post(`/transmission/contacts/${plans[0]!.id}/verify`).set(auth).send({ challenge_id: vch.challenge_id, signature: toBase64(attestation) }).expect(200)
 
     // Déclenchement (le job) puis relay : mauvaises réponses détectées en local, bonnes → parts en escrow
     await prisma().transmission_configs.update({ where: { user_id: u.userId }, data: { status: 'triggered' } })

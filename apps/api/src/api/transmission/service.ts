@@ -2,7 +2,8 @@
 // (Backend Specs §3.4, Specs Techniques §4.3, DEC-12, DEC-20, DEC-23).
 
 import { configInt } from '../../lib/app-config.js'
-import { decodeBase64, ed25519Verify, sha256Hex } from '../../lib/crypto.js'
+import { decodeBase64, ed25519Verify, randomToken, sha256Hex } from '../../lib/crypto.js'
+import { keys as redisKeys, redis } from '../../lib/redis.js'
 import { AppError } from '../../lib/errors.js'
 import { prisma } from '../../lib/prisma.js'
 import sodium from '../../lib/sodium.js'
@@ -644,22 +645,46 @@ export async function deactivate(userId: string): Promise<{ deactivated: true }>
 
 // --- Vérification annuelle (Techniques §7.2) ----------------------------------------
 
-/**
- * L'app rejoue les réponses, ouvre verify_token localement, puis atteste
- * le succès en signant SHA256(verify_token) avec la clé de l'owner. Le
- * serveur ne voit ni réponses ni K_i : il date l'attestation.
- */
-export async function verifyContact(userId: string, id: string, signatureB64: string): Promise<ContactView> {
+const VERIFY_CHALLENGE_TTL_S = 5 * 60
+
+async function verifiableContact(userId: string, id: string): Promise<{ id: string; verify_token: Uint8Array }> {
   const contact = await prisma().trusted_contacts.findFirst({
     where: { id, user_id: userId, contact_status: { not: 'removed' } },
     select: { id: true, verify_token: true },
   })
   if (!contact) throw new AppError('NOT_FOUND', { message: 'Contact introuvable.' })
   if (!contact.verify_token) notConfigured('Activez la transmission avant la vérification annuelle.')
+  return { id: contact.id, verify_token: contact.verify_token }
+}
+
+/** Audit LOW-15 : un nonce serveur (5 min, usage unique) entre dans l'attestation — une signature volée ne se rejoue pas. */
+export async function verifyChallenge(userId: string, id: string): Promise<{ challenge_id: string; challenge: string; expires_at: string }> {
+  const contact = await verifiableContact(userId, id)
+  const challengeId = randomToken(24)
+  const challenge = randomToken(32)
+  await redis().set(redisKeys.verifyChallenge(userId, contact.id, challengeId), challenge, 'EX', VERIFY_CHALLENGE_TTL_S)
+  return {
+    challenge_id: challengeId,
+    challenge: Buffer.from(challenge, 'base64url').toString('base64'),
+    expires_at: new Date(Date.now() + VERIFY_CHALLENGE_TTL_S * 1000).toISOString(),
+  }
+}
+
+/**
+ * L'app rejoue les réponses, ouvre verify_token localement, puis atteste
+ * le succès en signant SHA256(verify_token ‖ challenge) avec la clé de
+ * l'owner. Le serveur ne voit ni réponses ni K_i : il date l'attestation.
+ */
+export async function verifyContact(userId: string, id: string, challengeId: string, signatureB64: string): Promise<ContactView> {
+  const contact = await verifiableContact(userId, id)
+
+  // Consommé à la première tentative, bonne ou mauvaise.
+  const challengeB64url = await redis().getdel(redisKeys.verifyChallenge(userId, contact.id, challengeId))
+  if (!challengeB64url) throw new AppError('AUTH_TOKEN_INVALID', { message: 'Challenge de vérification invalide ou expiré.' })
 
   const signature = decodeOrThrow('signature', signatureB64)
   const { ed25519Pk } = await ownerKey(userId)
-  const digest = Buffer.from(sha256Hex(Buffer.from(contact.verify_token)), 'hex')
+  const digest = Buffer.from(sha256Hex(Buffer.concat([Buffer.from(contact.verify_token), Buffer.from(challengeB64url, 'base64url')])), 'hex')
   if (!ed25519Verify(ed25519Pk, digest, Buffer.from(signature))) {
     throw new AppError('AUTH_TOKEN_INVALID', { message: 'Attestation de vérification invalide.' })
   }
