@@ -20,7 +20,7 @@ chaque fonction efface ses copies de secrets (`wipe`).
 | `pin` | `seed_enc_pin` = seal(Argon2id(PIN, sel aléatoire), seed) ; le sel accompagne le blob dans le SecureStore | DEC-01 à 04 |
 | `vault` | P1 = seal(Ki, D), P2 = seal(Ki, P1), corps de `POST /vault/sync` signé sur SHA256(P2) ; `openBackup` pour la restauration | DEC-07/16 |
 | `shamir` | N-of-M sur GF(2^8), polynôme AES 0x11b, parts de **33 octets** (index + 32) | Techniques §4 |
-| `contacts` | K_i depuis les réponses, `verify_token`, sealed box de notification signée, `secret_enc`, part préparée (`enc`, `sig`, `plain_hash`, `plain_sig`) | DEC-12/20/28/29, Proposal-8 |
+| `contacts` | K_i depuis les réponses, `verify_token`, sealed box de notification signée, `secret_enc` (nom, rôle, message, et depuis le lot 4 mobile email et téléphone), part préparée (`enc`, `sig`, `plain_hash`, `plain_sig`) | DEC-12/20/28/29, Proposal-8 |
 | `activation` | Corps complet de `POST /transmission/contacts` et `POST /transmission/activate` : découpe chaque Kj en N-of-|porteurs de kj|, la i-ème part au i-ème porteur | Techniques §5.3 |
 | `relay` | Côté contact : réponses → K_i → vérification locale → parts déchiffrées ; puis N parts → Kj → P2 → D ; `openSecret` | Techniques §5.6, DEC-13 |
 | `journal` | `content_enc` sous K2 et signatures DEC-31 (entrée, suppression sur l'id UTF-8, Wrapped) | DEC-31 |

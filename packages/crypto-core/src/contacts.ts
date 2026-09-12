@@ -9,7 +9,7 @@
 //   verify_token     = seal(K_i, 'RELAIS_VERIFY_OK_V1')  — vérification annuelle et locale des réponses
 //   notification_enc = crypto_box_seal(JSON { email, phone, owner_display_name? }, relais_x25519_pk)
 //   notification_sig = Ed25519.sign(notification_enc)  — brut (Backend §4.3 étape 2)
-//   secret_enc       = seal(K2, JSON { nom, role, message_personnel })  — Relais ne lit jamais
+//   secret_enc       = seal(K2, JSON { nom, role, message_personnel, email?, phone? })  — Relais ne lit jamais
 //   part Si (33 octets) : enc = seal(K_i, Si), sig = sign(SHA256(enc)) [DEC-29],
 //                         plain_hash = hex SHA256(Si), plain_sig = sign(SHA256(Si)) [Proposal-8]
 
@@ -84,10 +84,17 @@ export async function sealNotification(relaisPkB64: string, clear: NotificationC
   return { notification_enc: toBase64(enc), notification_sig: toBase64(await signRaw(enc, signingKey)) }
 }
 
+/**
+ * Niveau 2 (DEC-12) : opaque pour Relais. Depuis le lot 4 mobile, email et
+ * téléphone y sont aussi : l'owner les relit sur un nouveau device via
+ * GET /transmission/config, le contact les connaît déjà au relay.
+ */
 export interface SecretClear {
   nom: string
   role: string
   message_personnel: string
+  email?: string
+  phone?: string | null
 }
 
 export async function encryptSecret(k2: Uint8Array, clear: SecretClear): Promise<string> {

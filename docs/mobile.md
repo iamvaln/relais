@@ -35,16 +35,26 @@ client HTTP dans `packages/api-client`. L'app ne fait que les brancher.
    passe masqué, suppression définitive ; sync Storj 3 s après la dernière
    modification, par catégorie ; restauration sur nouveau device ; tableau
    de bord (fiches, dernière sauvegarde) ; tutoriel du premier compte.
-   E2-US05 (message personnel) va au lot 4, E2-US07 (capsule) au lot 5.
-4. **Transmission** (E3) : contacts, questions de la bibliothèque, rôles,
-   schéma N-of-M, activation avec step-up, vérification annuelle.
+   E2-US05 (message personnel) est fait au lot 4, E2-US07 (capsule) va au lot 5.
+4. **Transmission** (E3-US01 à US03, US05 à US07, E2-US05, E6-US04) — fait :
+   contacts (2 à 5) avec nom, email, téléphone, rôles (Gestionnaire pratique,
+   Gardien du souvenir, Exécuteur financier) et trois questions choisies dans
+   la bibliothèque (`GET /transmission/questions`), réponses gardées chiffrées
+   sur le device, message personnel ; schéma N-of-M expliqué sans jargon,
+   silence et fréquence avec la phrase de cohérence ; récapitulatif, PIN,
+   activation (parts calculées sur le device), email de désignation ;
+   parcours guidé de modification (désactiver → modifier → réactiver) ;
+   pause 1 semaine / 1 mois / 3 mois ; vérification annuelle ; « Relais peut /
+   ne peut pas » ; statut sur le tableau de bord ; restauration des contacts
+   sur un nouveau device. E3-US04 est sans objet (DEC-23 : le destinataire
+   est toujours un contact avec rôle).
 5. **Check-in et carnet** (E4, journal, Wrapped) : mini-jeu, streak, badges,
-   relances push, pause.
+   relances push.
 6. **Parcours du contact** (E5, F4) : lien reçu, trois questions, attente,
    accès déverrouillé, checklist par urgence, « J'ai terminé » — dans l'app
    par deep link, et sur une page web pour qui n'installe rien.
 
-## 3. Décisions (11 septembre 2026)
+## 3. Décisions (11 et 12 septembre 2026)
 
 | Point | Décision |
 |---|---|
@@ -61,6 +71,11 @@ client HTTP dans `packages/api-client`. L'app ne fait que les brancher.
 | Backup (lot 3) | Un blob par catégorie, comme l'API : P2 = seal(Ki, JSON(lignes chiffrées)), signé. Restaurer = réécrire les lignes telles quelles. |
 | PIN finances (lot 3) | E2-US03 : le PIN est ressaisi localement (ou biométrie) avant d'enregistrer une fiche finances. Aucun step-up serveur : le coffre est local. |
 | Périmètre du lot 3 | E2-US05 (message personnel par contact) est le `secret_enc` du contact → lot 4 ; E2-US07 (capsule temps) est le carnet de vie → lot 5. |
+| Réponses secrètes (lot 4) | **Sur le device, chiffrées** (table `contacts`, blob sous K2 dans la base SQLCipher), jamais synchronisées, jamais envoyées. Modifier un contact puis réactiver ne redemande rien sur ce device ; sur un nouveau device elles sont à ressaisir (l'écran le dit, l'activation le refuse tant qu'il en manque). E3-US03 « jamais stockées » vaut pour le serveur. |
+| Email et téléphone du contact (lot 4) | Ajoutés à `secret_enc` (déjà sous K2, déjà remis au contact au relay : il connaît son propre email) et `GET /transmission/config` rend `secret_enc` à l'owner. Un nouveau device restaure nom, email, téléphone, message et rôles avec les 12 mots. Le serveur reste aveugle. Alternative écartée : une quatrième catégorie de backup (migration, API et sync à étendre). |
+| Modifier une transmission active (lot 4) | **Parcours guidé** : un bouton « Modifier la transmission », l'avertissement, le PIN, la désactivation (parts purgées), l'édition libre, puis le récapitulatif et le PIN pour réactiver ; tant que ce n'est pas réactivé, le tableau de bord dit « inactive ». Les écrans d'édition sont verrouillés quand la transmission est active. |
+| PIN et step-up (lot 4) | Le PIN est vérifié sur le device (`PinConfirm`, DEC-26) avant chaque action qui porte un step-up (`edit_contacts`, `edit_transmission`, `activate_transmission`, `delete_transmission`). Créer un contact avant activation ne demande pas de PIN ; le modifier, le retirer, changer schéma ou délais, activer, désactiver, mettre en pause, oui. La reprise après pause, non (l'API non plus). |
+| Rôle dans `secret_enc` (lot 4) | `role` = les rôles détenus, `k1,k2,k3` joints par des virgules ; l'app du contact (lot 6) traduit. |
 | Écart de spec | E6-US03 dit qu'après un changement de mot de passe « K1 K2 K3 sont recalculées, P1 rechiffré ». Depuis DEC-02/05 les clés viennent du seed : rien à rechiffrer. À corriger dans les User Stories. |
 
 ## 4. Lancer
@@ -84,6 +99,39 @@ mappe pas `./x.js` vers `x.ts`) ; `Buffer` polyfillé par `src/lib/polyfills.ts`
 `libsodium-wrappers-sumo` aliasé vers `react-native-libsodium`.
 
 ## 5. Vérifications
+
+Lot 4 :
+
+- `app-core` (3 tests sous Node, vraie SQLite) : contact ajouté / relu /
+  modifié / retiré, rien de lisible dans la base (nom, email, téléphone,
+  réponses, message absents du BLOB ; rôles et questions en colonnes),
+  positions jamais réattribuées, recherche par identifiant serveur,
+  remplacement complet à la restauration, nom et email obligatoires.
+- `app-core` contre l'API réelle (3 tests,
+  `apps/api/test/app-core-transmission.test.ts`) : bibliothèque de
+  questions ; contacts créés puis modifiés (step-up), blobs opaques en base ;
+  `checkActivation` dit avant l'appel ce qui manque (moins de deux contacts,
+  rôle avec moins de N porteurs, réponses absentes) ; schéma, délais,
+  activation avec parts calculées sur le device et email de désignation au
+  prénom de l'owner ; contacts figés (`TRANSMISSION_ALREADY_ACTIVE`,
+  `isEditable`) ; parcours désactiver → modifier / retirer / ajouter →
+  réactiver, contacts reprévenus ; vérification annuelle : mauvaises
+  réponses détectées sur le device sans appel serveur, bonnes réponses
+  (casse et accents indifférents) attestées et datées ; pause 30 jours et
+  reprise ; nouveau device : contacts restaurés depuis `secret_enc` avec
+  rôles et questions, réponses `null`, activation refusée tant qu'elles
+  manquent, restauration idempotente qui garde les réponses ressaisies ;
+  erreurs API (`ApiError`) remontées avec leur code.
+- API (2 tests) : `GET /transmission/questions` ne rend que les questions
+  actives, `secret_question` ou `both`, score ≥ `vault.question_min_score`,
+  groupées par catégorie ; session exigée ; `GET /transmission/config` rend
+  `secret_enc`.
+- crypto-core (1 test) : `secret_enc` porte email et téléphone, `openSecret`
+  les rend.
+- mobile (4 tests) : occasions de check-in selon silence et fréquence,
+  phrase du schéma FR/EN (« Il faudra que 2 de tes 3 contacts répondent… »),
+  une phrase par problème d'activation, ligne de statut du tableau de bord.
+- Bundle Metro Android : construit avec les sept écrans de transmission.
 
 Lot 3 :
 

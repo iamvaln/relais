@@ -22,6 +22,7 @@ import {
   prepareShare,
   sealNotification,
 } from '../src/contacts.js'
+import { openSecret } from '../src/relay.js'
 
 const VECTOR = 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about'
 const Q: [string, string, string] = ['11111111-1111-4111-8111-111111111111', '22222222-2222-4222-8222-222222222222', '33333333-3333-4333-8333-333333333333']
@@ -82,6 +83,15 @@ describe('secret_enc', () => {
     const clear = JSON.parse(Buffer.from(await open(keys.k2, new Uint8Array(Buffer.from(b64, 'base64')))).toString('utf8'))
     expect(clear).toEqual({ nom: 'Ngo Adjoua', role: 'sœur', message_personnel: 'Merci' })
     await expect(open(keys.k1, new Uint8Array(Buffer.from(b64, 'base64')))).rejects.toThrow()
+  })
+
+  it('porte aussi email et téléphone du contact, pour que l’owner les retrouve sur un nouveau device (lot 4 mobile)', async () => {
+    const keys = await deriveCategoryKeys(mnemonicToSeed(VECTOR))
+    const clear = { nom: 'Ngo Adjoua', role: 'sœur', message_personnel: 'Merci', email: 'adjoua@example.cm', phone: '+237699000000' }
+    const b64 = await encryptSecret(keys.k2, clear)
+    expect(await openSecret(keys.k2, b64)).toEqual(clear)
+    const phoneless = { ...clear, phone: null }
+    expect(await openSecret(keys.k2, await encryptSecret(keys.k2, phoneless))).toEqual(phoneless)
   })
 })
 

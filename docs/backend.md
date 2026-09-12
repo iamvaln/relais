@@ -73,7 +73,8 @@ Le module **auth** de §3.1 v1.1, le module **vault** de §3.3 v1.1, le module
 | `GET /vault/sync-status` | Date et taille par catégorie, lues sur le stockage |
 | `POST /vault/restore` | Renvoie le blob tel quel |
 | `GET /transmission/relais-key` | **Public**, 60/min/IP, cache 24 h — DEC-28 |
-| `GET /transmission/config` | État complet, contacts inclus (jamais `removed`) |
+| `GET /transmission/config` | État complet, contacts inclus (jamais `removed`), `secret_enc` de chaque contact rendu à l'owner — voir §3 |
+| `GET /transmission/questions` | Bibliothèque des questions secrètes (BO-04) : actives, `secret_question` ou `both`, score ≥ `vault.question_min_score`, groupées par catégorie |
 | `POST /transmission/contacts` | Note-01, limite de plan, signature et sealed box vérifiées |
 | `PUT /transmission/contacts/:id` | Step-up `edit_contacts`, mêmes règles |
 | `DELETE /transmission/contacts/:id` | Step-up `edit_contacts`, retrait logique |
@@ -321,6 +322,16 @@ peut contenir `owner_display_name` en plus de `email` et `phone` — même
 niveau de confidentialité que l'email du contact (DEC-12, niveau 1),
 tronqué à 60 caractères, jamais stocké en clair. Sans lui, l'email dit
 « une personne qui vous fait confiance ».
+
+### Transmission : `secret_enc` est rendu à l'owner, et porte email et téléphone
+
+Lot 4 mobile (12/09/2026). Nom, email, téléphone et message d'un contact ne
+sont lisibles que sur le device de l'owner : la sealed box est scellée vers
+Relais, pas vers lui. Pour qu'un nouveau device retrouve ses contacts avec
+les 12 mots, `secret_enc` (déjà sous K2, déjà remis au contact au relay)
+porte aussi `email` et `phone`, et `GET /transmission/config` le renvoie
+tel quel. Le serveur n'y lit toujours rien. Les réponses secrètes, elles,
+ne quittent jamais le device (voir `docs/mobile.md` §3).
 
 ### Transmission : contacts et schéma figés une fois active
 
@@ -630,7 +641,7 @@ consigné dans `docs/open-questions.md` §D.1.
 
 ## 5. Vérifications
 
-225 tests d'intégration, sur PostgreSQL 16 et Redis réels, base reconstruite
+230 tests d’intégration, sur PostgreSQL 16 et Redis réels, base reconstruite
 depuis les migrations et le seed à chaque run. Chaque test repart d'une base
 et d'un stockage vides. Ils couvrent notamment :
 
@@ -655,7 +666,7 @@ et d'un stockage vides. Ils couvrent notamment :
   catégorie ; sync-status vide puis renseigné ; restore rend les octets
   intacts ; catégorie absente → `NOT_FOUND` ; un utilisateur ne voit jamais
   le backup d'un autre
-- transmission (47 tests, écrits **avant** le code) : `relais-key` public et
+- transmission (49 tests, écrits **avant** le code) : `relais-key` public et
   cacheable ; Note-01 (journal, score < 6, doublon, inconnue → 400 avec les
   identifiants) ; aucun rôle → 400 ; limites de plan 2 / 5, contact retiré
   non compté ; signature d'une autre clé → 401 ; sealed box vers une autre
@@ -671,7 +682,9 @@ et d'un stockage vides. Ils couvrent notamment :
   check-in ; désactivation purge les parts et rend les contacts modifiables ;
   vérification annuelle signée, mauvaise clé → 401, avant activation → 409 ;
   Proposal-8 : hash en clair mal signé → 401 sans rien écrire, hashes en
-  base par rôle ; email `contact_designated` avec le prénom de la sealed box
+  base par rôle ; email `contact_designated` avec le prénom de la sealed box ;
+  bibliothèque de questions filtrée (journal, score < 6, archivée exclues),
+  session exigée ; `secret_enc` relu dans la config
 - check-in (19 tests, test-first) : statut inactif / actif / en retard ;
   jeu refusé sans transmission active, défi sans la réponse, identique tant
   qu'il est en cours, mauvaise réponse comptée sans pénalité, bonne réponse
@@ -772,6 +785,10 @@ et d'un stockage vides. Ils couvrent notamment :
 - coffre de l'app (`app-core-vault`, contre l'API réelle) : sync par
   catégorie, statut, P2 opaque sur le stockage, restauration sur nouveau
   device — voir `docs/mobile.md` §5
+- transmission de l'app (`app-core-transmission`, 3 tests contre l'API
+  réelle) : contacts, activation avec parts calculées côté app, parcours
+  désactiver → modifier → réactiver, vérification annuelle, pause,
+  restauration des contacts sur nouveau device — voir `docs/mobile.md` §5
 - secrets (6 tests) : production sans HCV → refus au démarrage, clé de dev
   interdite en production, hors production clé de dev ou HCV exigés ; faux
   HCV en HTTP local : lecture KV v2 à `/v1/<path>` avec `X-Vault-Token`,

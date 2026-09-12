@@ -25,6 +25,8 @@ export interface ContactView {
   /** XChaCha20(K_i, 'RELAIS_VERIFY_OK_V1'), posé à l'activation — sert à la vérification annuelle côté app. */
   verify_token: string | null
   verify_last_checked_at: string | null
+  /** XChaCha20(K2, { nom, role, message_personnel, email, phone }) — opaque pour le serveur, relu par l'owner sur un nouveau device. */
+  secret_enc: string
 }
 
 export interface TransmissionConfigView {
@@ -52,6 +54,7 @@ const contactSelect = {
   storj_k3_path: true,
   verify_token: true,
   verify_last_checked_at: true,
+  secret_enc: true,
 } as const
 
 type ContactRow = {
@@ -69,6 +72,7 @@ type ContactRow = {
   storj_k3_path: string | null
   verify_token: Uint8Array | null
   verify_last_checked_at: Date | null
+  secret_enc: Uint8Array
 }
 
 function toContactView(c: ContactRow): ContactView {
@@ -81,7 +85,29 @@ function toContactView(c: ContactRow): ContactView {
     shares: { k1: c.storj_k1_path !== null, k2: c.storj_k2_path !== null, k3: c.storj_k3_path !== null },
     verify_token: c.verify_token ? Buffer.from(c.verify_token).toString('base64') : null,
     verify_last_checked_at: c.verify_last_checked_at?.toISOString() ?? null,
+    secret_enc: Buffer.from(c.secret_enc).toString('base64'),
   }
+}
+
+// --- Bibliothèque des questions secrètes (BO-04) -------------------------------------
+
+export interface SecretQuestionView {
+  id: string
+  text_fr: string
+  text_en: string
+  category: string
+  reliability_score: number
+}
+
+/** Les questions que l'owner peut choisir : mêmes critères que validateQuestions, groupées par catégorie, les plus solides d'abord. */
+export async function listSecretQuestions(): Promise<{ questions: SecretQuestionView[] }> {
+  const minScore = await configInt('vault.question_min_score', DEFAULT_QUESTION_MIN_SCORE)
+  const questions = await prisma().checkin_questions.findMany({
+    where: { status: 'active', usage_type: { in: ['secret_question', 'both'] }, reliability_score: { gte: minScore } },
+    orderBy: [{ category: 'asc' }, { reliability_score: 'desc' }, { text_fr: 'asc' }],
+    select: { id: true, text_fr: true, text_en: true, category: true, reliability_score: true },
+  })
+  return { questions }
 }
 
 // --- Configuration ---------------------------------------------------------------
