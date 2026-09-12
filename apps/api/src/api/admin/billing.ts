@@ -216,10 +216,14 @@ export async function overview(now = new Date()): Promise<BillingOverview> {
 
 // --- Export CSV ----------------------------------------------------------------------
 
+// Audit LOW-11 : une cellule texte qui commence par = + - @ (ou tabulation,
+// retour chariot) serait exécutée comme formule par un tableur — préfixée
+// d'une apostrophe. Les nombres (montants) ne passent pas par là.
 function csvCell(v: unknown): string {
   if (v === null || v === undefined) return ''
-  const s = v instanceof Date ? v.toISOString() : String(v)
-  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
+  let s = v instanceof Date ? v.toISOString() : String(v)
+  if (typeof v === 'string' && /^[=+\-@\t\r]/.test(s)) s = `'${s}`
+  return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
 }
 
 /** Les événements de paiement d'une période (bornes incluses), une ligne par événement, jamais d'email. */

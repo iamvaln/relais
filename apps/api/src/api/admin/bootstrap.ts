@@ -6,6 +6,7 @@ import * as OTPAuth from 'otpauth'
 import { hashPassword, sha256Hex } from '../../lib/crypto.js'
 import { audit } from '../../lib/audit.js'
 import { prisma } from '../../lib/prisma.js'
+import { encryptTotpSecret } from '../../lib/totp.js'
 import { normalizeEmail, passwordPolicyErrors } from '../auth/service.js'
 
 export const ADMIN_ROLES = ['super_admin', 'admin', 'support', 'finance'] as const
@@ -47,7 +48,7 @@ export async function createAdmin(input: CreateAdminInput): Promise<CreatedAdmin
       full_name: input.full_name,
       password_hash: await hashPassword(input.password),
       role: input.role,
-      totp_secret: secret.base32,
+      totp_secret: encryptTotpSecret(secret.base32), // audit LOW-14b
       totp_enabled: true,
       created_by: input.createdBy ?? null,
     },

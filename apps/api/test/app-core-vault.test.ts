@@ -3,7 +3,7 @@
 
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { ApiClient, MemoryCookieJar } from '@relais/api-client'
-import { ApiVaultTransport, DeviceVault, LocalVault, MemorySecureStorage, Onboarding, PinGuard, VaultSync } from '@relais/app-core'
+import { ApiVaultTransport, DeviceVault, LocalVault, MemorySecureStorage, Onboarding, PinGuard, VaultSync, proveSeed } from '@relais/app-core'
 import { deriveCategoryKeys, deriveSigningKeypair } from '@relais/crypto-core'
 import { NodeSqlite } from '../../../packages/app-core/test/sqlite-node.js'
 import { vaultKey } from '../src/api/vault/service.js'
@@ -55,11 +55,13 @@ describe('coffre ↔ API', () => {
     const blob = Buffer.from(stored!)
     for (const clear of ['Orange', 'S3cret', '8008', 'id-1']) expect(blob.includes(Buffer.from(clear))).toBe(false)
 
-    // Nouveau device : mêmes clés (12 mots), coffre vide → restauration
+    // Nouveau device : mêmes clés (12 mots), coffre vide → restauration, une fois le seed prouvé (audit LOW-13)
     const other = new LocalVault(new NodeSqlite(), () => d.keys)
     await other.init()
     const otherSync = new VaultSync({ transport: new ApiVaultTransport(d.api), keys: () => d.keys, signer: () => d.signer })
     otherSync.attach(other)
+    await expect(otherSync.restoreAll()).rejects.toMatchObject({ code: 'AUTH_RESTORE_REQUIRED' })
+    await proveSeed(d.api, d.signer)
     expect(await otherSync.restoreAll()).toEqual({ accounts: 1, messages: 0, finances: 1 })
     expect((await other.list()).map((i) => [i.id, i.service_name, i.password ?? null])).toEqual([
       ['id-1', 'Orange Money', 'S3cret!'],

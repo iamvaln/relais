@@ -24,6 +24,7 @@ export const STEP_UP_ACTIONS = [
   'change_password',
   'view_seed',
   'disable_2fa',
+  'set_key',
   'admin_action',
 ] as const
 export type StepUpAction = (typeof STEP_UP_ACTIONS)[number]

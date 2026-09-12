@@ -88,9 +88,15 @@ export async function transmissionRoutes(app: FastifyInstance): Promise<void> {
     ok(await transmission.deactivate(req.user!.id)),
   )
 
+  app.get<{ Params: ContactParams }>(
+    '/contacts/:id/verify-challenge',
+    { schema: { params: contactParams }, preHandler: [authenticate] },
+    async (req) => ok(await transmission.verifyChallenge(req.user!.id, req.params.id)),
+  )
+
   app.post<{ Params: ContactParams; Body: VerifyBody }>(
     '/contacts/:id/verify',
     { schema: { params: contactParams, body: verifyBody }, preHandler: [authenticate] },
-    async (req) => ok(await transmission.verifyContact(req.user!.id, req.params.id, req.body.signature)),
+    async (req) => ok(await transmission.verifyContact(req.user!.id, req.params.id, req.body.challenge_id, req.body.signature)),
   )
 }

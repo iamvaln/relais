@@ -11,6 +11,7 @@ export type StepUpAction =
   | 'change_password'
   | 'view_seed'
   | 'disable_2fa'
+  | 'set_key'
   | 'admin_action'
 
 export interface PublicUser {
@@ -87,8 +88,9 @@ export class AuthApi {
     return this.c.post('/auth/pin/step-up', { action })
   }
 
-  registerPublicKey(ed25519_pk: string): Promise<{ registered: true }> {
-    return this.c.post('/auth/keys', { ed25519_pk })
+  /** Audit LOW-13 : exige un step-up `set_key` — le PIN vient d'être posé à l'onboarding. */
+  registerPublicKey(ed25519_pk: string, stepUpToken: string): Promise<{ registered: true }> {
+    return this.c.post('/auth/keys', { ed25519_pk }, { stepUpToken })
   }
 
   restoreChallenge(): Promise<{ challenge_id: string; challenge: string; expires_at: string }> {

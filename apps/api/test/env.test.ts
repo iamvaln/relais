@@ -28,6 +28,7 @@ describe('audit MEDIUM-8 : garde-fous de configuration en production', () => {
     JWT_ACCESS_SECRET: 'a'.repeat(40),
     JWT_STEPUP_SECRET: 'b'.repeat(40),
     TOKEN_HMAC_SECRET: 'c'.repeat(40),
+    TOTP_ENC_KEY: 'd'.repeat(40),
     HCV_ADDR: 'https://vault.example',
     HCV_TOKEN: 'hvs.x',
     EMAIL_TRANSPORT: 'resend',
@@ -41,6 +42,12 @@ describe('audit MEDIUM-8 : garde-fous de configuration en production', () => {
 
   it('une configuration de production complète passe', () => {
     expect(loadEnv(prod).NODE_ENV).toBe('production')
+  })
+
+  it('audit LOW-14b : TOTP_ENC_KEY est obligatoire, 32 caractères minimum, distinct des secrets JWT', () => {
+    expect(() => loadEnv({ ...prod, TOTP_ENC_KEY: undefined })).toThrow(/TOTP_ENC_KEY/)
+    expect(() => loadEnv({ ...prod, TOTP_ENC_KEY: 'court' })).toThrow(/TOTP_ENC_KEY/)
+    expect(() => loadEnv({ ...prod, TOTP_ENC_KEY: prod.JWT_ACCESS_SECRET })).toThrow(/TOTP_ENC_KEY/)
   })
 
   it('en production : transport email console, stockage fs ou local, URL en http → refus au démarrage', () => {

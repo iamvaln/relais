@@ -25,7 +25,7 @@ import {
 } from '@relais/app-core'
 import { deriveSigningKeypair, mnemonicToSeed, toBase64, validateMnemonic } from '@relais/crypto-core'
 import { prisma } from '../src/lib/prisma.js'
-import { closeAll, getApp, lastEmailTo, lastOtp, mailbox, resetState, STRONG_PASSWORD } from './helpers.js'
+import { closeAll, forgetTotpSteps, getApp, lastEmailTo, lastOtp, mailbox, resetState, STRONG_PASSWORD } from './helpers.js'
 
 let baseUrl = ''
 beforeAll(async () => {
@@ -142,6 +142,7 @@ describe('connexion et restauration', () => {
     expect(setup.otpauth_uri).toMatch(/^otpauth:\/\/totp\//)
     const totp = new OTPAuth.TOTP({ secret: setup.secret, digits: 6, period: 30 })
     const codes = await activateTotp(api, totp.generate())
+    await forgetTotpSteps() // audit LOW-14a : le code d'activation est brûlé ; le test enchaîne dans la même demi-minute
     expect(codes).toHaveLength(8)
 
     const d2 = newDevice()
@@ -157,6 +158,7 @@ describe('connexion et restauration', () => {
     await completeTwoFactor(d3.api, { tempToken: second.tempToken, recoveryCode: codes[0]! })
     expect((await d3.api.auth.me()).totp_enabled).toBe(true)
 
+    await forgetTotpSteps() // le code du login est brûlé
     await disableTotp(api, totp.generate())
     expect(await login({ api: newDevice().api }, { email: EMAIL, password: STRONG_PASSWORD })).toEqual({ status: 'authenticated' })
   })

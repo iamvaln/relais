@@ -22,6 +22,7 @@ import { AppError } from '../../lib/errors.js'
 import { signAccessToken, signStepUpToken, type Plan, type StepUpAction } from '../../lib/jwt.js'
 import { prisma } from '../../lib/prisma.js'
 import { keys, redis } from '../../lib/redis.js'
+import { decryptTotpSecret, encryptTotpSecret, totpFor, verifyTotpOnce } from '../../lib/totp.js'
 import { emailService } from '../../services/email/index.js'
 import type { Locale } from '../../services/email/types.js'
 
@@ -452,11 +453,14 @@ export async function registerPublicKey(userId: string, pkBase64: string): Promi
   if (!pk || pk.length !== ED25519_PK_BYTES) {
     throw new AppError('VALIDATION_ERROR', { details: { ed25519_pk: `${ED25519_PK_BYTES} bytes attendus` } })
   }
-  const user = await prisma().users.findUnique({ where: { id: userId }, select: { ed25519_pk: true } })
-  if (!user) throw new AppError('AUTH_TOKEN_INVALID')
-  if (user.ed25519_pk) throw new AppError('AUTH_KEY_ALREADY_SET')
+  // Audit LOW-13 : une seule écriture conditionnelle — deux enregistrements
+  // parallèles ne peuvent pas gagner tous les deux (plus de lecture puis update).
   // Prisma 6 attend Uint8Array<ArrayBuffer> ; Buffer est typé sur ArrayBufferLike.
-  await prisma().users.update({ where: { id: userId }, data: { ed25519_pk: new Uint8Array(pk) } })
+  const { count } = await prisma().users.updateMany({ where: { id: userId, ed25519_pk: null }, data: { ed25519_pk: new Uint8Array(pk) } })
+  if (count === 1) return
+  const user = await prisma().users.findUnique({ where: { id: userId }, select: { id: true } })
+  if (!user) throw new AppError('AUTH_TOKEN_INVALID')
+  throw new AppError('AUTH_KEY_ALREADY_SET')
 }
 
 // --- Mot de passe (E6-US03) -----------------------------------------------------
@@ -484,6 +488,7 @@ export async function changePassword(
 // --- Restauration par challenge Ed25519 (DEC-06) --------------------------------
 
 const RESTORE_CHALLENGE_TTL_MS = 5 * 60_000
+const RESTORE_PROOF_TTL_S = 15 * 60
 
 export async function createRestoreChallenge(userId: string): Promise<{ challenge_id: string; challenge: string; expires_at: string }> {
   const user = await prisma().users.findUnique({ where: { id: userId }, select: { ed25519_pk: true } })
@@ -516,6 +521,8 @@ export async function verifyRestoreChallenge(userId: string, challengeId: string
     throw new AppError('AUTH_RESTORE_FAILED')
   }
 
+  // Audit LOW-13 : la preuve du seed ouvre la restauration du coffre pour un quart d'heure (DEC-06).
+  await redis().set(keys.restoreProved(userId), '1', 'EX', RESTORE_PROOF_TTL_S)
   await emailService().send({
     userId,
     to: row.users.email,
@@ -603,7 +610,7 @@ export async function resetPassword(input: {
 const TOTP_SETUP_TTL = 10 * 60
 
 function totp(secret: string, label: string): OTPAuth.TOTP {
-  return new OTPAuth.TOTP({ issuer: 'Relais', label, algorithm: 'SHA1', digits: 6, period: 30, secret })
+  return totpFor(secret, label)
 }
 
 export async function setupTwoFactor(userId: string): Promise<{ secret: string; otpauth_uri: string }> {
@@ -650,12 +657,12 @@ export async function activateTwoFactor(userId: string, code: string): Promise<{
   const user = await prisma().users.findUnique({ where: { id: userId }, select: { email: true, language: true } })
   if (!user) throw new AppError('AUTH_TOKEN_INVALID')
   await assertTotpNotLocked(userId)
-  if (totp(secret, user.email).validate({ token: code, window: 1 }) === null) await recordTotpFailure(userId)
+  if (!(await verifyTotpOnce(`u:${userId}`, secret, code))) await recordTotpFailure(userId)
   await redis().del(keys.twoFactorFailures(userId))
 
   const recoveryCodes = Array.from({ length: RECOVERY_CODE_COUNT }, randomRecoveryCode)
   await prisma().$transaction([
-    prisma().users.update({ where: { id: userId }, data: { totp_secret: secret, totp_enabled: true } }),
+    prisma().users.update({ where: { id: userId }, data: { totp_secret: encryptTotpSecret(secret), totp_enabled: true } }),
     prisma().two_factor_recovery_codes.deleteMany({ where: { user_id: userId } }),
     prisma().two_factor_recovery_codes.createMany({ data: recoveryCodes.map((c) => ({ user_id: userId, code_hash: recoveryCodeHash(c) })) }),
   ])
@@ -711,7 +718,7 @@ export async function completeTwoFactorLogin(
   })
   if (!user?.totp_secret || !user.totp_enabled) throw new AppError('AUTH_2FA_INVALID')
   if ('code' in proof) {
-    if (totp(user.totp_secret, user.email).validate({ token: proof.code, window: 1 }) === null) await recordTotpLoginFailure(tempToken)
+    if (!(await verifyTotpOnce(`u:${user.id}`, decryptTotpSecret(user.totp_secret), proof.code))) await recordTotpLoginFailure(tempToken)
   } else if (!(await consumeRecoveryCode(user.id, proof.recovery_code))) {
     await recordTotpLoginFailure(tempToken)
   }
@@ -728,7 +735,7 @@ export async function disableTwoFactor(userId: string, code: string): Promise<vo
   if (!user) throw new AppError('AUTH_TOKEN_INVALID')
   if (!user.totp_enabled || !user.totp_secret) throw new AppError('VALIDATION_ERROR', { message: 'La double authentification n’est pas active.' })
   await assertTotpNotLocked(userId)
-  if (totp(user.totp_secret, user.email).validate({ token: code, window: 1 }) === null) await recordTotpFailure(userId)
+  if (!(await verifyTotpOnce(`u:${userId}`, decryptTotpSecret(user.totp_secret), code))) await recordTotpFailure(userId)
   await redis().del(keys.twoFactorFailures(userId))
 
   await prisma().$transaction([

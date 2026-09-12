@@ -87,7 +87,8 @@ export class Onboarding {
     await this.deps.device.setupPin(seed, pin)
     const signer = await deriveSigningKeypair(seed)
     try {
-      await this.deps.api.auth.registerPublicKey(toBase64(signer.publicKey))
+      const su = await this.deps.api.auth.stepUp('set_key')
+      await this.deps.api.auth.registerPublicKey(toBase64(signer.publicKey), su.step_up_token)
     } finally {
       wipe(signer.privateKey)
     }

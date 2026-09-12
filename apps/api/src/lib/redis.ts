@@ -40,6 +40,12 @@ export const keys = {
   /** Échecs TOTP par utilisateur (activation, désactivation) et verrou 15 min. */
   twoFactorFailures: (userId: string) => `auth:2fa:userfail:${userId}`,
   twoFactorLock: (userId: string) => `auth:2fa:lock:${userId}`,
+  /** Dernier pas TOTP consommé par compte (`u:{userId}` ou `a:{adminId}`, audit LOW-14a) : un code ne sert qu'une fois. */
+  twoFactorStep: (scope: string) => `auth:2fa:step:${scope}`,
+  /** Seed prouvé par challenge Ed25519 (15 min) : condition de POST /vault/restore (audit LOW-13). */
+  restoreProved: (userId: string) => `auth:restore:proved:${userId}`,
+  /** Challenge de vérification annuelle d'un contact (5 min, usage unique — audit LOW-15). */
+  verifyChallenge: (userId: string, contactId: string, id: string) => `tx:verify:${userId}:${contactId}:${id}`,
   /** Secret TOTP en cours d'activation, pas encore confirmé. */
   twoFactorSetup: (userId: string) => `auth:2fa:setup:${userId}`,
   /** Regénérations OTP par heure et par email (security.otp_max_regen_hr). */

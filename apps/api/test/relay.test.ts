@@ -228,6 +228,17 @@ describe('POST /relay/:token/verify — tentatives (E5-US02)', () => {
     expect(row).toMatchObject({ fail_count: 0, blocked: false })
   })
 
+  it('audit LOW-15 : POST /relay/:token/verify est limité à 10 requêtes par minute et par IP, avant même le compteur de tentatives', async () => {
+    const { tokens } = await opened()
+    for (let i = 0; i < 10; i++) {
+      const r = await verify(tokens.contact1, { failed: true })
+      expect(r.body.error?.code, `itération ${i}`).not.toBe('RATE_LIMITED') // 200 puis RELAY_TOKEN_EXHAUSTED : le handler répond encore
+    }
+    const r = await verify(tokens.contact1, { failed: true })
+    expect(r.status).toBe(429)
+    expect(r.body.error.code).toBe('RATE_LIMITED')
+  })
+
   it('un envoi malformé compte comme une tentative : part manquante, part d’un rôle non détenu, mauvaise taille', async () => {
     const { tokens, contacts } = await opened()
     for (const bad of [{ shares: {} }, { shares: { k1: share(1), k2: share(2) } }, { shares: { k1: opaque(1, 16).toString('base64') } }, { shares: { k1: share(1) }, failed: true }]) {

@@ -112,6 +112,8 @@ export async function syncStatus(userId: string): Promise<SyncStatus> {
 }
 
 export async function restore(userId: string, category: VaultCategory): Promise<{ payload: string; size: number }> {
+  // Audit LOW-13 / DEC-06 : le blob ne se lit qu'avec le seed — on exige aussi de l'avoir prouvé (challenge Ed25519, 15 min).
+  if (!(await redis().exists(keys.restoreProved(userId)))) throw new AppError('AUTH_RESTORE_REQUIRED')
   let data: Uint8Array | null
   try {
     data = await objectStore().get(vaultKey(userId, category))

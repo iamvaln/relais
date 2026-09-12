@@ -15,8 +15,8 @@ afterAll(closeAll)
 
 const PASSWORD = 'Super-Admin-Pass-9!'
 
-function codeFor(secret: string): string {
-  return new OTPAuth.TOTP({ secret, algorithm: 'SHA1', digits: 6, period: 30 }).generate()
+function codeFor(secret: string, stepOffset = 0): string {
+  return new OTPAuth.TOTP({ secret, algorithm: 'SHA1', digits: 6, period: 30 }).generate({ timestamp: Date.now() + stepOffset * 30_000 })
 }
 
 /** Un admin créé par le script, prêt à se connecter. */
@@ -38,7 +38,9 @@ describe('bootstrap — createAdmin (script CLI)', () => {
     expect(a.otpauth_uri).toContain('otpauth://totp/')
     expect(a.otpauth_uri).toContain(encodeURIComponent('valentine@relais.app'))
     const row = await prisma().admin_users.findUniqueOrThrow({ where: { id: a.id } })
-    expect(row).toMatchObject({ role: 'super_admin', status: 'active', totp_enabled: true, totp_secret: a.totp_secret })
+    expect(row).toMatchObject({ role: 'super_admin', status: 'active', totp_enabled: true })
+    expect(row.totp_secret).toMatch(/^enc1:/) // audit LOW-14b : jamais en clair en base
+    expect(row.totp_secret).not.toContain(a.totp_secret)
     expect(row.password_hash).toMatch(/^\$argon2id\$/)
     const log = await prisma().audit_logs.findFirstOrThrow({ where: { action: 'ADMIN_CREATED' } })
     expect(log).toMatchObject({ target_type: 'admin', target_id: a.id, admin_id: null })
@@ -65,6 +67,15 @@ describe('POST /admin/auth/login', () => {
     const log = await prisma().audit_logs.findFirstOrThrow({ where: { action: 'ADMIN_LOGIN' } })
     expect(log).toMatchObject({ admin_id: a.id })
     expect(log.ip_hash).toHaveLength(64)
+  })
+
+  it('audit LOW-14a : un code admin accepté ne sert qu’une fois ; le code du pas suivant passe', async () => {
+    const a = await admin()
+    const code = codeFor(a.totp_secret)
+    await (await api()).post('/admin/auth/login').send({ email: a.email, password: PASSWORD, code }).expect(200)
+    const replay = await (await api()).post('/admin/auth/login').send({ email: a.email, password: PASSWORD, code }).expect(401)
+    expect(replay.body.error.code).toBe('AUTH_INVALID_CREDENTIALS')
+    await (await api()).post('/admin/auth/login').send({ email: a.email, password: PASSWORD, code: codeFor(a.totp_secret, 1) }).expect(200)
   })
 
   it('mauvais mot de passe → 401 ; code TOTP absent ou faux → 401, sans révéler lequel', async () => {
@@ -155,7 +166,7 @@ describe('GET /admin/users', () => {
     await (await api()).get('/admin/users').set(support.auth).expect(200)
     const finance = await adminWithRole('finance')
     const r = await (await api()).get('/admin/users').set(finance.auth).expect(403)
-    expect(r.body.error.code).toBe('AUTH_STEPUP_REQUIRED')
+    expect(r.body.error.code).toBe('AUTH_FORBIDDEN') // audit LOW-15 : un refus de rôle n'est pas un défaut de step-up
   })
 })
 
@@ -301,7 +312,8 @@ describe('DELETE /admin/users/:id (RGPD)', () => {
     expect(log).toMatchObject({ admin_id: sa.id, target_id: o.userId, reason: 'demande RGPD' })
     expect(JSON.stringify(log)).not.toContain('adjoua')
 
-    await (await api()).delete(`/admin/users/${o.userId}`).set(sa.auth).send({ reason: 'x' }).expect(409)
+    const twice = await (await api()).delete(`/admin/users/${o.userId}`).set(sa.auth).send({ reason: 'x' }).expect(409)
+    expect(twice.body.error.code).toBe('USER_ALREADY_DELETED') // audit LOW-15
   })
 })
 

@@ -12,7 +12,9 @@ import {
   generateDeviceKeys,
   lastEmailTo,
   lastOtp,
+  forgetTotpSteps,
   mailbox,
+  registerKey,
   refreshCookie,
   registerUser,
   resetState,
@@ -301,21 +303,40 @@ describe('step-up (DEC-25) et actions sensibles', () => {
 })
 
 describe('clé publique et restauration Ed25519 (DEC-05, DEC-06)', () => {
-  it('enregistre la clé une seule fois et refuse une taille invalide', async () => {
+  it('enregistre la clé une seule fois, avec un step-up set_key (audit LOW-13), et refuse une taille invalide', async () => {
     const { accessToken } = await registerUser(EMAIL)
     const client = await api()
     const auth = { Authorization: `Bearer ${accessToken}` }
     const keys = generateDeviceKeys()
 
-    const short = await client.post('/auth/keys').set(auth).send({ ed25519_pk: Buffer.alloc(16).toString('base64') }).expect(400)
+    const noStepUp = await client.post('/auth/keys').set(auth).send({ ed25519_pk: keys.publicKeyBase64 }).expect(403)
+    expect(noStepUp.body.error.code).toBe('AUTH_STEPUP_REQUIRED')
+
+    const short = await client.post('/auth/keys').set(auth).set('X-Step-Up-Token', await stepUp(accessToken, 'set_key')).send({ ed25519_pk: Buffer.alloc(16).toString('base64') }).expect(400)
     expect(short.body.error.code).toBe('VALIDATION_ERROR')
 
-    await client.post('/auth/keys').set(auth).send({ ed25519_pk: keys.publicKeyBase64 }).expect(200)
+    await registerKey(accessToken, keys.publicKeyBase64)
     const me = await client.get('/auth/me').set(auth).expect(200)
     expect(me.body.data.has_public_key).toBe(true)
 
-    const again = await client.post('/auth/keys').set(auth).send({ ed25519_pk: keys.publicKeyBase64 }).expect(409)
+    const again = await client.post('/auth/keys').set(auth).set('X-Step-Up-Token', await stepUp(accessToken, 'set_key')).send({ ed25519_pk: keys.publicKeyBase64 }).expect(409)
     expect(again.body.error.code).toBe('AUTH_KEY_ALREADY_SET')
+  })
+
+  it('audit LOW-13 : deux enregistrements parallèles de clés différentes — une seule gagne, l’autre répond 409', async () => {
+    const { accessToken, userId } = await registerUser(EMAIL)
+    const client = await api()
+    const auth = { Authorization: `Bearer ${accessToken}` }
+    const [k1, k2] = [generateDeviceKeys(), generateDeviceKeys()]
+    const [su1, su2] = [await stepUp(accessToken, 'set_key'), await stepUp(accessToken, 'set_key')]
+    const results = await Promise.all([
+      client.post('/auth/keys').set(auth).set('X-Step-Up-Token', su1).send({ ed25519_pk: k1.publicKeyBase64 }),
+      client.post('/auth/keys').set(auth).set('X-Step-Up-Token', su2).send({ ed25519_pk: k2.publicKeyBase64 }),
+    ])
+    expect(results.map((r) => r.status).sort()).toEqual([200, 409])
+    const winner = results[0]!.status === 200 ? k1 : k2
+    const row = await prisma().users.findUniqueOrThrow({ where: { id: userId }, select: { ed25519_pk: true } })
+    expect(Buffer.from(row.ed25519_pk!).toString('base64')).toBe(winner.publicKeyBase64)
   })
 
   it('challenge → signature valide → vérifié + email ; le challenge est à usage unique', async () => {
@@ -327,7 +348,7 @@ describe('clé publique et restauration Ed25519 (DEC-05, DEC-06)', () => {
     expect(noKey.body.error.code).toBe('AUTH_KEY_NOT_SET')
 
     const keys = generateDeviceKeys()
-    await client.post('/auth/keys').set(auth).send({ ed25519_pk: keys.publicKeyBase64 }).expect(200)
+    await registerKey(accessToken, keys.publicKeyBase64)
 
     const ch = await client.get('/auth/restore/challenge').set(auth).expect(200)
     const challenge = Buffer.from(ch.body.data.challenge, 'base64')
@@ -357,7 +378,7 @@ describe('clé publique et restauration Ed25519 (DEC-05, DEC-06)', () => {
     const auth = { Authorization: `Bearer ${accessToken}` }
     const keys = generateDeviceKeys()
     const impostor = generateDeviceKeys()
-    await client.post('/auth/keys').set(auth).send({ ed25519_pk: keys.publicKeyBase64 }).expect(200)
+    await registerKey(accessToken, keys.publicKeyBase64)
 
     const ch = await client.get('/auth/restore/challenge').set(auth).expect(200)
     const challenge = Buffer.from(ch.body.data.challenge, 'base64')
@@ -382,7 +403,7 @@ describe('clé publique et restauration Ed25519 (DEC-05, DEC-06)', () => {
     const client = await api()
     const auth = { Authorization: `Bearer ${accessToken}` }
     const keys = generateDeviceKeys()
-    await client.post('/auth/keys').set(auth).send({ ed25519_pk: keys.publicKeyBase64 }).expect(200)
+    await registerKey(accessToken, keys.publicKeyBase64)
     const ch = await client.get('/auth/restore/challenge').set(auth).expect(200)
     await prisma().restore_challenges.update({
       where: { id: ch.body.data.challenge_id },
@@ -413,7 +434,7 @@ describe('réinitialisation du mot de passe (E1-US05)', () => {
     const { email, accessToken } = await registerUser(EMAIL)
     const client = await api()
     const keys = generateDeviceKeys()
-    await client.post('/auth/keys').set('Authorization', `Bearer ${accessToken}`).send({ ed25519_pk: keys.publicKeyBase64 }).expect(200)
+    await registerKey(accessToken, keys.publicKeyBase64)
 
     mailbox.clear()
     await client.post('/auth/password/reset-request').send({ email }).expect(200)
@@ -449,8 +470,8 @@ describe('réinitialisation du mot de passe (E1-US05)', () => {
 })
 
 describe('2FA TOTP (E6-US02)', () => {
-  function codeFor(secret: string): string {
-    return new OTPAuth.TOTP({ secret, digits: 6, period: 30 }).generate()
+  function codeFor(secret: string, stepOffset = 0): string {
+    return new OTPAuth.TOTP({ secret, digits: 6, period: 30 }).generate({ timestamp: Date.now() + stepOffset * 30_000 })
   }
 
   async function withTotp() {
@@ -459,8 +480,43 @@ describe('2FA TOTP (E6-US02)', () => {
     const auth = { Authorization: `Bearer ${u.accessToken}` }
     const secret = (await client.post('/auth/2fa/setup').set(auth).expect(200)).body.data.secret as string
     await client.post('/auth/2fa/verify').set(auth).send({ code: codeFor(secret) }).expect(200)
+    await forgetTotpSteps()
     return { ...u, auth, secret, client }
   }
+
+  it('audit LOW-14a : un code accepté ne sert qu’une fois — rejoué au login suivant il est refusé, le code du pas suivant passe', async () => {
+    const { email, password, secret, client } = await withTotp()
+    const code = codeFor(secret)
+    const first = await client.post('/auth/login').send({ email, password }).expect(200)
+    await client.post('/auth/2fa/verify').send({ temp_token: first.body.data.temp_token, code }).expect(200)
+    const second = await client.post('/auth/login').send({ email, password }).expect(200)
+    const replay = await client.post('/auth/2fa/verify').send({ temp_token: second.body.data.temp_token, code }).expect(401)
+    expect(replay.body.error.code).toBe('AUTH_2FA_INVALID')
+    await client.post('/auth/2fa/verify').send({ temp_token: second.body.data.temp_token, code: codeFor(secret, 1) }).expect(200)
+  })
+
+  it('audit LOW-14a : deux validations parallèles du même code ne donnent qu’une session', async () => {
+    const { email, password, secret, client } = await withTotp()
+    const code = codeFor(secret)
+    const a = await client.post('/auth/login').send({ email, password }).expect(200)
+    const b = await client.post('/auth/login').send({ email, password }).expect(200)
+    const results = await Promise.all([
+      client.post('/auth/2fa/verify').send({ temp_token: a.body.data.temp_token, code }),
+      client.post('/auth/2fa/verify').send({ temp_token: b.body.data.temp_token, code }),
+    ])
+    expect(results.map((r) => r.status).sort()).toEqual([200, 401])
+    expect(await prisma().sessions.count()).toBe(2) // l'inscription + une seule connexion 2FA
+  })
+
+  it('audit LOW-14b : le secret TOTP est chiffré en base (enc1:), jamais en base32 ; une valeur legacy en clair reste lisible', async () => {
+    const { email, password, secret, client, userId } = await withTotp()
+    const row = await prisma().users.findUniqueOrThrow({ where: { id: userId }, select: { totp_secret: true } })
+    expect(row.totp_secret).toMatch(/^enc1:/)
+    expect(row.totp_secret).not.toContain(secret)
+    await prisma().users.update({ where: { id: userId }, data: { totp_secret: secret } })
+    const login = await client.post('/auth/login').send({ email, password }).expect(200)
+    await client.post('/auth/2fa/verify').send({ temp_token: login.body.data.temp_token, code: codeFor(secret) }).expect(200)
+  })
 
   it('audit HIGH-4 : cinq codes faux au login consomment le temp_token — le bon code est ensuite refusé, il faut se reconnecter', async () => {
     const { email, password, secret, client } = await withTotp()
@@ -526,7 +582,8 @@ describe('2FA TOTP (E6-US02)', () => {
     const temp3 = (await client.post('/auth/login').send({ email, password }).expect(200)).body.data.temp_token as string
     await client.post('/auth/2fa/verify').send({ temp_token: temp3 }).expect(400)
 
-    // La désactivation purge les codes
+    // La désactivation purge les codes (le code d'activation est brûlé — audit LOW-14a)
+    await forgetTotpSteps()
     const su = await stepUp(accessToken, 'disable_2fa')
     await client.delete('/auth/2fa').set(auth).set('X-Step-Up-Token', su).send({ code: codeFor(secret) }).expect(200)
     expect(await prisma().two_factor_recovery_codes.count({ where: { user_id: userId } })).toBe(0)
@@ -549,6 +606,7 @@ describe('2FA TOTP (E6-US02)', () => {
     await client.post('/auth/2fa/verify').set(auth).send({ code: codeFor(secret) }).expect(200)
     expect((await prisma().users.findUniqueOrThrow({ where: { email } })).totp_enabled).toBe(true)
     expect(lastEmailTo(email)?.subject).toMatch(/Double authentification activée/)
+    await forgetTotpSteps() // audit LOW-14a : le code d'activation est brûlé, le test enchaîne dans la même demi-minute
 
     // Login : plus de session directe
     const login = await client.post('/auth/login').send({ email, password }).expect(200)
@@ -568,7 +626,8 @@ describe('2FA TOTP (E6-US02)', () => {
     const reuse = await client.post('/auth/2fa/verify').send({ temp_token: temp, code: codeFor(secret) }).expect(401)
     expect(reuse.body.error.code).toBe('AUTH_TOKEN_EXPIRED')
 
-    // Désactivation : step-up + code
+    // Désactivation : step-up + code (le code du login est brûlé — audit LOW-14a)
+    await forgetTotpSteps()
     const noStepUp = await client.delete('/auth/2fa').set(auth).send({ code: codeFor(secret) }).expect(403)
     expect(noStepUp.body.error.code).toBe('AUTH_STEPUP_REQUIRED')
     const su = await stepUp(accessToken, 'disable_2fa')
@@ -609,7 +668,7 @@ describe('audit MEDIUM-6 : pas d’oracle d’existence d’un compte sur la ré
     expect(noKey.body.error.code).toBe('AUTH_OTP_INVALID')
 
     const keys = generateDeviceKeys()
-    await client.post('/auth/keys').set('Authorization', `Bearer ${u.accessToken}`).send({ ed25519_pk: keys.publicKeyBase64 }).expect(200)
+    await registerKey(u.accessToken, keys.publicKeyBase64)
     const withKey = await client.post('/auth/password/reset').send({ email: EMAIL, code: '123456', new_password: STRONG_PASSWORD }).expect(401)
     expect(withKey.body.error.code).toBe('AUTH_OTP_INVALID')
   })
@@ -618,7 +677,7 @@ describe('audit MEDIUM-6 : pas d’oracle d’existence d’un compte sur la ré
     const client = await api()
     const u = await registerUser(EMAIL)
     const keys = generateDeviceKeys()
-    await client.post('/auth/keys').set('Authorization', `Bearer ${u.accessToken}`).send({ ed25519_pk: keys.publicKeyBase64 }).expect(200)
+    await registerKey(u.accessToken, keys.publicKeyBase64)
     await client.post('/auth/password/reset-request').send({ email: EMAIL }).expect(200)
     const code = lastOtp()
     const bad = await client.post('/auth/password/reset').send({ email: EMAIL, code, new_password: STRONG_PASSWORD, signature: Buffer.alloc(64).toString('base64') }).expect(401)

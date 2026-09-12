@@ -31,6 +31,6 @@ export function requireRole(...roles: string[]): preHandlerHookHandler {
   return async function roleGuard(req: FastifyRequest): Promise<void> {
     if (!req.admin) throw new AppError('AUTH_TOKEN_INVALID')
     if (req.admin.role === 'super_admin' || roles.includes(req.admin.role)) return
-    throw new AppError('AUTH_STEPUP_REQUIRED', { message: 'Rôle insuffisant pour cette action.' })
+    throw new AppError('AUTH_FORBIDDEN')
   }
 }
