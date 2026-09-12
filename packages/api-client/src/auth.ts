@@ -13,6 +13,7 @@ export type StepUpAction =
   | 'disable_2fa'
   | 'set_key'
   | 'admin_action'
+  | 'cancel_transmission'
 
 export interface PublicUser {
   id: string

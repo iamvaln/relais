@@ -1,4 +1,4 @@
-export type PushType = 'checkin_due' | 'checkin_relance_1' | 'pause_ending'
+export type PushType = 'checkin_due' | 'checkin_relance_1' | 'pause_ending' | 'transmission_triggered' | 'contact_answered' | 'contact_blocked'
 
 /** Ce qui part vers le fournisseur : jamais d'email, de nom ni de contenu utilisateur. */
 export interface OutgoingPush {

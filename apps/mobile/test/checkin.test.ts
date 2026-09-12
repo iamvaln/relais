@@ -28,6 +28,8 @@ describe('badgeKey', () => {
 describe('routeForNotification', () => {
   it('n’ouvre que les écrans connus, sinon le tableau de bord', () => {
     expect(routeForNotification({ route: '/checkin' })).toBe('/checkin')
+    // Owner prévenu après le déclenchement (12/09/2026) : le push mène à l'annulation
+    expect(routeForNotification({ route: '/transmission/cancel' })).toBe('/transmission/cancel')
     expect(routeForNotification({ route: '/transmission' })).toBe('/transmission')
     expect(routeForNotification({ route: '/settings/security' })).toBe('/home')
     expect(routeForNotification({ route: 'https://evil.example' })).toBe('/home')

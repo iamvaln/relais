@@ -25,6 +25,7 @@ export const ErrorCodes = {
   VAULT_SYNC_STALE: { http: 409, message: 'Sauvegarde périmée ou rejouée : synchronisez de nouveau.' },
   TRANSMISSION_NOT_CONFIGURED: { http: 409, message: 'Transmission non configurée.' },
   TRANSMISSION_ALREADY_ACTIVE: { http: 409, message: 'Transmission déjà active.' },
+  TRANSMISSION_NOT_TRIGGERED: { http: 409, message: 'Aucune transmission déclenchée à annuler.' },
   RELAY_TOKEN_INVALID: { http: 404, message: 'Lien invalide ou expiré.' },
   RELAY_TOKEN_EXHAUSTED: { http: 429, message: 'Trop de tentatives sur ce lien.' },
   RELAY_CONTACT_BLOCKED: { http: 423, message: 'Contact bloqué — trop d’échecs.' },

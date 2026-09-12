@@ -14,6 +14,7 @@ import { prisma } from '../../lib/prisma.js'
 import { redis } from '../../lib/redis.js'
 import sodium from '../../lib/sodium.js'
 import { emailService } from '../../services/email/index.js'
+import { pushService } from '../../services/push/index.js'
 import { objectStore } from '../../services/storage/index.js'
 import { openNotification } from '../transmission/service.js'
 import { vaultKey, vaultPrefix } from '../vault/service.js'
@@ -23,12 +24,82 @@ import type { VerifyBody } from './schemas.js'
 const HOUR_MS = 3600 * 1000
 const DEFAULT_ESCROW_TTL_HOURS = 72
 
+/**
+ * L'owner est prévenu après le déclenchement (décision du 12/09/2026) : un
+ * déclenchement n'est pas une preuve de décès, et le coffre peut contenir
+ * ses propres accès. Email (tracé) et push, jamais d'identité de contact ;
+ * le lien mène à l'annulation par l'owner (POST /transmission/cancel).
+ */
+export type OwnerEvent = 'transmission_triggered' | 'contact_answered' | 'contact_blocked' | 'contact_unblocked'
+
+export async function notifyOwner(user: { id: string; email: string; full_name: string; language: string }, event: OwnerEvent): Promise<void> {
+  const locale = user.language === 'en' ? 'en' : 'fr'
+  await emailService().send({ userId: user.id, to: user.email, type: event, locale, params: { name: user.full_name, link: `${env().FRONTEND_URL}/transmission/cancel` } })
+  if (event !== 'contact_unblocked') await pushService().send({ userId: user.id, type: event, locale })
+}
+
+const WEEK_MS = 7 * 24 * HOUR_MS
+
+/**
+ * Ferme une transmission ouverte : escrow purgé (clé Redis et parts scellées),
+ * liens morts (statut hors OPEN), et la configuration de l'owner reprend vie —
+ * active, cycle de check-in relancé. Commun à l'annulation admin (BO-03) et à
+ * l'annulation par l'owner (12/09/2026). Les contacts sont prévenus ensuite.
+ */
+export async function closeTransmission(
+  t: { id: string; user_id: string; transmission_config_id: string },
+  by: { adminId: string | null; reason: string },
+  now = new Date(),
+): Promise<{ next_checkin_due: Date }> {
+  await redis().del(escrowKeyId(t.id))
+  const cfg = await prisma().transmission_configs.findUniqueOrThrow({ where: { id: t.transmission_config_id }, select: { checkin_frequency_weeks: true } })
+  const nextDue = new Date(now.getTime() + cfg.checkin_frequency_weeks * WEEK_MS)
+  await prisma().$transaction([
+    prisma().escrow_shares.deleteMany({ where: { transmission_id: t.id } }),
+    prisma().transmissions.update({
+      where: { id: t.id },
+      data: { status: 'cancelled', cancelled_at: now, cancelled_by_admin: by.adminId, cancellation_reason: by.reason },
+    }),
+    prisma().transmission_configs.update({
+      where: { id: t.transmission_config_id },
+      data: { status: 'active', last_checkin_at: now, next_checkin_due: nextDue, relance_count: 0, last_relance_at: null },
+    }),
+  ])
+  return { next_checkin_due: nextDue }
+}
+
+/** Les contacts apprennent que les liens ne fonctionnent plus — l'événement seulement. Une sealed box illisible n'arrête pas les autres. */
+export async function notifyContactsCancelled(transmissionId: string, userId: string, locale: 'fr' | 'en'): Promise<void> {
+  const rows = await prisma().transmission_contacts.findMany({ where: { transmission_id: transmissionId }, select: { trusted_contacts: { select: { notification_enc: true } } } })
+  for (const row of rows) {
+    let email: string
+    try {
+      email = (await openNotification(row.trusted_contacts.notification_enc)).email
+    } catch {
+      continue
+    }
+    await emailService().send({ userId, to: email, type: 'contact_progress', locale, params: { event: 'cancelled' } })
+  }
+}
+
+/** POST /transmission/cancel — l'owner est vivant : il reprend la main sans attendre le support. */
+export async function cancelByOwner(userId: string, now = new Date()): Promise<{ cancelled: true; next_checkin_due: string }> {
+  const t = await prisma().transmissions.findFirst({
+    where: { user_id: userId, status: { in: ['triggered', 'in_progress'] } },
+    include: { users: { select: { language: true } } },
+  })
+  if (!t) throw new AppError('TRANSMISSION_NOT_TRIGGERED')
+  const { next_checkin_due } = await closeTransmission(t, { adminId: null, reason: 'owner' }, now)
+  await notifyContactsCancelled(t.id, userId, t.users.language === 'en' ? 'en' : 'fr')
+  return { cancelled: true, next_checkin_due: next_checkin_due.toISOString() }
+}
+
 /** Crée la transmission d'une config déclenchée et prévient ses contacts. Retourne le nombre d'emails partis. */
 export async function startTransmission(configId: string, now = new Date()): Promise<number> {
   const cfg = await prisma().transmission_configs.findUniqueOrThrow({
     where: { id: configId },
     include: {
-      users: { select: { full_name: true, language: true } },
+      users: { select: { id: true, email: true, full_name: true, language: true } },
       trusted_contacts: { where: { contact_status: { not: 'removed' } }, orderBy: { contact_order: 'asc' } },
     },
   })
@@ -86,6 +157,7 @@ export async function startTransmission(configId: string, now = new Date()): Pro
     })
     if (sent) notified++
   }
+  await notifyOwner(cfg.users, 'transmission_triggered')
   return notified
 }
 
@@ -97,7 +169,7 @@ export type KeySlot = (typeof KEY_SLOTS)[number]
 const OPEN_STATUSES = new Set(['triggered', 'in_progress'])
 
 const contactInclude = {
-  transmissions: { include: { users: { select: { full_name: true, language: true } } } },
+  transmissions: { include: { users: { select: { id: true, email: true, full_name: true, language: true } } } },
   trusted_contacts: {
     include: {
       checkin_questions_trusted_contacts_question_1_idTocheckin_questions: { select: { id: true, text_fr: true, text_en: true } },
@@ -229,6 +301,7 @@ async function recordFailure(c: LoadedContact, now: Date): Promise<never | { att
       prisma().trusted_contacts.update({ where: { id: c.trusted_contact_id }, data: { fail_count: count, blocked_until: until } }),
     ])
     await notifyOtherContacts(c, 'blocked')
+    await notifyOwner(c.transmissions.users, 'contact_blocked')
     throw new AppError('RELAY_TOKEN_EXHAUSTED', { details: { blocked_until: until.toISOString() } })
   }
   await prisma().$transaction([
@@ -360,6 +433,7 @@ export async function verify(token: string, body: VerifyBody, now = new Date()):
     const accessEnd = accessExpiresAt(tr.escrow_expires_at)
     await redis().expire(escrowKeyId(tr.id), Math.max(1, Math.ceil((accessEnd.getTime() - now.getTime()) / 1000)))
   }
+  await notifyOwner(tr.users, 'contact_answered')
   return { accepted: true, answered: await answeredCount(tr.id), needed, unlocked }
 }
 
