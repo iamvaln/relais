@@ -3,7 +3,7 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest'
 import { prisma } from '../src/lib/prisma.js'
 import { loginAdmin } from './admin-helpers.js'
-import { api, closeAll, registerUser, resetState } from './helpers.js'
+import { api, closeAll, lastEmailTo, mailbox, registerUser, resetState } from './helpers.js'
 
 beforeEach(resetState)
 afterAll(closeAll)
@@ -102,9 +102,15 @@ describe('PUT /admin/tickets/:id', () => {
     expect(taken.body.data).toMatchObject({ status: 'in_progress', priority: 'high', assigned_to: support.id, resolved_at: null })
 
     const before = Date.now()
+    mailbox.clear()
     const done = await (await api()).put(`/admin/tickets/${t1.id}`).set(support.auth).send({ status: 'resolved', resolution_note: 'Compte débloqué, email envoyé.' }).expect(200)
     expect(done.body.data.status).toBe('resolved')
     expect(Date.parse(done.body.data.resolved_at)).toBeGreaterThanOrEqual(before - 1000)
+    // Point ouvert (12/09/2026) : le demandeur est prévenu, avec la note
+    const mail = lastEmailTo('adjoua@example.cm')
+    expect(mail?.subject).toBe('Relais — votre demande « Compte bloqué » est résolue')
+    expect(mail?.text).toContain('Compte débloqué, email envoyé.')
+    expect(await prisma().email_log.count({ where: { user_id: u.userId, email_type: 'ticket_resolved' } })).toBe(1)
 
     const logs = await prisma().audit_logs.findMany({ where: { action: 'TICKET_UPDATE', target_id: t1.id }, orderBy: { created_at: 'asc' } })
     expect(logs).toHaveLength(2)
@@ -119,5 +125,10 @@ describe('PUT /admin/tickets/:id', () => {
 
     await (await api()).put(`/admin/tickets/${t1.id}`).set(support.auth).send({}).expect(400)
     await (await api()).put(`/admin/tickets/${t1.id}`).set(support.auth).send({ assigned_to: '00000000-0000-4000-8000-000000000000' }).expect(404)
+
+    // Passer à fermé n'envoie rien de plus
+    mailbox.clear()
+    await (await api()).put(`/admin/tickets/${t1.id}`).set(support.auth).send({ status: 'closed' }).expect(200)
+    expect(mailbox.sent).toHaveLength(0)
   })
 })

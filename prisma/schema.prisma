@@ -17,6 +17,7 @@
 //   psql "$DATABASE_URL" -f prisma/migrations/20260912000000_lot5_pause_ending/migration.sql
 //   psql "$DATABASE_URL" -f prisma/migrations/20260913000000_relay_max_restarts_seed/migration.sql
 //   psql "$DATABASE_URL" -f prisma/migrations/20260914000000_owner_notified_after_trigger/migration.sql
+//   psql "$DATABASE_URL" -f prisma/migrations/20260915000000_ticket_resolved/migration.sql
 //   npx prisma db pull
 // =============================================================================
 

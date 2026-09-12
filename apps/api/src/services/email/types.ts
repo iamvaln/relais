@@ -33,6 +33,8 @@ export type EmailType =
   | 'contact_answered'
   | 'contact_blocked'
   | 'contact_unblocked'
+  // Support (12/09/2026) — migration 20260915000000
+  | 'ticket_resolved'
 
 export interface RenderedEmail {
   subject: string

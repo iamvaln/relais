@@ -81,6 +81,9 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
 
   // --- BO-02 Utilisateurs ---------------------------------------------------------
   const support = [authenticateAdmin, requireRole('support', 'admin')]
+
+  // Liste des admins (12/09/2026) : pour assigner un ticket à un collègue — mêmes rôles que les tickets.
+  app.get('/admins', { preHandler: support, config: { rateLimit: limits.admin } }, async () => ok(await admin.listAdmins()))
   const adminOnly = [authenticateAdmin, requireRole('admin')]
   const superOnly = [authenticateAdmin, requireRole()]
 

@@ -93,3 +93,18 @@ export async function me(adminId: string): Promise<AdminView> {
   const a = await prisma().admin_users.findUniqueOrThrow({ where: { id: adminId }, select: { id: true, email: true, full_name: true, role: true } })
   return toView(a)
 }
+
+// --- Liste des admins (12/09/2026 : assigner un ticket à un collègue) ------------------
+
+export interface AdminListItem {
+  id: string
+  full_name: string
+  role: string
+  status: string
+}
+
+/** Id, nom, rôle, statut — jamais d'email : de quoi choisir un collègue, rien de plus. */
+export async function listAdmins(): Promise<AdminListItem[]> {
+  const rows = await prisma().admin_users.findMany({ orderBy: [{ full_name: 'asc' }, { created_at: 'asc' }], select: { id: true, full_name: true, role: true, status: true } })
+  return rows
+}
