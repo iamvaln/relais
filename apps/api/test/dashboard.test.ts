@@ -2,6 +2,7 @@
 
 import { afterAll, beforeEach, describe, expect, it } from 'vitest'
 import { prisma } from '../src/lib/prisma.js'
+import { meteredStore, objectStore, setObjectStoreForTests, type ObjectStore } from '../src/services/storage/index.js'
 import { loginAdmin } from './admin-helpers.js'
 import { api, closeAll, registerUser, resetState } from './helpers.js'
 import { activateTransmission, makeOwner, openTransmission } from './transmission-helpers.js'
@@ -123,5 +124,27 @@ describe('GET /admin/dashboard — alertes calculables', () => {
       { type: 'contact_failures_spike', severity: 'high', count: 4 },
       { type: 'accounts_suspended_stale', severity: 'medium', count: 1 },
     ])
+  })
+})
+
+describe('GET /admin/dashboard — stockage dégradé (point ouvert, 12/09/2026)', () => {
+  it('cinq erreurs du stockage objet en 15 minutes → alerte storage_degraded (haute) ; quatre, rien', async () => {
+    const sa = await loginAdmin()
+    const previous = objectStore()
+    const boom = async (): Promise<never> => {
+      throw new Error('gateway timeout')
+    }
+    // La sonde /health reste verte : c'est le compteur d'erreurs, pas service_down, qui porte l'alerte.
+    const broken: ObjectStore = { name: 'memory', put: boom, get: boom, head: boom, delete: boom, deletePrefix: boom, ping: async () => undefined }
+    setObjectStoreForTests(meteredStore(broken))
+    try {
+      for (let i = 0; i < 4; i++) await objectStore().get('vault/x/accounts').catch(() => undefined)
+      expect((await (await api()).get('/admin/dashboard').set(sa.auth).expect(200)).body.data.alerts).toEqual([])
+      await objectStore().put('vault/x/accounts', new Uint8Array(1)).catch(() => undefined)
+      const r = await (await api()).get('/admin/dashboard').set(sa.auth).expect(200)
+      expect(r.body.data.alerts).toEqual([{ type: 'storage_degraded', severity: 'high', count: 5, window_minutes: 15 }])
+    } finally {
+      setObjectStoreForTests(previous)
+    }
   })
 })

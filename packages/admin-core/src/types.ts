@@ -334,3 +334,13 @@ export interface AuditView {
   ip_hash: string
   created_at: string
 }
+
+// --- Admins (12/09/2026 : assigner un ticket à un collègue) ----------------------
+
+/** Id, nom, rôle, statut — jamais d'email. */
+export interface AdminListItem {
+  id: string
+  full_name: string
+  role: string
+  status: string
+}

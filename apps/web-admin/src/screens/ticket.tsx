@@ -29,6 +29,7 @@ export function TicketScreen() {
   const { id = '' } = useParams()
   const qc = useQueryClient()
   const ticket = useQuery({ queryKey: ['ticket', id], queryFn: () => client.tickets.get(id), enabled: id.length > 0 })
+  const admins = useQuery({ queryKey: ['admins'], queryFn: () => client.admins(), staleTime: 300_000 })
   const [resolving, setResolving] = useState(false)
   const [note, setNote] = useState('')
   const [notice, setNotice] = useState<{ ok: boolean; text: string } | null>(null)
@@ -79,7 +80,7 @@ export function TicketScreen() {
             <dt>{t('tk.col.created')}</dt><dd>{formatDateTime(x.created_at, lang)}</dd>
             <dt>{t('tk.updated')}</dt><dd>{formatDateTime(x.updated_at, lang)}</dd>
             {x.resolved_at && (<><dt>{t('tk.resolvedAt')}</dt><dd>{formatDateTime(x.resolved_at, lang)}</dd></>)}
-            <dt>{t('tk.col.assigned')}</dt><dd>{x.assigned_to ? (x.assigned_to === admin?.id ? t('tk.me') : x.assigned_to) : t('tk.unassigned')}</dd>
+            <dt>{t('tk.col.assigned')}</dt><dd>{x.assigned_to ? (x.assigned_to === admin?.id ? t('tk.me') : (admins.data?.find((a) => a.id === x.assigned_to)?.full_name ?? x.assigned_to)) : t('tk.unassigned')}</dd>
           </dl>
         </section>
         <section className="card">
@@ -102,6 +103,15 @@ export function TicketScreen() {
             {s === 'in_progress' && x.status === 'open' ? t('tkAction.take') : t(`tkAction.${s}`)}
           </button>
         ))}
+        <label style={{ minWidth: 200 }}>
+          {t('tkAction.assign')}
+          <select value={x.assigned_to ?? ''} disabled={run.isPending || !admins.data} onChange={(e) => { setNotice(null); run.mutate({ assigned_to: e.target.value || null }) }}>
+            <option value="">{t('tk.nobody')}</option>
+            {(admins.data ?? []).filter((a) => a.status === 'active' || a.id === x.assigned_to).map((a) => (
+              <option key={a.id} value={a.id}>{a.id === admin?.id ? `${a.full_name} (${t('tk.me')})` : `${a.full_name} · ${a.role}`}</option>
+            ))}
+          </select>
+        </label>
         <label style={{ minWidth: 160 }}>
           {t('tkAction.priority')}
           <select value={x.priority} disabled={run.isPending} onChange={(e) => { setNotice(null); run.mutate({ priority: e.target.value as TicketPriority }) }}>

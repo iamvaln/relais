@@ -317,6 +317,22 @@ describe('DELETE /admin/users/:id (RGPD)', () => {
   })
 })
 
+describe('GET /admin/admins (point ouvert, 12/09/2026 : assigner un ticket à un collègue)', () => {
+  it('support, admin et super_admin voient la liste (id, nom, rôle, statut — jamais d’email) ; finance non', async () => {
+    const sa = await superAdmin()
+    const support = await adminWithRole('support')
+    const finance = await adminWithRole('finance')
+    await (await api()).get('/admin/admins').set(finance.auth).expect(403)
+
+    const r = await (await api()).get('/admin/admins').set(support.auth).expect(200)
+    expect(r.body.data).toHaveLength(3)
+    const me = r.body.data.find((a: { id: string }) => a.id === support.id)
+    expect(me).toEqual({ id: support.id, full_name: 'Valentine N.', role: 'support', status: 'active' })
+    expect(JSON.stringify(r.body.data)).not.toContain('@')
+    expect(r.body.data.map((a: { id: string }) => a.id)).toContain(sa.id)
+  })
+})
+
 // --- BO-03 Transmissions -----------------------------------------------------------
 
 const HOUR = 3600 * 1000

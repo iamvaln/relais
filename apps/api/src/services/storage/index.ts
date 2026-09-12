@@ -22,6 +22,7 @@ import {
   S3Client,
 } from '@aws-sdk/client-s3'
 import { env } from '../../config/env.js'
+import { keys, redis } from '../../lib/redis.js'
 
 export interface ObjectMeta {
   size: number
@@ -218,6 +219,50 @@ export class S3ObjectStore implements ObjectStore {
 
 // --- Fabrique -------------------------------------------------------------------
 
+// --- Erreurs du stockage : compteur glissant pour l'alerte « stockage dégradé » -------
+//
+// Point ouvert BO-01 (12/09/2026) : Storj n'expose ni taux d'erreur ni usage du
+// bucket. Ce que l'API sait, c'est quand ses propres appels échouent : chaque
+// erreur (hors « objet absent ») est datée dans un sorted set Redis ; le
+// tableau de bord compte celles des 15 dernières minutes.
+
+export const STORAGE_ERROR_WINDOW_MS = 15 * 60 * 1000
+
+export async function recordStorageError(now = new Date()): Promise<void> {
+  const key = keys.storageErrors()
+  await redis()
+    .multi()
+    .zadd(key, now.getTime(), `${now.getTime()}:${Math.random().toString(36).slice(2, 10)}`)
+    .zremrangebyscore(key, 0, now.getTime() - STORAGE_ERROR_WINDOW_MS)
+    .expire(key, Math.ceil(STORAGE_ERROR_WINDOW_MS / 1000) + 60)
+    .exec()
+}
+
+export async function storageErrorsInWindow(now = new Date()): Promise<number> {
+  return redis().zcount(keys.storageErrors(), now.getTime() - STORAGE_ERROR_WINDOW_MS, '+inf')
+}
+
+/** Enveloppe un store : toute erreur levée par le backend est comptée avant d'être relancée. */
+export function meteredStore(inner: ObjectStore): ObjectStore {
+  const meter = async <T>(work: () => Promise<T>): Promise<T> => {
+    try {
+      return await work()
+    } catch (err) {
+      await recordStorageError().catch(() => undefined)
+      throw err
+    }
+  }
+  return {
+    name: inner.name,
+    put: (key, data) => meter(() => inner.put(key, data)),
+    get: (key) => meter(() => inner.get(key)),
+    head: (key) => meter(() => inner.head(key)),
+    delete: (key) => meter(() => inner.delete(key)),
+    deletePrefix: (prefix) => meter(() => inner.deletePrefix(prefix)),
+    ping: () => meter(() => inner.ping()),
+  }
+}
+
 let instance: ObjectStore | undefined
 
 export function objectStore(): ObjectStore {
@@ -228,14 +273,16 @@ export function objectStore(): ObjectStore {
         instance = new MemoryObjectStore()
         break
       case 's3':
-        instance = new S3ObjectStore(e.STORJ_BUCKET, {
-          endpoint: e.STORJ_ENDPOINT,
-          accessKeyId: e.STORJ_ACCESS_KEY!,
-          secretAccessKey: e.STORJ_SECRET_KEY!,
-        })
+        instance = meteredStore(
+          new S3ObjectStore(e.STORJ_BUCKET, {
+            endpoint: e.STORJ_ENDPOINT,
+            accessKeyId: e.STORJ_ACCESS_KEY!,
+            secretAccessKey: e.STORJ_SECRET_KEY!,
+          }),
+        )
         break
       default:
-        instance = new FsObjectStore(e.STORAGE_FS_DIR)
+        instance = meteredStore(new FsObjectStore(e.STORAGE_FS_DIR))
     }
   }
   return instance

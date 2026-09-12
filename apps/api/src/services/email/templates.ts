@@ -64,6 +64,10 @@ const fr: Record<EmailType, Template> = {
     subject: 'Relais — un contact a été débloqué',
     text: `Bonjour ${p.name ?? ''},\n\nÀ sa demande, notre équipe a redonné ses tentatives à un de tes contacts de confiance sur ta transmission en cours. Si ce n'est pas prévu, annule la transmission depuis l'app : ${p.link}\n\nRelais`,
   }),
+  ticket_resolved: (p) => ({
+    subject: `Relais — votre demande « ${p.subject ?? ''} » est résolue`,
+    text: `Bonjour,\n\nNotre équipe a traité votre demande « ${p.subject ?? ''} ».\n\n${p.note ?? ''}\n\nSi le problème persiste, répondez à cet email ou écrivez à support@relais.app\n\nRelais`,
+  }),
   transmission_contact: (p) => ({
     subject: `${p.owner ?? 'Un proche'} vous a confié quelque chose`,
     text: `Bonjour,\n\n${p.owner ?? 'Une personne qui vous fait confiance'} vous a désigné pour recevoir des informations importantes, à ouvrir au moment voulu.\n\n${p.message ?? ''}\n\nPour commencer, suivez ce lien : ${p.link}\n\nPrenez votre temps. Nous sommes là si besoin : support@relais.app\n\nRelais`,
@@ -161,6 +165,10 @@ const en: Record<EmailType, Template> = {
   contact_unblocked: (p) => ({
     subject: 'Relais — a contact was unblocked',
     text: `Hello ${p.name ?? ''},\n\nAt their request, our team gave one of your trusted contacts their attempts back on your ongoing transmission. If this is unexpected, cancel the transmission from the app: ${p.link}\n\nRelais`,
+  }),
+  ticket_resolved: (p) => ({
+    subject: `Relais — your request “${p.subject ?? ''}” is resolved`,
+    text: `Hello,\n\nOur team has handled your request “${p.subject ?? ''}”.\n\n${p.note ?? ''}\n\nIf the problem persists, reply to this email or write to support@relais.app\n\nRelais`,
   }),
   transmission_contact: (p) => ({
     subject: `${p.owner ?? 'Someone close to you'} entrusted you with something`,

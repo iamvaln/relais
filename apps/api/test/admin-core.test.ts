@@ -344,6 +344,12 @@ describe('BO-02 tickets', () => {
 
     const taken = await d.client.tickets.take(t1.id, me.id)
     expect(taken).toMatchObject({ status: 'in_progress', assigned_to: me.id })
+    // Assigner à un collègue (12/09/2026) : la liste des admins, sans email
+    const colleague = await adminAccount('admin')
+    const admins = await d.client.admins()
+    expect(admins.map((x) => x.id)).toEqual(expect.arrayContaining([me.id, colleague.id]))
+    expect(admins[0]).not.toHaveProperty('email')
+    expect((await d.client.tickets.update(t1.id, { assigned_to: colleague.id })).assigned_to).toBe(colleague.id)
     expect((await d.client.tickets.update(t1.id, { priority: 'high' })).priority).toBe('high')
     const done = await d.client.tickets.update(t1.id, { status: 'resolved', resolution_note: 'Compte débloqué, email envoyé.' })
     expect(done.status).toBe('resolved')

@@ -4,6 +4,7 @@
 
 import { ApiClient, type ApiClientOptions, ApiError, type RequestOptions } from '@relais/api-client'
 import type {
+  AdminListItem,
   AdminLoginResult,
   AdminView,
   AuditFilter,
@@ -155,6 +156,11 @@ export class AdminClient {
     update: (id: string, changes: TicketUpdate): Promise<TicketView> => this.put<TicketView>(`/admin/tickets/${id}`, changes),
     /** Prise en charge : assigné à l'admin connecté, statut en cours (décision du 12/09/2026 : à soi-même seulement). */
     take: (id: string, adminId: string): Promise<TicketView> => this.put<TicketView>(`/admin/tickets/${id}`, { status: 'in_progress', assigned_to: adminId }),
+  }
+
+  /** Les admins (id, nom, rôle, statut) : de quoi assigner un ticket à un collègue. */
+  admins(): Promise<AdminListItem[]> {
+    return this.get<AdminListItem[]>('/admin/admins')
   }
 
   // --- BO-06 ------------------------------------------------------------------------

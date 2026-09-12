@@ -54,6 +54,8 @@ export const keys = {
   adminSession: (sid: string) => `admin:session:${sid}`,
   /** Dernier horodatage de sync accepté par catégorie (audit MEDIUM-7) : ni rejeu ni retour en arrière. */
   vaultSyncTs: (userId: string, category: string) => `vault:sync:ts:${userId}:${category}`,
+  /** Erreurs du stockage objet, datées (sorted set) — alerte « stockage dégradé » du tableau de bord (12/09/2026). */
+  storageErrors: () => 'storage:errors',
   /** Défi de check-in en cours pour un utilisateur (24 h). */
   checkinGame: (userId: string) => `checkin:game:${userId}`,
   /** Jeu réussi, à échanger contre un check-in (usage unique, 15 min). */

@@ -3,6 +3,7 @@
 import { audit } from '../../lib/audit.js'
 import { AppError } from '../../lib/errors.js'
 import { prisma } from '../../lib/prisma.js'
+import { emailService } from '../../services/email/index.js'
 import { ticketSelect, toTicketView, type TicketView } from '../support/service.js'
 import type { RequestContext } from './service.js'
 import type { TicketListQuery, TicketUpdateBody } from './schemas.js'
@@ -79,5 +80,10 @@ export async function updateTicket(adminId: string, id: string, body: TicketUpda
     select: adminSelect,
   })
   await audit({ adminId, action: 'TICKET_UPDATE', targetType: 'ticket', targetId: id, ...(before.user_id ? { userId: before.user_id } : {}), before: snapshot(before), after: snapshot(row), ip: ctx.ip })
+  // Point ouvert (12/09/2026) : le demandeur apprend la résolution, avec la note — une fois, au passage à « résolu ».
+  if (body.status === 'resolved' && before.status !== 'resolved') {
+    const locale = before.user_id ? ((await prisma().users.findUnique({ where: { id: before.user_id }, select: { language: true } }))?.language === 'en' ? 'en' : 'fr') : 'fr'
+    await emailService().send({ userId: before.user_id, to: row.user_email, type: 'ticket_resolved', locale, params: { subject: row.subject, note: row.resolution_note ?? '' } })
+  }
   return toAdminView(row)
 }

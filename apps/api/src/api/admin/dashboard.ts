@@ -1,11 +1,13 @@
 // BO-01 — Dashboard : KPIs et alertes calculables sur la base. Les alertes
-// qui supposent des métriques d'infrastructure (HCV, taux d'erreur, espace
-// Storj) attendent une collecte qui n'existe pas encore (open-questions).
+// qui supposent des métriques d'infrastructure (HCV, espace Storj) attendent
+// une collecte qui n'existe pas encore (open-questions) ; les erreurs du
+// stockage objet, elles, sont comptées par l'API (`storage_degraded`).
 
 import { configInt } from '../../lib/app-config.js'
 import { DEFAULT_MAX_RESTARTS } from '../../jobs/relay-cleanup.js'
 import { prisma } from '../../lib/prisma.js'
 import { healthReport } from '../health/routes.js'
+import { STORAGE_ERROR_WINDOW_MS, storageErrorsInWindow } from '../../services/storage/index.js'
 
 const HOUR_MS = 3600 * 1000
 const DAY_MS = 24 * HOUR_MS
@@ -13,6 +15,8 @@ const ACTIVE_WINDOW_DAYS = 30
 const ESCROW_ALERT_HOURS = 12
 const BLOCKED_SPIKE_THRESHOLD = 3
 const SUSPENDED_STALE_HOURS = 24
+/** Erreurs du stockage objet en 15 min à partir desquelles le stockage est dit dégradé (12/09/2026). */
+const STORAGE_ALERT_ERRORS = 5
 
 export interface DashboardKpis {
   users_total: number
@@ -82,8 +86,9 @@ async function alerts(now: Date): Promise<DashboardAlert[]> {
 
   const maxRestarts = await configInt('dms.relay_max_restarts', DEFAULT_MAX_RESTARTS)
 
-  const [health, expiring, blockedRecently, suspendedStale, triggeredConfigs] = await Promise.all([
+  const [health, storageErrors, expiring, blockedRecently, suspendedStale, triggeredConfigs] = await Promise.all([
     healthReport(),
+    storageErrorsInWindow(now),
     prisma().transmissions.findMany({
       where: { status: { in: ['triggered', 'in_progress'] }, escrow_expires_at: { gt: now, lt: new Date(now.getTime() + ESCROW_ALERT_HOURS * HOUR_MS) } },
       select: { id: true },
@@ -104,6 +109,7 @@ async function alerts(now: Date): Promise<DashboardAlert[]> {
   for (const [service, status] of Object.entries(health.services)) {
     if (status === 'down') out.push({ type: 'service_down', severity: service === 'storj' ? 'high' : 'critical', count: 1, service })
   }
+  if (storageErrors >= STORAGE_ALERT_ERRORS) out.push({ type: 'storage_degraded', severity: 'high', count: storageErrors, window_minutes: STORAGE_ERROR_WINDOW_MS / 60_000 })
   if (expiring.length > 0) out.push({ type: 'escrow_expiring', severity: 'high', count: expiring.length, transmission_ids: expiring.map((t) => t.id) })
   if (blockedRecently > BLOCKED_SPIKE_THRESHOLD) out.push({ type: 'contact_failures_spike', severity: 'high', count: blockedRecently })
   if (stalled.length > 0) out.push({ type: 'transmission_stalled', severity: 'high', count: stalled.length, transmission_config_ids: stalled.map((c) => c.id) })

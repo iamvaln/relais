@@ -111,7 +111,8 @@ Le module **auth** de §3.1 v1.1, le module **vault** de §3.3 v1.1, le module
 | `PUT /admin/billing/:id/plan` · `POST /admin/billing/:id/extend` | Encaissement manuel, renouvellement, rétrogradation, geste commercial — voir §3 |
 | `GET /admin/dashboard` | BO-01 : les huit KPIs et les alertes calculables, triées par criticité — voir §3 |
 | `POST /support/tickets` · `GET /support/tickets` | Ouvert sans compte (email, 3/h/IP) ou avec token ; ses propres tickets — voir §3 |
-| `GET /admin/tickets` · `GET …/:id` · `PUT …/:id` | BO-02, rôle support : file, prise en charge, résolution, `TICKET_UPDATE` audité |
+| `GET /admin/tickets` · `GET …/:id` · `PUT …/:id` | BO-02, rôle support : file, prise en charge, résolution (email `ticket_resolved` au demandeur, 12/09/2026), `TICKET_UPDATE` audité |
+| `GET /admin/admins` | Id, nom, rôle, statut des admins — jamais d'email ; pour assigner un ticket à un collègue (12/09/2026) |
 
 Jobs (§4), BullMQ, worker dans le processus API derrière `JOBS_ENABLED=true` :
 
@@ -756,6 +757,20 @@ même règle que `GET /admin/users`). L'export CSV, lui, reste sans email —
 un fichier circule plus loin qu'un écran. Même jour, pour le back office :
 `Content-Disposition` est exposé en CORS (`exposedHeaders`), sans quoi le
 navigateur enregistre l'export sous un nom générique.
+
+### Dashboard : « stockage dégradé » compté par l'API elle-même
+
+Storj n'expose ni taux d'erreur ni usage du bucket, et l'alerte BO-01
+« Storj dégradé » restait non calculée. Décision du 12/09/2026 : ce que
+l'API sait, c'est quand ses propres appels échouent. Le store `fs` et `s3`
+est enveloppé (`meteredStore`) : toute erreur levée par le backend (hors
+« objet absent », qui rend `null`) est datée dans un sorted set Redis
+(`storage:errors`, fenêtre glissante de 15 min). Le tableau de bord lève
+`storage_degraded` (haute) à partir de cinq erreurs dans la fenêtre, à côté
+de `service_down` qui ne voit que la sonde. L'espace du bucket reste hors de
+portée : alerte à configurer chez Storj. Le seuil d'alerte d'escrow, lui,
+est tranché à **12 h** (le temps de voir l'alerte et d'étendre) : la spec
+BO-01 (6 h) est à corriger.
 
 ### Dashboard : « actifs 30 j » = sessions utilisées, alertes limitées à ce que la base sait
 
