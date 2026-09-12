@@ -31,3 +31,10 @@ describe('CORS', () => {
     expect(r.headers['access-control-allow-headers']).toMatch(/Authorization/i)
   })
 })
+
+describe('CORS — export CSV (BO lot 3)', () => {
+  it('expose Content-Disposition : le navigateur du back office lit le nom du fichier', async () => {
+    const r = await (await api()).get('/health').set('Origin', process.env.ADMIN_URL!).expect(200)
+    expect(r.headers['access-control-expose-headers']).toMatch(/Content-Disposition/i)
+  })
+})

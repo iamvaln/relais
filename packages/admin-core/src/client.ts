@@ -6,7 +6,17 @@ import { ApiClient, type ApiClientOptions, ApiError, type RequestOptions } from 
 import type {
   AdminLoginResult,
   AdminView,
+  AuditFilter,
+  AuditView,
+  BillingOverview,
   ConfigView,
+  CsvExport,
+  PlanChange,
+  SubscriptionView,
+  SubscriptionsFilter,
+  TicketUpdate,
+  TicketView,
+  TicketsFilter,
   DashboardView,
   HealthView,
   Page,
@@ -22,7 +32,7 @@ import type {
   UserRowView,
   UsersFilter,
 } from './types.js'
-import { questionsQuery, transmissionsQuery, usersQuery } from './query.js'
+import { auditQuery, questionsQuery, subscriptionsQuery, ticketsQuery, transmissionsQuery, usersQuery } from './query.js'
 
 export interface AdminClientOptions {
   baseUrl: string
@@ -34,12 +44,17 @@ export interface AdminClientOptions {
 
 export class AdminClient {
   private readonly api: ApiClient
+  private readonly baseUrl: string
+  private readonly fetchImpl: typeof fetch
   private readonly onSessionLost: (() => void) | undefined
 
   constructor(options: AdminClientOptions) {
     const base: ApiClientOptions = { baseUrl: options.baseUrl, language: options.language ?? 'fr' }
     if (options.fetch) base.fetch = options.fetch
     this.api = new ApiClient(base)
+    this.baseUrl = options.baseUrl.replace(/\/+$/, '')
+    const impl = options.fetch ?? fetch
+    this.fetchImpl = (input, init) => impl(input, init)
     this.onSessionLost = options.onSessionLost
   }
 
@@ -120,6 +135,34 @@ export class AdminClient {
     update: (key: string, value: unknown, reason: string): Promise<ConfigView> => this.put<ConfigView>(`/admin/config/${key}`, { value, reason }),
   }
 
+  // --- BO-07 ------------------------------------------------------------------------
+
+  readonly billing = {
+    overview: (): Promise<BillingOverview> => this.get<BillingOverview>('/admin/billing/overview'),
+    subscriptions: (filter: SubscriptionsFilter = {}): Promise<Page<SubscriptionView>> =>
+      this.get<Page<SubscriptionView>>(`/admin/billing/subscriptions${subscriptionsQuery(filter)}`),
+    changePlan: (id: string, change: PlanChange): Promise<SubscriptionView> => this.put<SubscriptionView>(`/admin/billing/${id}/plan`, change),
+    extend: (id: string, days: number, reason: string): Promise<SubscriptionView> => this.post<SubscriptionView>(`/admin/billing/${id}/extend`, { days, reason }),
+    /** Le CSV n'est pas enveloppé : requête brute, mêmes règles de session (401 = perdue). */
+    exportCsv: (from: string, to: string): Promise<CsvExport> => this.download(`/admin/billing/export?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`),
+  }
+
+  // --- BO-02 tickets ---------------------------------------------------------------
+
+  readonly tickets = {
+    list: (filter: TicketsFilter = {}): Promise<Page<TicketView>> => this.get<Page<TicketView>>(`/admin/tickets${ticketsQuery(filter)}`),
+    get: (id: string): Promise<TicketView> => this.get<TicketView>(`/admin/tickets/${id}`),
+    update: (id: string, changes: TicketUpdate): Promise<TicketView> => this.put<TicketView>(`/admin/tickets/${id}`, changes),
+    /** Prise en charge : assigné à l'admin connecté, statut en cours (décision du 12/09/2026 : à soi-même seulement). */
+    take: (id: string, adminId: string): Promise<TicketView> => this.put<TicketView>(`/admin/tickets/${id}`, { status: 'in_progress', assigned_to: adminId }),
+  }
+
+  // --- BO-06 ------------------------------------------------------------------------
+
+  audit(filter: AuditFilter = {}): Promise<Page<AuditView>> {
+    return this.get<Page<AuditView>>(`/admin/logs/audit${auditQuery(filter)}`)
+  }
+
   // --- Transport --------------------------------------------------------------------
 
   get<T>(path: string): Promise<T> {
@@ -143,11 +186,38 @@ export class AdminClient {
     try {
       return await this.api.request<T>(method, path, body, options)
     } catch (err) {
-      if (err instanceof ApiError && err.status === 401) {
-        this.api.forgetSession()
-        this.onSessionLost?.()
-      }
+      this.noteSessionLoss(err)
       throw err
     }
+  }
+
+  private noteSessionLoss(err: unknown): void {
+    if (err instanceof ApiError && err.status === 401) {
+      this.api.forgetSession()
+      this.onSessionLost?.()
+    }
+  }
+
+  /** Une réponse fichier (text/csv) : hors enveloppe, mais une erreur reste une enveloppe { success: false }. */
+  private async download(path: string): Promise<CsvExport> {
+    const headers: Record<string, string> = { Accept: 'text/csv' }
+    if (this.api.accessToken) headers['Authorization'] = `Bearer ${this.api.accessToken}`
+    const res = await this.fetchImpl(`${this.baseUrl}${path}`, { method: 'GET', headers })
+    const text = await res.text()
+    if (!res.ok) {
+      let body: { code: string; message: string; details?: unknown } = { code: 'HTTP_ERROR', message: `HTTP ${res.status}` }
+      try {
+        const parsed = JSON.parse(text) as { success?: boolean; error?: typeof body }
+        if (parsed.success === false && parsed.error) body = parsed.error
+      } catch {
+        /* pas une enveloppe */
+      }
+      const err = new ApiError(res.status, body)
+      this.noteSessionLoss(err)
+      throw err
+    }
+    const disposition = res.headers.get('content-disposition') ?? ''
+    const m = /filename="([^"]+)"/.exec(disposition)
+    return { filename: m?.[1] ?? 'export.csv', csv: text }
   }
 }

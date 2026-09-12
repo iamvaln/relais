@@ -2,7 +2,7 @@
 // coerce pas ses paramètres : page et limite partent en texte ; les valeurs
 // vides ne partent pas.
 
-import type { QuestionsFilter, TransmissionsFilter, UsersFilter } from './types.js'
+import type { AuditFilter, QuestionsFilter, SubscriptionsFilter, TicketsFilter, TransmissionsFilter, UsersFilter } from './types.js'
 
 function toQuery<F extends object>(filter: F, textKeys: readonly (keyof F & string)[]): string {
   const params = new URLSearchParams()
@@ -27,4 +27,16 @@ export function transmissionsQuery(filter: TransmissionsFilter): string {
 
 export function questionsQuery(filter: QuestionsFilter): string {
   return toQuery(filter, ['usage_type', 'status', 'category'])
+}
+
+export function subscriptionsQuery(filter: SubscriptionsFilter): string {
+  return toQuery(filter, ['search', 'plan', 'status'])
+}
+
+export function ticketsQuery(filter: TicketsFilter): string {
+  return toQuery(filter, ['status', 'priority', 'category'])
+}
+
+export function auditQuery(filter: AuditFilter): string {
+  return toQuery(filter, ['action', 'admin_id', 'target_id', 'from', 'to'])
 }

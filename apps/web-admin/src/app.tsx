@@ -1,13 +1,17 @@
 // Routes : /login public ; le reste derrière la session, un chemin par module.
 // Le menu ne montre que les modules du rôle (décision du 12/09/2026) ; un
 // module hors rôle redirige vers l'accueil du rôle.
-import { homeModule, MODULES, modulesFor, type Module } from '@relais/admin-core'
-import { createBrowserRouter, Navigate, NavLink, Outlet, useLocation, useParams } from 'react-router-dom'
+import { homeModule, modulesFor, type Module } from '@relais/admin-core'
+import { createBrowserRouter, Navigate, NavLink, Outlet, useLocation } from 'react-router-dom'
 import { useApp } from './app-state'
 import { DashboardScreen } from './screens/dashboard'
+import { BillingScreen } from './screens/billing'
 import { ConfigScreen } from './screens/config'
 import { LoginScreen } from './screens/login'
+import { MonitoringScreen } from './screens/monitoring'
 import { QuestionsScreen } from './screens/questions'
+import { TicketScreen } from './screens/ticket'
+import { TicketsScreen } from './screens/tickets'
 import { TransmissionScreen } from './screens/transmission'
 import { TransmissionsScreen } from './screens/transmissions'
 import { UserScreen } from './screens/user'
@@ -73,19 +77,6 @@ function Guarded({ module, children }: { module: Module; children: React.ReactNo
   return <>{children}</>
 }
 
-function Soon() {
-  const { t } = useApp()
-  const { module } = useParams()
-  const m = MODULES.find((x) => x === module)
-  if (!m) return <Home />
-  return (
-    <Guarded module={m}>
-      <h1>{t(NAV_KEY[m])}</h1>
-      <p className="muted">{t('nav.soon')}</p>
-    </Guarded>
-  )
-}
-
 export const router = createBrowserRouter([
   { path: '/login', element: <LoginScreen /> },
   {
@@ -100,7 +91,11 @@ export const router = createBrowserRouter([
       { path: 'transmissions/:id', element: <Guarded module="transmissions"><TransmissionScreen /></Guarded> },
       { path: 'questions', element: <Guarded module="questions"><QuestionsScreen /></Guarded> },
       { path: 'config', element: <Guarded module="config"><ConfigScreen /></Guarded> },
-      { path: ':module', element: <Soon /> },
+      { path: 'monitoring', element: <Guarded module="monitoring"><MonitoringScreen /></Guarded> },
+      { path: 'billing', element: <Guarded module="billing"><BillingScreen /></Guarded> },
+      { path: 'tickets', element: <Guarded module="tickets"><TicketsScreen /></Guarded> },
+      { path: 'tickets/:id', element: <Guarded module="tickets"><TicketScreen /></Guarded> },
+      { path: '*', element: <Home /> },
     ],
   },
 ])
