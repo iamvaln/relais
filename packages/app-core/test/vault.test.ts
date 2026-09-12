@@ -57,6 +57,18 @@ describe('LocalVault — fiches', () => {
     expect(await vault.counts()).toEqual({ accounts: 2, messages: 1, finances: 1 })
   })
 
+  it('deux fiches créées dans la même milliseconde gardent l’ordre de saisie (liste et export), quel que soit leur id', async () => {
+    // Le tri par id (UUID aléatoire sur le device) rendait l’ordre aléatoire — vu en CI.
+    const keys = await deriveCategoryKeys(mnemonicToSeed(VECTOR))
+    const ids = ['id-z', 'id-a']
+    const vault = new LocalVault(new NodeSqlite(), () => keys, { now: () => 1_700_000_000_000, id: () => ids.shift()! })
+    await vault.init()
+    await vault.add({ category: 'accounts', service_name: 'Orange Money', urgency: 'immediate' })
+    await vault.add({ category: 'accounts', service_name: 'Gmail', urgency: 'within_30_days' })
+    expect((await vault.list()).map((i) => i.service_name)).toEqual(['Orange Money', 'Gmail'])
+    expect((await vault.exportCategory('accounts')).map((r) => r.id)).toEqual(['id-z', 'id-a'])
+  })
+
   it('les clés d’un autre seed ne relisent rien', async () => {
     const db = new NodeSqlite()
     const { vault } = await makeVault(VECTOR, db)
