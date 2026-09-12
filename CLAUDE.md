@@ -16,7 +16,7 @@ justifier explicitement.
 - `apps/api/` — l'API Fastify 5 / TypeScript strict / Prisma 6. Un dossier
   par module dans `src/api/*` (`schemas.ts` JSON Schema, `service.ts`,
   `routes.ts`), jobs BullMQ dans `src/jobs/`, services partagés dans
-  `src/services/` (email, stockage objet, secrets).
+  `src/services/` (email, push OneSignal, stockage objet, secrets).
 - `packages/crypto-core/` — le cœur crypto de l'app mobile (seed BIP39,
   K1/K2/K3, Ed25519, XChaCha20, Shamir GF(256), contacts, relay, carnet).
   Pur TypeScript, ni UI ni réseau ; `libsodium-wrappers-sumo` (Argon2id).
@@ -30,7 +30,9 @@ justifier explicitement.
   connexion, restauration, mot de passe, TOTP, coffre local (`vault/` :
   fiches chiffrées dans SQLite, sync 3 s par catégorie, restauration),
   transmission (`transmission/` : contacts chiffrés sur le device, réponses
-  secrètes jamais envoyées, activation, vérification annuelle, pause).
+  secrètes jamais envoyées, activation, vérification annuelle, pause),
+  check-in (`checkin/`) et carnet (`journal/` : entrées sous K2 déchiffrées
+  à la lecture, Wrapped calculé sur le device).
   Tests sous Node dans `test/` (vraie SQLite via `node:sqlite`), parcours
   contre l'API réelle dans `apps/api/test/app-core*.test.ts`.
 - `apps/mobile/` — l'app React Native (Expo SDK 57, Expo Router, Zustand,
@@ -88,6 +90,6 @@ localhost -p 55432 || scripts/dev-services.sh start` avant les tests.
 ## Ce qui n'est pas fait
 
 Logs API (export externe), fournisseur de paiement (encaissement manuel en
-V1), enregistrement Arbitrum, app mobile lots 5 et 6 (check-in et carnet,
-parcours du contact — socle, cœur crypto, onboarding, sécurité, coffre et
-transmission sont faits), interface du back office. La liste à jour est dans le README et `docs/backend.md` §2.
+V1), enregistrement Arbitrum, app mobile lot 6 (parcours du contact — socle,
+cœur crypto, onboarding, sécurité, coffre, transmission, check-in et carnet
+sont faits), interface du back office. La liste à jour est dans le README et `docs/backend.md` §2.

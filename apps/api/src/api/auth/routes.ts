@@ -8,6 +8,10 @@ import { limits } from '../../plugins/rate-limit.js'
 import { REFRESH_COOKIE, REFRESH_COOKIE_PATH, refreshCookieOptions } from '../../plugins/security.js'
 import * as auth from './service.js'
 import {
+  pushTokenBody,
+  pushTokenDeleteBody,
+  type PushTokenBody,
+  type PushTokenDeleteBody,
   changePasswordBody,
   emailOnlyBody,
   emailVerifyBody,
@@ -133,6 +137,18 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
   app.post<{ Body: KeysBody }>('/keys', { schema: { body: keysBody }, preHandler: [authenticate] }, async (req) => {
     await auth.registerPublicKey(req.user!.id, req.body.ed25519_pk)
     return ok({ registered: true })
+  })
+
+  // --- Push (lot 5 mobile) -------------------------------------------------------
+
+  app.post<{ Body: PushTokenBody }>('/push-token', { schema: { body: pushTokenBody }, preHandler: [authenticate] }, async (req) => {
+    await auth.registerPushToken(req.user!.id, req.body.token, req.body.platform)
+    return ok({ registered: true })
+  })
+
+  app.delete<{ Body: PushTokenDeleteBody }>('/push-token', { schema: { body: pushTokenDeleteBody }, preHandler: [authenticate] }, async (req) => {
+    await auth.removePushToken(req.user!.id, req.body.token)
+    return ok({ removed: true })
   })
 
   // --- Mot de passe ------------------------------------------------------------

@@ -5,10 +5,13 @@ import { buildApp } from '../src/app.js'
 import { prisma, disconnectPrisma } from '../src/lib/prisma.js'
 import { redis, disconnectRedis } from '../src/lib/redis.js'
 import { ConsoleTransport, EmailService, setEmailServiceForTests } from '../src/services/email/index.js'
+import { ConsolePushTransport, PushService, setPushServiceForTests } from '../src/services/push/index.js'
 import { objectStore } from '../src/services/storage/index.js'
 
 export const mailbox = new ConsoleTransport(true)
+export const pushbox = new ConsolePushTransport(true)
 setEmailServiceForTests(new EmailService(mailbox))
+setPushServiceForTests(new PushService(pushbox))
 
 let app: FastifyInstance | undefined
 
@@ -45,6 +48,7 @@ export async function resetState(): Promise<void> {
   await redis().flushall()
   await objectStore().deletePrefix('')
   mailbox.clear()
+  pushbox.clear()
 }
 
 /** Extrait le code à 6 chiffres du dernier email envoyé. */

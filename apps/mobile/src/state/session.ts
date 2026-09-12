@@ -7,6 +7,7 @@ import type { PublicUser } from '@relais/api-client'
 import { Onboarding } from '@relais/app-core'
 import { api } from '@/lib/api'
 import { device } from '@/lib/device'
+import { pushLogin, pushLogout } from '@/lib/push'
 import type { Language } from '@/i18n'
 import { keyStore } from './keystore'
 import type { SessionStatus } from './routing'
@@ -35,10 +36,13 @@ export const sessionStore = createStore<SessionState>((set, get) => ({
 
   setUser(user) {
     set({ status: 'authenticated', user, onboarding: null, language: user.language })
+    // OneSignal ne connaît que SHA256(user_id) (docs/mobile.md §3).
+    void pushLogin(user.id).catch(() => undefined)
   },
 
   async signOut() {
     keyStore.getState().lock()
+    await pushLogout().catch(() => undefined)
     await api.auth.logout().catch(() => undefined)
     set({ status: 'anonymous', user: null, onboarding: null })
   },

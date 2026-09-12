@@ -37,6 +37,10 @@ const fr: Record<EmailType, Template> = {
     subject: `${p.owner ?? 'Un proche'} vous a désigné comme contact de confiance`,
     text: `Bonjour,\n\n${p.owner ?? 'Une personne qui vous fait confiance'} vous a choisi comme contact de confiance sur Relais. Rien à faire pour l'instant : le moment venu, vous recevrez un message avec la marche à suivre.\n\nPour comprendre ce rôle : ${p.link}\n\nRelais`,
   }),
+  pause_ending: (p) => ({
+    subject: 'Relais — ta pause se termine dans trois jours',
+    text: `Bonjour ${p.name ?? ''},\n\nTa pause se termine le ${p.date}. Les check-ins reprendront ensuite au rythme habituel. Si tu es encore loin, tu peux la prolonger depuis l'app : ${p.link}\n\nRelais`,
+  }),
   contact_progress: (p) => ({
     subject: 'Relais — du nouveau sur une transmission',
     text: `Bonjour,\n\n${p.event === 'blocked' ? 'Un autre contact de confiance a épuisé ses tentatives et est bloqué 24 heures.' : 'Un autre contact de confiance a terminé sa part.'} Vous n'avez rien à faire de plus si vous avez déjà répondu.\n\nRelais`,
@@ -111,6 +115,10 @@ const en: Record<EmailType, Template> = {
   contact_designated: (p) => ({
     subject: `${p.owner ?? 'Someone close to you'} named you as a trusted contact`,
     text: `Hello,\n\n${p.owner ?? 'Someone who trusts you'} chose you as a trusted contact on Relais. Nothing to do for now: when the time comes, you will receive a message with the next steps.\n\nAbout this role: ${p.link}\n\nRelais`,
+  }),
+  pause_ending: (p) => ({
+    subject: 'Relais — your pause ends in three days',
+    text: `Hello ${p.name ?? ''},\n\nYour pause ends on ${p.date}. Check-ins will then resume at the usual pace. If you are still away, you can extend it from the app: ${p.link}\n\nRelais`,
   }),
   contact_progress: (p) => ({
     subject: 'Relais — an update on a transmission',

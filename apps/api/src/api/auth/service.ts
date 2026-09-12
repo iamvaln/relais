@@ -412,6 +412,21 @@ export async function issueStepUp(userId: string, action: StepUpAction) {
 
 // --- Clé publique (DEC-05) ------------------------------------------------------
 
+// --- Push (lot 5 mobile) -----------------------------------------------------------
+
+/** Un identifiant d'abonnement appartient au dernier compte qui l'a présenté : un device, un utilisateur. */
+export async function registerPushToken(userId: string, token: string, platform: 'ios' | 'android'): Promise<void> {
+  await prisma().push_tokens.upsert({
+    where: { token },
+    create: { user_id: userId, token, platform },
+    update: { user_id: userId, platform, active: true, updated_at: new Date() },
+  })
+}
+
+export async function removePushToken(userId: string, token: string): Promise<void> {
+  await prisma().push_tokens.updateMany({ where: { token, user_id: userId }, data: { active: false, updated_at: new Date() } })
+}
+
 export async function registerPublicKey(userId: string, pkBase64: string): Promise<void> {
   const pk = decodeBase64(pkBase64)
   if (!pk || pk.length !== ED25519_PK_BYTES) {

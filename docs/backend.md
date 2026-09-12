@@ -88,6 +88,7 @@ Le module **auth** de §3.1 v1.1, le module **vault** de §3.3 v1.1, le module
 | `GET /checkin/game` · `POST /checkin/game/answer` | Défi côté serveur, 10 réponses/h/user (§7.1) — voir §3 |
 | `POST /checkin/complete` | Consomme le jeton du jeu ; ligne du mois, streak, badge ; replanifie l'échéance |
 | `GET /checkin/history` · `GET /checkin/streak` | Log des mois validés ; streak courant, record, badges |
+| `POST /auth/push-token` · `DELETE /auth/push-token` | Lot 5 mobile : identifiant d'abonnement OneSignal du device (un token, un compte), désactivé au retrait — voir §3 |
 | `GET /relay/:token` | **Public** (token du lien), 30/min/IP : questions, rôles, `verify_token`, Si_enc, `secret_enc`, état |
 | `POST /relay/:token/verify` | `{ failed: true }` ou `{ shares }` (33 octets par rôle : index Shamir + 32) ; part comparée au hash signé à l'activation (422 `RELAY_SHARE_INVALID`) ; 5 tentatives puis blocage 24 h, les autres contacts prévenus ; parts en escrow — voir §3 |
 | `GET /relay/:token/status` | Répondu / requis / total, catégories déverrouillées |
@@ -115,7 +116,7 @@ Jobs (§4), BullMQ, worker dans le processus API derrière `JOBS_ENABLED=true` :
 
 | Job | Quand | Fait |
 |---|---|---|
-| `deadman:checkin` | 09:00 UTC | Relances J+7/14/21, passage `triggered`, puis ouverture des transmissions : ligne `transmissions`, un token de relay par contact, emails |
+| `deadman:checkin` | 09:00 UTC | Relances J+7/14/21, passage `triggered`, puis ouverture des transmissions : ligne `transmissions`, un token de relay par contact, emails ; lot 5 : push le jour de l'échéance, avec la relance 1, et à J-3 de la fin d'une pause (+ email `pause_ending`), reprise d'une pause échue — voir §3 |
 | `relay:cleanup` | toutes les heures (h+30) | Escrows expirés → `expired` + nouveaux liens, jusqu'à `dms.relay_max_restarts` (3) expirations puis arrêt et alerte dashboard ; accès déverrouillé depuis plus de 30 jours → purge |
 | `billing:expire` | 09:45 UTC | Échéance dépassée → grâce (premium conservé, email) ; grâce écoulée → expiré, plan gratuit, email |
 
@@ -385,6 +386,30 @@ plusieurs check-ins par mois et une seule ligne — voulu.
 que le carnet de vie puisse rattacher la réponse du mois (E2-US07) ; le
 module journal remplira le reste.
 
+### Push : OneSignal, alias haché, fenêtres du jour, aucune trace
+
+Lot 5 mobile (12/09/2026, `docs/mobile.md` §3). `services/push` cible
+l'utilisateur par `external_id = SHA256(user_id)` ; la charge ne contient
+qu'un titre, une phrase et la route à ouvrir, identiques pour tous. L'envoi
+n'a lieu que si le compte a un abonnement actif dans `push_tokens`
+(`POST /auth/push-token` : un identifiant d'abonnement appartient au dernier
+compte qui l'a présenté ; `DELETE` le désactive). Transport `console` en
+dev et test, `onesignal` en production (`PUSH_TRANSPORT`, `ONESIGNAL_APP_ID`,
+`ONESIGNAL_REST_API_KEY`, DEC-18) ; un push qui ne part pas ne casse pas le
+job. Rien n'est tracé en base : le job quotidien décide par la fenêtre du
+jour (retard de 0 jour, relance 1, 3 jours restants de pause), donc chaque
+push part une fois — un second run manuel le même jour le renverrait.
+
+### Pause : rappel à J-3 et reprise automatique
+
+E4-US04 demande un rappel trois jours avant la fin ; rien ne disait qui
+reprend les check-ins. Le balayage envoie l'email `pause_ending` (nouveau
+type, migration `20260912000000`) et le push quand il reste exactement
+trois jours, puis, une fois `pause_until` passé, remet la config `active`
+avec un check-in à + fréquence et les relances à zéro — la même chose que
+`DELETE /pause`. E6-US04 « ne peut pas être renouvelé automatiquement »
+reste vrai : la pause se termine, elle ne se prolonge pas.
+
 ### Dead man's switch : relances à J+7/14/21, déclenchement après le silence
 
 Le pseudo-code du job §4.2 déclenche à « relance 3 + 21 jours », ce qui
@@ -641,7 +666,7 @@ consigné dans `docs/open-questions.md` §D.1.
 
 ## 5. Vérifications
 
-230 tests d’intégration, sur PostgreSQL 16 et Redis réels, base reconstruite
+245 tests d’intégration, sur PostgreSQL 16 et Redis réels, base reconstruite
 depuis les migrations et le seed à chaque run. Chaque test repart d'une base
 et d'un stockage vides. Ils couvrent notamment :
 
@@ -693,7 +718,10 @@ et d'un stockage vides. Ils couvrent notamment :
   échéance replanifiée, relances à zéro ; second du même mois → pas de
   ligne ; streak prolongé → `streak_3` ; mois sauté → 1 ; entrée de carnet
   inconnue → 404 ; streak courant / record / badges ; historique trié
-- dead man's switch (9 tests) : rien avant J+7 ; J+7 → relance 1 tracée,
+- push (6 tests, lot 5) : `POST/DELETE /auth/push-token`, `pushService`
+  (alias haché, rien sans abonnement, rien d'identifiant), `OneSignalTransport`
+  contre un faux serveur HTTP
+- dead man's switch (13 tests) : rien avant J+7 ; J+7 → relance 1 tracée,
   pas de doublon le lendemain ; J+14 et J+21 → relances 2 et 3 ; intervalles
   lus dans `app_config` ; pause ignorée ; trois relances sans silence écoulé
   → rien ; silence écoulé + trois relances → `triggered`, puis plus balayé ;
@@ -785,6 +813,9 @@ et d'un stockage vides. Ils couvrent notamment :
 - coffre de l'app (`app-core-vault`, contre l'API réelle) : sync par
   catégorie, statut, P2 opaque sur le stockage, restauration sur nouveau
   device — voir `docs/mobile.md` §5
+- check-in et carnet de l'app (`app-core-checkin`, 5 tests contre l'API
+  réelle) : jeu et validation, carnet chiffré et signé, Wrapped calculé côté
+  app — voir `docs/mobile.md` §5
 - transmission de l'app (`app-core-transmission`, 3 tests contre l'API
   réelle) : contacts, activation avec parts calculées côté app, parcours
   désactiver → modifier → réactiver, vérification annuelle, pause,

@@ -65,6 +65,12 @@ const schema = z.object({
     .regex(/^(?:[0-9a-fA-F]{64}|[A-Za-z0-9+/]{43}=)$/, 'RELAIS_X25519_SK_DEV : 32 bytes en hex ou base64')
     .optional(),
 
+  // Push OneSignal (lot 5 mobile, docs/mobile.md §3) : clé REST dans l'env (DEC-18).
+  PUSH_TRANSPORT: z.enum(['console', 'onesignal']).default('console'),
+  ONESIGNAL_APP_ID: z.string().min(1).optional(),
+  ONESIGNAL_REST_API_KEY: z.string().min(1).optional(),
+  ONESIGNAL_API_URL: z.string().url().default('https://api.onesignal.com'),
+
   EMAIL_TRANSPORT: z.enum(['console', 'resend']).default('console'),
   RESEND_API_KEY: z.string().optional(),
   EMAIL_FROM: z.string().default('Relais <noreply@relais.app>'),
@@ -75,6 +81,9 @@ const schema = z.object({
   })
   .refine((e) => e.EMAIL_TRANSPORT !== 'resend' || Boolean(e.RESEND_API_KEY), {
     message: 'RESEND_API_KEY est requis quand EMAIL_TRANSPORT=resend',
+  })
+  .refine((e) => e.PUSH_TRANSPORT !== 'onesignal' || (Boolean(e.ONESIGNAL_APP_ID) && Boolean(e.ONESIGNAL_REST_API_KEY)), {
+    message: 'ONESIGNAL_APP_ID et ONESIGNAL_REST_API_KEY sont requis quand PUSH_TRANSPORT=onesignal',
   })
   .refine((e) => e.STORAGE_BACKEND !== 's3' || (Boolean(e.STORJ_ACCESS_KEY) && Boolean(e.STORJ_SECRET_KEY)), {
     message: 'STORJ_ACCESS_KEY et STORJ_SECRET_KEY sont requis quand STORAGE_BACKEND=s3',

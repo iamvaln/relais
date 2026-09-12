@@ -6,3 +6,8 @@
 import sodium from 'libsodium-wrappers-sumo'
 
 export default sodium
+
+/** Attendre l'initialisation de libsodium avant un appel synchrone (sha256, contextSalt). */
+export function ready(): Promise<void> {
+  return sodium.ready
+}
