@@ -52,6 +52,12 @@ export async function resetState(): Promise<void> {
 }
 
 /** Extrait le code à 6 chiffres du dernier email envoyé. */
+/** Audit LOW-14a : oublie les pas TOTP déjà consommés — pour les tests qui enchaînent activation puis login dans la même demi-minute ; l'anti-rejeu lui-même est testé dans auth.test.ts et admin.test.ts. */
+export async function forgetTotpSteps(): Promise<void> {
+  const keys = await redis().keys('auth:2fa:step:*')
+  if (keys.length) await redis().del(...keys)
+}
+
 /** Remet les compteurs de débit à zéro (clés rl:*) — pour les parcours qui enchaînent plus de POST /relay que la limite ; la limite elle-même est testée dans relay.test.ts. */
 export async function resetRateLimits(): Promise<void> {
   const keys = await redis().keys('rl:*')

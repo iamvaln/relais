@@ -64,6 +64,8 @@ const schema = z.object({
   JWT_STEPUP_EXPIRY: z.string().regex(durationRe).default('5m'),
   SESSION_DAYS: z.coerce.number().int().positive().default(90),
   TOKEN_HMAC_SECRET: z.string().min(32, 'TOKEN_HMAC_SECRET : 32 caractères minimum'),
+  /** Chiffre les secrets TOTP en base (audit LOW-14b). */
+  TOTP_ENC_KEY: z.string().min(32, 'TOTP_ENC_KEY : 32 caractères minimum'),
 
   // Stockage objet des blobs chiffrés (P2, Si_enc) — Backend Specs §5.2.
   //   memory : tests ; fs : dev local ; s3 : Storj (S3-compatible) en prod
@@ -101,6 +103,9 @@ const schema = z.object({
 })
   .refine((e) => e.JWT_ACCESS_SECRET !== e.JWT_STEPUP_SECRET, {
     message: 'JWT_STEPUP_SECRET doit être différent de JWT_ACCESS_SECRET (Backend Specs §2.5)',
+  })
+  .refine((e) => ![e.JWT_ACCESS_SECRET, e.JWT_STEPUP_SECRET, e.TOKEN_HMAC_SECRET].includes(e.TOTP_ENC_KEY), {
+    message: 'TOTP_ENC_KEY doit être distinct des secrets JWT et HMAC',
   })
   .refine((e) => e.EMAIL_TRANSPORT !== 'resend' || Boolean(e.RESEND_API_KEY), {
     message: 'RESEND_API_KEY est requis quand EMAIL_TRANSPORT=resend',

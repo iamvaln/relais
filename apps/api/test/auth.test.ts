@@ -12,6 +12,7 @@ import {
   generateDeviceKeys,
   lastEmailTo,
   lastOtp,
+  forgetTotpSteps,
   mailbox,
   refreshCookie,
   registerUser,
@@ -449,8 +450,8 @@ describe('réinitialisation du mot de passe (E1-US05)', () => {
 })
 
 describe('2FA TOTP (E6-US02)', () => {
-  function codeFor(secret: string): string {
-    return new OTPAuth.TOTP({ secret, digits: 6, period: 30 }).generate()
+  function codeFor(secret: string, stepOffset = 0): string {
+    return new OTPAuth.TOTP({ secret, digits: 6, period: 30 }).generate({ timestamp: Date.now() + stepOffset * 30_000 })
   }
 
   async function withTotp() {
@@ -459,8 +460,43 @@ describe('2FA TOTP (E6-US02)', () => {
     const auth = { Authorization: `Bearer ${u.accessToken}` }
     const secret = (await client.post('/auth/2fa/setup').set(auth).expect(200)).body.data.secret as string
     await client.post('/auth/2fa/verify').set(auth).send({ code: codeFor(secret) }).expect(200)
+    await forgetTotpSteps()
     return { ...u, auth, secret, client }
   }
+
+  it('audit LOW-14a : un code accepté ne sert qu’une fois — rejoué au login suivant il est refusé, le code du pas suivant passe', async () => {
+    const { email, password, secret, client } = await withTotp()
+    const code = codeFor(secret)
+    const first = await client.post('/auth/login').send({ email, password }).expect(200)
+    await client.post('/auth/2fa/verify').send({ temp_token: first.body.data.temp_token, code }).expect(200)
+    const second = await client.post('/auth/login').send({ email, password }).expect(200)
+    const replay = await client.post('/auth/2fa/verify').send({ temp_token: second.body.data.temp_token, code }).expect(401)
+    expect(replay.body.error.code).toBe('AUTH_2FA_INVALID')
+    await client.post('/auth/2fa/verify').send({ temp_token: second.body.data.temp_token, code: codeFor(secret, 1) }).expect(200)
+  })
+
+  it('audit LOW-14a : deux validations parallèles du même code ne donnent qu’une session', async () => {
+    const { email, password, secret, client } = await withTotp()
+    const code = codeFor(secret)
+    const a = await client.post('/auth/login').send({ email, password }).expect(200)
+    const b = await client.post('/auth/login').send({ email, password }).expect(200)
+    const results = await Promise.all([
+      client.post('/auth/2fa/verify').send({ temp_token: a.body.data.temp_token, code }),
+      client.post('/auth/2fa/verify').send({ temp_token: b.body.data.temp_token, code }),
+    ])
+    expect(results.map((r) => r.status).sort()).toEqual([200, 401])
+    expect(await prisma().sessions.count()).toBe(2) // l'inscription + une seule connexion 2FA
+  })
+
+  it('audit LOW-14b : le secret TOTP est chiffré en base (enc1:), jamais en base32 ; une valeur legacy en clair reste lisible', async () => {
+    const { email, password, secret, client, userId } = await withTotp()
+    const row = await prisma().users.findUniqueOrThrow({ where: { id: userId }, select: { totp_secret: true } })
+    expect(row.totp_secret).toMatch(/^enc1:/)
+    expect(row.totp_secret).not.toContain(secret)
+    await prisma().users.update({ where: { id: userId }, data: { totp_secret: secret } })
+    const login = await client.post('/auth/login').send({ email, password }).expect(200)
+    await client.post('/auth/2fa/verify').send({ temp_token: login.body.data.temp_token, code: codeFor(secret) }).expect(200)
+  })
 
   it('audit HIGH-4 : cinq codes faux au login consomment le temp_token — le bon code est ensuite refusé, il faut se reconnecter', async () => {
     const { email, password, secret, client } = await withTotp()
@@ -526,7 +562,8 @@ describe('2FA TOTP (E6-US02)', () => {
     const temp3 = (await client.post('/auth/login').send({ email, password }).expect(200)).body.data.temp_token as string
     await client.post('/auth/2fa/verify').send({ temp_token: temp3 }).expect(400)
 
-    // La désactivation purge les codes
+    // La désactivation purge les codes (le code d'activation est brûlé — audit LOW-14a)
+    await forgetTotpSteps()
     const su = await stepUp(accessToken, 'disable_2fa')
     await client.delete('/auth/2fa').set(auth).set('X-Step-Up-Token', su).send({ code: codeFor(secret) }).expect(200)
     expect(await prisma().two_factor_recovery_codes.count({ where: { user_id: userId } })).toBe(0)
@@ -549,6 +586,7 @@ describe('2FA TOTP (E6-US02)', () => {
     await client.post('/auth/2fa/verify').set(auth).send({ code: codeFor(secret) }).expect(200)
     expect((await prisma().users.findUniqueOrThrow({ where: { email } })).totp_enabled).toBe(true)
     expect(lastEmailTo(email)?.subject).toMatch(/Double authentification activée/)
+    await forgetTotpSteps() // audit LOW-14a : le code d'activation est brûlé, le test enchaîne dans la même demi-minute
 
     // Login : plus de session directe
     const login = await client.post('/auth/login').send({ email, password }).expect(200)
@@ -568,7 +606,8 @@ describe('2FA TOTP (E6-US02)', () => {
     const reuse = await client.post('/auth/2fa/verify').send({ temp_token: temp, code: codeFor(secret) }).expect(401)
     expect(reuse.body.error.code).toBe('AUTH_TOKEN_EXPIRED')
 
-    // Désactivation : step-up + code
+    // Désactivation : step-up + code (le code du login est brûlé — audit LOW-14a)
+    await forgetTotpSteps()
     const noStepUp = await client.delete('/auth/2fa').set(auth).send({ code: codeFor(secret) }).expect(403)
     expect(noStepUp.body.error.code).toBe('AUTH_STEPUP_REQUIRED')
     const su = await stepUp(accessToken, 'disable_2fa')

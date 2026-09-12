@@ -1,12 +1,12 @@
 // Back office — authentification (Backend Specs §3.8, Back Office Specs).
 
-import * as OTPAuth from 'otpauth'
 import { ADMIN_TOKEN_SECONDS, signAdminToken } from '../../lib/jwt.js'
 import { audit } from '../../lib/audit.js'
 import { hashPassword, randomToken, verifyPassword } from '../../lib/crypto.js'
 import { AppError } from '../../lib/errors.js'
 import { prisma } from '../../lib/prisma.js'
 import { keys, redis } from '../../lib/redis.js'
+import { decryptTotpSecret, verifyTotpOnce } from '../../lib/totp.js'
 import { normalizeEmail } from '../auth/service.js'
 
 const MAX_LOGIN_FAILURES = 5
@@ -37,9 +37,9 @@ async function equalize(password: string): Promise<void> {
   await verifyPassword(dummyHash, password)
 }
 
-function totpValid(secret: string, code: string): boolean {
-  const totp = new OTPAuth.TOTP({ algorithm: 'SHA1', digits: 6, period: 30, secret })
-  return totp.validate({ token: code, window: 1 }) !== null
+/** Audit LOW-14 : secret déchiffré à la volée, pas consommé (un code ne sert qu'une fois). */
+function totpValid(adminId: string, secret: string, code: string): Promise<boolean> {
+  return verifyTotpOnce(`a:${adminId}`, decryptTotpSecret(secret), code)
 }
 
 async function recordFailure(id: string, previous: number): Promise<void> {
@@ -64,7 +64,7 @@ export async function login(email: string, password: string, code: string, ctx: 
 
   // Mot de passe et TOTP vérifiés ensemble : la réponse ne dit pas lequel manque.
   const passwordOk = await verifyPassword(admin.password_hash, password)
-  const totpOk = admin.totp_enabled && admin.totp_secret !== null && totpValid(admin.totp_secret, code)
+  const totpOk = admin.totp_enabled && admin.totp_secret !== null && (await totpValid(admin.id, admin.totp_secret, code))
   if (!passwordOk || !totpOk) {
     await recordFailure(admin.id, admin.login_fail_count)
     throw new AppError('AUTH_INVALID_CREDENTIALS')
