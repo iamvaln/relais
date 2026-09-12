@@ -1,11 +1,12 @@
 # RELAIS — Points ouverts dans les specs
 
-Specs de référence (révision de septembre 2026, commit `32f4726`) : Schéma
-PostgreSQL **v1.4** (23 tables), Backend Specs **v1.1** (réécrite, DEC-21 à
-DEC-30 intégrés), Journal des Décisions **DEC-01 à DEC-35** (addendum v1.3),
-Specs Techniques **v1.2** (§6 carnet / check-in), Frontend Specs **v1.1**,
-Back Office / User Stories / Dossier produit v1.0. Extraits markdown dans
-`docs/specs/`.
+Specs de référence (révision du 12 septembre 2026, commit `b5a81ab`) :
+Schéma PostgreSQL **v1.5**, Backend Specs **v1.2**, Specs Techniques
+**v1.3**, Frontend Specs **v1.2**, Back Office **v1.1**, User Stories
+**v1.1**, Journal des Décisions **DEC-01 à DEC-35** (addendum v1.3,
+inchangé), Dossier produit v1.0. Extraits markdown dans `docs/specs/`
+(régénérés depuis les `.docx`). La revue de cette révision est en §F, celle
+du contrat Arbitrum livré avec elle en §G et dans `docs/smart-contract.md`.
 
 La révision de septembre reprend les points ouverts de ce document : cinq
 sont tranchés (DEC-31 à DEC-35, Point-1, Point-2), trois sont consignés comme
@@ -249,12 +250,82 @@ corrigent, voir chaque écart en §B) ; spec suivie pour B.5 et B.6, faits.
 | Notification au demandeur à la résolution d'un ticket, pièces jointes | Aucun type `email_log`, aucun stockage. Non faits. |
 | Notification à l'owner au déblocage d'un contact (BO-02) | Aucun type `email_log`. Non envoyée. |
 | Audit de sécurité interne (11/09/2026) | 15 constats sur `apps/api`. Corrigés : pause qui ne reprenait pas (lot 5) ; les trois HIGH (purge par un seul contact, annulation admin bloquante, limites de débit et force brute TOTP) ; les six MEDIUM (détournement d'une inscription en cours, oracles d'énumération, signature du vault liée à la catégorie et à l'horodatage, gardes de configuration en production, suppression RGPD des OTP et purge horaire, ouverture résiliente). Les LOW aussi (injection CSV, rôle < N porteurs, `POST /auth/keys` sous step-up `set_key` et atomique, `POST /vault/restore` lié au challenge Ed25519, TOTP à usage unique et secret chiffré par `TOTP_ENC_KEY`, attestation annuelle sur challenge serveur, codes d'erreur justes, URL brute hors logs, limiteur sur `POST /relay/:token/verify`). Les quinze constats sont traités. Choix documenté : le 423 du login reste (E1-US03). Techniques §5.2 et Backend §3.3 à mettre à jour pour le message signé du vault (`ts`). |
-| Audit `TICKET_UPDATE` / cible `ticket` | Migration `20260430000000` ; toujours absent de la liste des actions auditées du schéma v1.4. |
+| Audit `TICKET_UPDATE` / cible `ticket` | Migration `20260430000000` ; repris par le Schéma v1.5. |
 | Cœur crypto (11/09/2026) | Décisions dans `docs/crypto-core.md` §3 : Shamir maison GF(256) avec parts de **33 octets** (Techniques §1 et §4 disent « 32 bytes bruts » : à corriger), sel de K_i dérivé des `question_id`, Argon2id INTERACTIVE/MODERATE, normalisation des réponses, pas de `@noble/ed25519` (Frontend §1, §2.3), `libsodium-wrappers-sumo`. |
 | E3-US03, E3-US07 (lot 4 mobile) | « Les réponses ne sont JAMAIS stockées » vaut pour le serveur ; sur le device elles restent chiffrées sous K2 (décision du 12/09/2026, `docs/mobile.md` §3), sinon toute modification après activation redemanderait les neuf réponses. E3-US07 « recréées automatiquement » se fait par désactiver → modifier → réactiver (contacts et schéma figés une fois actif). `secret_enc` porte aussi email et téléphone (Techniques §4.3, DEC-12 niveau 2 : à compléter). |
 | E4-US04, E6-US04 (lot 5 mobile) | Le rappel à J-3 est un email `pause_ending` + un push ; la reprise en fin de pause est automatique (rien ne le disait), sans renouvellement. E4-US01 « validé par simple ouverture de l'app » n'est pas retenu côté app non plus. Les pushs ne sont pas tracés en base (fenêtres du jour du job) : Techniques et Backend à compléter (`docs/mobile.md` §3). |
 | E5, E2-US07 (lot 6 mobile) | Le carnet est remis au porteur de K2 par `GET /relay/:token/data` et purgé avec le reste (Backend §3.7 et §6 à compléter). Techniques §5.2 « P2 = seal(Ki, P1) » : dans l'app, P2 scelle la liste des fiches chiffrées une à une ; `reconstruct` rend P2 ouvert et l'app déchiffre chaque fiche (à préciser). La progression « Fait » du contact vit sur son device sous le hachage du token, jamais côté serveur (E5-US04 « l'app garde la progression »). |
 | E6-US03 (lot 2 mobile) | « Après changement : K1 K2 K3 sont recalculées, P1 rechiffré, P2 mis à jour » est obsolète depuis DEC-02/05 : les clés viennent du seed, pas du mot de passe. Rien n'est rechiffré. À corriger dans les User Stories. |
-| Corrections de specs dues | B.1 à B.4 et B.7 (Backend §4.3, §4.4, §5, §7 ; Frontend §3.1), D.1 (Backend §2.1), D.2 (Techniques §4.3, Frontend §5.1), D.3 et D.4 (Schéma `trusted_contacts`, `email_log`, seed `dms.relay_max_restarts`), D.5 (BO-06, BO-01). |
+| Corrections de specs dues | Faites par la révision du 12/09 (annexes « Corrections » de chaque document) — les écarts qui restent sont en §F. Le seed `dms.relay_max_restarts` est ajouté (migration `20260913000000`). |
 | Bibliothèque d'énigmes | 13 défis intégrés : assez pour tester, pas pour un an d'usage (§B.3). |
 | `GET /journal/wrapped/:year/export` | L'API rend des métadonnées en GET et date l'export en POST ; la spec §6 ne garde que le POST. Cohérent. |
+
+---
+
+## F. Révision des specs du 12 septembre 2026 — ce qui reste à aligner
+
+La révision reprend B.1 à B.7, D.1 à D.5 et la plupart des points de §E,
+sous forme d'annexes « Corrections vX » ajoutées en fin de document. Vérifiée
+contre l'API livrée le 12/09 (après les PR #20 à #22 de l'audit).
+
+### F.1 Contrats décrits différemment de l'API
+
+| Sujet | Spec (annexe) | API | À faire |
+|---|---|---|---|
+| Signature du vault (Backend §3, Frontend §4.2, Techniques §5.2) | `SHA256(category+ts+P2)`, `ts` en chaîne, rejet hors ± 5 min | `SHA256("relais:vault:v1\|" ‖ catégorie ‖ "\|" ‖ ts ‖ "\|" ‖ P2)`, `ts` **entier ms** dans le corps, fenêtre ± 5 min **et** strictement croissant par catégorie (409 `VAULT_SYNC_STALE`) — crypto-core `syncMessage` | Spec |
+| 2FA (Backend §2.1) | login `{ temp_token, totp_code }`, activation `{ verified: true, recovery_codes }` | login `{ temp_token, code }` ou `{ temp_token, recovery_code }` ; activation `{ enabled: true, recovery_codes }` | Spec |
+| Activation (Backend §4.3, Schéma v1.5) | `shares.kN = { enc, sig, plain_sig }`, colonnes `share_kN_plain_sig`, migration `20260912000000` | le client envoie aussi `plain_hash` (le serveur ne peut pas calculer SHA256(Si)) ; `plain_sig` vérifiée puis **non stockée** ; migration `20260911000000_v1_4_delta` (`20260912000000` est `lot5_pause_ending`) | Spec : retirer les colonnes `plain_sig` ou décider de les stocker |
+| Check-in (Backend §5) | `POST /checkin/game/answer { game_token, answer_index }` | `{ game_token, answer }` (chaîne, 1 à 200 caractères) | Spec |
+| Vérification annuelle (Backend §4.4, annexe B.2) | `POST /contacts/:id/verify { signature }` sur `SHA256(verify_token)` | audit LOW-15 : `GET /contacts/:id/verify-challenge` puis `POST { challenge_id, signature }` sur `SHA256(verify_token ‖ challenge)`, challenge à usage unique (5 min) | Spec |
+| Clé publique (Backend §2.1, Frontend §3.1) | `POST /auth/keys` « une seule fois après OTP » | audit LOW-13 : step-up `set_key` obligatoire, écriture atomique | Spec |
+| Restauration (Backend §3) | `POST /vault/restore` sur access token | audit LOW-13 : challenge Ed25519 vérifié dans les 15 min, sinon 403 `AUTH_RESTORE_REQUIRED` | Spec |
+| Variables d'environnement (Backend §1) | — | `TOTP_ENC_KEY` (obligatoire), `TRUST_PROXY`, `PUSH_TRANSPORT`, `ONESIGNAL_*` | Spec |
+| Back office (BO-01) | escrow expirant `< NOW() + 6h` | 12 h (`ESCROW_ALERT_HOURS`) | **À trancher** : 6 h ou 12 h |
+| Back office (BO-03) | statut « Stalled » dans la liste | pas de statut : alerte `transmission_stalled` calculée (COUNT des `expired`) | Spec |
+| `secret_enc` (Frontend §5.2) | champ `telephone` | crypto-core `SecretClear { nom, role, message_personnel, email?, phone? }` | Spec |
+| Shamir (Techniques §1) | « 1 byte header GF256 » | le 33e octet est l'index de la part (abscisse) | Spec, wording |
+
+### F.2 Livré par l'API et absent des specs techniques
+
+- `POST /auth/push-token` · `DELETE /auth/push-token` (lot 5), transport
+  push console / OneSignal, pushs à l'échéance, à la relance 1 et à J-3 de
+  la fin de pause ; pushs non tracés en base.
+- `GET /transmission/questions` (lot 4) ; `secret_enc` rendu à l'owner dans
+  `GET /transmission/config`.
+- Carnet dans `GET /relay/:token/data` pour le porteur de K2, purgé avec le
+  reste (lot 6) — Backend §3.7 / §6.
+- Email `pause_ending` et reprise automatique en fin de pause : dans les
+  User Stories v1.1, pas dans Backend §8 ni Techniques.
+- Job `maintenance:purge` (audit MEDIUM-9) ; codes `AUTH_FORBIDDEN`,
+  `USER_ALREADY_DELETED`, `VAULT_SYNC_STALE`, `AUTH_RESTORE_REQUIRED` ;
+  limiteur 10/min/IP sur `POST /relay/:token/verify` ; refus d'un rôle
+  détenu par moins de N contacts à l'activation (LOW-12).
+- P2 = enveloppe scellée d'une **liste de fiches chiffrées une à une**
+  (Techniques §5.2 dit encore `seal(Ki, P1)`).
+
+### F.3 Forme
+
+Les anciens contrats restent dans le corps des documents à côté des
+annexes : Backend (`storj_k1_path`, `verify_token_enc`, `answer_hash`,
+`share_enc`, `SHA256(P1)`, `PUT /auth/register/keys`), Frontend
+(`@noble/ed25519` et `PUT /auth/register/keys`, trois fois chacun),
+Techniques (« 32 bytes bruts » deux fois, `answer_hash`). Un lecteur qui
+s'arrête au corps repart avec le mauvais contrat : à intégrer dans le texte
+à la prochaine édition.
+
+---
+
+## G. Contrat Arbitrum — revue de la proposition (12/09/2026)
+
+Revue complète dans `docs/smart-contract.md`. Verdict : ne pas brancher en
+l'état. Décisions à prendre avant une v2 :
+
+| Point | Constat | Décision attendue |
+|---|---|---|
+| Qui signe | Tout est clé sur `msg.sender` ; « appelé par le backend » ⇒ une seule config pour tous ; clé owner ⇒ pas de secp256k1 ni de gaz dans l'app, et le backend ne peut plus enregistrer le check-in | Owner, opérateur, ou EIP-712 relayé |
+| Silence (DEC-35) | Compté depuis `lastCheckin` sans relances ; l'API compte depuis `next_checkin_due` après trois relances ; `markTriggered()` ne vérifie pas le silence | Aligner le contrat, ou changer DEC-35 |
+| Pause | Reprise seulement par un `checkin()` : une pause suivie d'un décès bloque `isTriggered()` à jamais ; maximum figé à 90 j | Expiration de pause on-chain |
+| Autonomie | Seule la clé owner peut `markTriggered()` ; un contact ne peut que lire ; les blobs et les liens restent chez Relais | `trigger(owner)` sans permission, puis pointeurs vers des blobs adressés par contenu |
+| Métadonnées publiques | Check-ins, pauses (date de fin), déclenchement, N/M, `vaultPathHash` lié à `user_id` | Accepter, ou atténuer |
+| Secondaire | Annulation admin impossible, `deactivate()` ne purge rien, `Completed` définitif, `schemaN = 1` accepté, DEC-10/11 partiels, `deploy.js` (`run` non importé) | v2 |
+

@@ -23,7 +23,7 @@ d'implémentation.
 | API backend — logs API, fournisseur de paiement | ⬜ À faire |
 | App mobile | ⬜ Non démarré |
 | Back office (interface) | ⬜ Non démarré — l'API `/admin/*` est prête |
-| Smart contract Arbitrum | ⬜ Reporté |
+| Smart contract Arbitrum | ⬜ Proposition reçue le 12/09, revue dans `docs/smart-contract.md` — à retravailler avant intégration |
 
 ## Documentation
 
