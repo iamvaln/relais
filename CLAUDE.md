@@ -105,7 +105,8 @@ localhost -p 55432 || scripts/dev-services.sh start` avant les tests.
 ## Ce qui n'est pas fait
 
 Logs API (export externe), fournisseur de paiement (encaissement manuel en
-V1), enregistrement Arbitrum (proposition de contrat à retravailler,
-`docs/smart-contract.md`). L'app mobile (six lots), la page web du contact
+V1), enregistrement Arbitrum (revue de la proposition dans
+`docs/smart-contract.md`, design de la v2 dans `docs/smart-contract-v2.md`,
+rien de codé). L'app mobile (six lots), la page web du contact
 et le back office (trois lots) sont faits ; tests Maestro et vérification
 sur device restent à mener. La liste à jour est dans le README et `docs/backend.md` §2.

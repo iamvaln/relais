@@ -249,7 +249,7 @@ corrigent, voir chaque écart en §B) ; spec suivie pour B.5 et B.6, faits.
 | Parcours d'achat in-app (`subscription_upgraded` PostHog) | Aucun fournisseur de paiement ; encaissement manuel via `PUT /admin/billing/:id/plan`. |
 | Alertes dashboard « Storj dégradé » et « espace Storj > 80 % » | **Dégradé : fait le 12/09/2026** — l'API compte ses propres erreurs de stockage (sorted set Redis, 15 min) et le tableau de bord lève `storage_degraded` (haute) à partir de 5. **Espace du bucket** : aucune API d'usage côté Storj ; alerte à configurer chez eux. |
 | « Utilisateurs actifs 30 j » | Mesuré par `sessions.last_used_at`. `users.last_active_at` si une mesure exacte est voulue. |
-| Notification au demandeur à la résolution d'un ticket, pièces jointes | **Notification : faite le 12/09/2026** — email `ticket_resolved` avec la note, au passage à « résolu » (migration `20260915000000`), `user_id` NULL pour un ticket sans compte. **Pièces jointes : non en V1** (stockage et modération pour un besoin non démontré). |
+| Notification au demandeur à la résolution d'un ticket, pièces jointes | **Notification : faite le 12/09/2026** — email `ticket_resolved` avec la note, au passage à « résolu » (migration `20260915000000`), `user_id` NULL pour un ticket sans compte. **Pièces jointes : non en V1 — tranché le 12/09/2026** (stockage et modération pour un besoin non démontré). |
 | Notification à l'owner au déblocage d'un contact (BO-02) | **Tranché le 12/09/2026, élargi** : l'owner est prévenu au déclenchement, à la réponse réussie d'un contact, au blocage et au déblocage (`transmission_triggered`, `contact_answered`, `contact_blocked`, `contact_unblocked`, migration `20260914000000`), et annule lui-même par `POST /transmission/cancel` sous step-up. Backend §3.7 et §8, User Stories E5 à compléter. |
 | Audit de sécurité interne (11/09/2026) | 15 constats sur `apps/api`. Corrigés : pause qui ne reprenait pas (lot 5) ; les trois HIGH (purge par un seul contact, annulation admin bloquante, limites de débit et force brute TOTP) ; les six MEDIUM (détournement d'une inscription en cours, oracles d'énumération, signature du vault liée à la catégorie et à l'horodatage, gardes de configuration en production, suppression RGPD des OTP et purge horaire, ouverture résiliente). Les LOW aussi (injection CSV, rôle < N porteurs, `POST /auth/keys` sous step-up `set_key` et atomique, `POST /vault/restore` lié au challenge Ed25519, TOTP à usage unique et secret chiffré par `TOTP_ENC_KEY`, attestation annuelle sur challenge serveur, codes d'erreur justes, URL brute hors logs, limiteur sur `POST /relay/:token/verify`). Les quinze constats sont traités. Choix documenté : le 423 du login reste (E1-US03). Techniques §5.2 et Backend §3.3 à mettre à jour pour le message signé du vault (`ts`). |
 | Audit `TICKET_UPDATE` / cible `ticket` | Migration `20260430000000` ; repris par le Schéma v1.5. |
@@ -324,7 +324,12 @@ s'arrête au corps repart avec le mauvais contrat : à intégrer dans le texte
 ## G. Contrat Arbitrum — revue de la proposition (12/09/2026)
 
 Revue complète dans `docs/smart-contract.md`. Verdict : ne pas brancher en
-l'état. Décisions à prendre avant une v2 :
+l'état. **Design de la v2 écrit le 12/09/2026** (« Go, écris le design
+Arbitrum v2 ») dans `docs/smart-contract-v2.md` : les cinq points du
+tableau y sont tranchés (D1 à D5) ; les décisions encore ouvertes (pinning
+IPFS, plancher du score d'autonomie, mode par défaut, publication de P2,
+granularité des dates, garde de la clé opérateur) sont dans son §7.
+Tableau conservé pour l'historique :
 
 | Point | Constat | Décision attendue |
 |---|---|---|
