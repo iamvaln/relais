@@ -2,7 +2,7 @@
 // que les tests instancient l'app sans ouvrir de port.
 
 import Fastify, { LogController, type FastifyInstance } from 'fastify'
-import { env } from './config/env.js'
+import { env, parseTrustProxy } from './config/env.js'
 import { sha256Hex } from './lib/crypto.js'
 import { envelopePlugin } from './plugins/envelope.js'
 import { securityPlugin } from './plugins/security.js'
@@ -34,7 +34,8 @@ export async function buildApp(): Promise<FastifyInstance> {
       redact: { paths: ['req.headers.authorization', 'req.headers.cookie', 'req.headers["x-step-up-token"]'], censor: '[redacted]' },
     },
     logController: new QuietLogController(),
-    trustProxy: true,
+    // Audit HIGH-4 : jamais « tous les proxies » — sinon X-Forwarded-For fixe l'IP vue par les limites de débit.
+    trustProxy: parseTrustProxy(env().TRUST_PROXY),
     bodyLimit: 1_048_576, // 1 MiB — les blobs vault passeront par un endpoint dédié
     ajv: {
       customOptions: {

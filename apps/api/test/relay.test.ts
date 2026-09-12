@@ -104,6 +104,24 @@ async function opened(): Promise<Opened> {
   }
 }
 
+describe('audit HIGH-3 : après une annulation par l’admin, un nouveau silence rouvre une transmission', () => {
+  it('une transmission cancelled ne bloque plus l’ouverture ; la nouvelle a ses propres tokens ; toujours idempotent', async () => {
+    const { o, tokens } = await opened()
+    // L'admin annule (BO-02), puis le silence se prolonge de nouveau
+    await prisma().transmissions.updateMany({ data: { status: 'cancelled', cancelled_at: new Date() } })
+    await markTriggered(o)
+    mailbox.clear()
+    expect(await trigger(new Date())).toEqual({ transmissions: 1, contacts_notified: 2 })
+    expect(await prisma().transmissions.count()).toBe(2)
+    expect(await prisma().transmissions.count({ where: { status: 'triggered' } })).toBe(1)
+    const fresh = tokenFromEmail('contact1@example.cm')
+    expect(fresh).not.toBe(tokens.contact1)
+    await (await api()).get(`/relay/${fresh}`).expect(200)
+    await (await api()).get(`/relay/${tokens.contact1}`).expect(404)
+    expect(await trigger(new Date())).toEqual({ transmissions: 0, contacts_notified: 0 })
+  })
+})
+
 describe('GET /relay/:token', () => {
   it('lien inconnu → 404 RELAY_TOKEN_INVALID', async () => {
     const r = await (await api()).get(`/relay/${'a'.repeat(43)}`).expect(404)
@@ -344,6 +362,20 @@ describe('GET /relay/:token/data', () => {
 })
 
 describe('POST /relay/:token/confirm (E5-US05)', () => {
+  it('audit HIGH-1 : un contact qui a répondu sans qu’aucune de ses catégories soit déverrouillée ne peut pas confirmer, rien n’est purgé', async () => {
+    const { o, tokens } = await opened()
+    await objectStore().put(vaultKey(o.userId, 'accounts'), new Uint8Array(P2_ACCOUNTS))
+    expect((await verify(tokens.contact1, { shares: { k1: share(11) } })).status).toBe(200)
+    const r = await (await api()).post(`/relay/${tokens.contact1}/confirm`).expect(409)
+    expect(r.body.error.code).toBe('RELAY_NOT_UNLOCKED')
+    expect(await prisma().escrow_shares.count()).toBe(1)
+    expect(await objectStore().head(vaultKey(o.userId, 'accounts'))).not.toBeNull()
+    const tr = await prisma().transmissions.findFirstOrThrow()
+    expect(tr.status).toBe('in_progress')
+    expect(await prisma().transmission_contacts.count({ where: { status: 'confirmed' } })).toBe(0)
+    expect((await prisma().transmission_configs.findUniqueOrThrow({ where: { user_id: o.userId } })).status).toBe('triggered')
+  })
+
   it('un contact qui n’a pas répondu ne peut pas confirmer', async () => {
     const { tokens } = await opened()
     const r = await (await api()).post(`/relay/${tokens.contact1}/confirm`).expect(409)

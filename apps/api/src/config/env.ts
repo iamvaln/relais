@@ -23,12 +23,35 @@ export function durationToSeconds(value: string): number {
   }
 }
 
+/**
+ * TRUST_PROXY (audit HIGH-4) : X-Forwarded-For n'est cru qu'en connaissance
+ * de cause. Faux par défaut ; en production, le nombre de sauts (1 derrière
+ * un seul reverse proxy) ou la liste des IP du proxy. Sinon n'importe quel
+ * client choisit son IP et contourne toutes les limites de débit.
+ */
+export type TrustProxy = boolean | string | ((address: string, hop: number) => boolean)
+
+export function parseTrustProxy(raw: string | undefined): TrustProxy {
+  const value = raw?.trim()
+  if (!value || value === 'false') return false
+  if (value === 'true') return true
+  if (/^\d+$/.test(value)) {
+    // Nombre de sauts de confiance, comme proxy-addr le compte (0 = le client direct).
+    const hops = Number(value)
+    return (_address, hop) => hop < hops
+  }
+  // Une liste d'IP ou de plages, telle que Fastify (proxy-addr) la lit : séparées par des virgules.
+  return value.split(',').map((s) => s.trim()).filter(Boolean).join(',')
+}
+
 const schema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   /** Démarre le worker BullMQ (deadman:checkin) dans ce processus. */
   JOBS_ENABLED: z.enum(['true', 'false']).default('false'),
   PORT: z.coerce.number().int().positive().default(3000),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
+  /** Voir parseTrustProxy : 'false' (défaut), 'true', un nombre de sauts, ou des IP séparées par des virgules. */
+  TRUST_PROXY: z.string().optional(),
   APP_URL: z.string().url().default('http://localhost:3000'),
   FRONTEND_URL: z.string().url().default('http://localhost:3000'),
 

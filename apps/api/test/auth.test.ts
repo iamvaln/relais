@@ -453,6 +453,43 @@ describe('2FA TOTP (E6-US02)', () => {
     return new OTPAuth.TOTP({ secret, digits: 6, period: 30 }).generate()
   }
 
+  async function withTotp() {
+    const u = await registerUser(EMAIL)
+    const client = await api()
+    const auth = { Authorization: `Bearer ${u.accessToken}` }
+    const secret = (await client.post('/auth/2fa/setup').set(auth).expect(200)).body.data.secret as string
+    await client.post('/auth/2fa/verify').set(auth).send({ code: codeFor(secret) }).expect(200)
+    return { ...u, auth, secret, client }
+  }
+
+  it('audit HIGH-4 : cinq codes faux au login consomment le temp_token — le bon code est ensuite refusé, il faut se reconnecter', async () => {
+    const { email, password, secret, client } = await withTotp()
+    const login = await client.post('/auth/login').send({ email, password }).expect(200)
+    const tempToken = login.body.data.temp_token as string
+    for (let i = 0; i < 5; i++) {
+      const r = await client.post('/auth/2fa/verify').send({ temp_token: tempToken, code: '000000' })
+      expect(r.status).toBe(401)
+    }
+    const good = await client.post('/auth/2fa/verify').send({ temp_token: tempToken, code: codeFor(secret) }).expect(401)
+    expect(good.body.error.code).toBe('AUTH_TOKEN_EXPIRED')
+    // Un nouveau login redonne un temp_token frais, et le bon code passe
+    const again = await client.post('/auth/login').send({ email, password }).expect(200)
+    await client.post('/auth/2fa/verify').send({ temp_token: again.body.data.temp_token, code: codeFor(secret) }).expect(200)
+  })
+
+  it('audit HIGH-4 : cinq codes faux à la désactivation verrouillent la 2FA 15 minutes (423), même avec le bon code', async () => {
+    const { auth, secret, client, accessToken } = await withTotp()
+    // Le step-up est à usage unique : un nouveau par tentative (10 / min / user)
+    for (let i = 0; i < 5; i++) {
+      const su = await stepUp(accessToken, 'disable_2fa')
+      expect((await client.delete('/auth/2fa').set(auth).set('X-Step-Up-Token', su).send({ code: '000000' })).status).toBe(401)
+    }
+    const su = await stepUp(accessToken, 'disable_2fa')
+    const locked = await client.delete('/auth/2fa').set(auth).set('X-Step-Up-Token', su).send({ code: codeFor(secret) }).expect(423)
+    expect(locked.body.error.code).toBe('AUTH_ACCOUNT_LOCKED')
+    expect((await prisma().users.findUniqueOrThrow({ where: { email: EMAIL } })).totp_enabled).toBe(true)
+  })
+
   it('codes de récupération (Point-2) : 8 codes rendus une fois à l’activation, un code remplace le TOTP au login, usage unique, purgés à la désactivation', async () => {
     const { email, password, accessToken, userId } = await registerUser(EMAIL)
     const client = await api()
@@ -545,6 +582,27 @@ describe('2FA TOTP (E6-US02)', () => {
 })
 
 describe('rate limiting (§7.1)', () => {
+  it('audit HIGH-4 : X-Forwarded-For ne change pas l’IP vue par le limiteur (TRUST_PROXY faux par défaut)', async () => {
+    const client = await api()
+    let last: { status: number } | undefined
+    for (let i = 0; i < 11; i++) {
+      last = await client.post('/auth/login').set('X-Forwarded-For', `10.0.0.${i + 1}`).send({ email: 'nobody@example.cm', password: 'x' })
+    }
+    expect(last!.status).toBe(429)
+  })
+
+  it('audit HIGH-4 : une limite « par utilisateur » est bien par utilisateur — un autre compte sur la même IP n’est pas bloqué', async () => {
+    const a = await registerUser('adjoua@example.cm')
+    const b = await registerUser('herve@example.cm')
+    const client = await api()
+    let last = 200
+    for (let i = 0; i < 11; i++) {
+      last = (await client.post('/auth/pin/step-up').set('Authorization', `Bearer ${a.accessToken}`).send({ action: 'view_seed' })).status
+    }
+    expect(last).toBe(429)
+    await client.post('/auth/pin/step-up').set('Authorization', `Bearer ${b.accessToken}`).send({ action: 'view_seed' }).expect(200)
+  })
+
   it('expose les en-têtes et bloque au-delà de la limite de login', async () => {
     const client = await api()
     let last: { status: number; headers: Record<string, string>; body: { error?: { code: string } } } | undefined

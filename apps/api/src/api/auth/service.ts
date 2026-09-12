@@ -620,7 +620,9 @@ export async function activateTwoFactor(userId: string, code: string): Promise<{
   if (!secret) throw new AppError('AUTH_2FA_INVALID', { message: 'Configuration expirée — relancez la mise en place.' })
   const user = await prisma().users.findUnique({ where: { id: userId }, select: { email: true, language: true } })
   if (!user) throw new AppError('AUTH_TOKEN_INVALID')
-  if (totp(secret, user.email).validate({ token: code, window: 1 }) === null) throw new AppError('AUTH_2FA_INVALID')
+  await assertTotpNotLocked(userId)
+  if (totp(secret, user.email).validate({ token: code, window: 1 }) === null) await recordTotpFailure(userId)
+  await redis().del(keys.twoFactorFailures(userId))
 
   const recoveryCodes = Array.from({ length: RECOVERY_CODE_COUNT }, randomRecoveryCode)
   await prisma().$transaction([
@@ -636,6 +638,36 @@ export async function activateTwoFactor(userId: string, code: string): Promise<{
 export type TwoFactorProof = { code: string } | { recovery_code: string }
 
 /** Connexion : le temp_token du login + un code TOTP valide (ou un code de récupération non utilisé) donnent une session. */
+// Audit HIGH-4 : le TOTP a 10^6 codes et une fenêtre de trois pas ; sans
+// compteur, un attaquant qui tient le mot de passe le force en quelques
+// minutes en variant son IP. Cinq échecs consomment le temp_token au login,
+// et verrouillent 15 minutes l'activation ou la désactivation.
+const TOTP_MAX_FAILURES = 5
+const TOTP_LOCK_S = 15 * 60
+
+async function recordTotpLoginFailure(tempToken: string): Promise<never> {
+  const key = keys.twoFactorLoginFailures(tempToken)
+  const count = await redis().incr(key)
+  await redis().expire(key, TOTP_LOCK_S)
+  if (count >= TOTP_MAX_FAILURES) await redis().del(keys.twoFactorPending(tempToken), key)
+  throw new AppError('AUTH_2FA_INVALID')
+}
+
+async function assertTotpNotLocked(userId: string): Promise<void> {
+  if (await redis().exists(keys.twoFactorLock(userId))) throw new AppError('AUTH_ACCOUNT_LOCKED', { message: 'Trop de codes incorrects — réessayez dans 15 minutes.' })
+}
+
+async function recordTotpFailure(userId: string): Promise<never> {
+  const key = keys.twoFactorFailures(userId)
+  const count = await redis().incr(key)
+  await redis().expire(key, TOTP_LOCK_S)
+  if (count >= TOTP_MAX_FAILURES) {
+    await redis().set(keys.twoFactorLock(userId), '1', 'EX', TOTP_LOCK_S)
+    await redis().del(key)
+  }
+  throw new AppError('AUTH_2FA_INVALID')
+}
+
 export async function completeTwoFactorLogin(
   tempToken: string,
   proof: TwoFactorProof,
@@ -650,11 +682,11 @@ export async function completeTwoFactorLogin(
   })
   if (!user?.totp_secret || !user.totp_enabled) throw new AppError('AUTH_2FA_INVALID')
   if ('code' in proof) {
-    if (totp(user.totp_secret, user.email).validate({ token: proof.code, window: 1 }) === null) throw new AppError('AUTH_2FA_INVALID')
+    if (totp(user.totp_secret, user.email).validate({ token: proof.code, window: 1 }) === null) await recordTotpLoginFailure(tempToken)
   } else if (!(await consumeRecoveryCode(user.id, proof.recovery_code))) {
-    throw new AppError('AUTH_2FA_INVALID')
+    await recordTotpLoginFailure(tempToken)
   }
-  await redis().del(key)
+  await redis().del(key, keys.twoFactorLoginFailures(tempToken))
   const pub = toPublicUser(user)
   return { session: await issueSession(user.id, pub.plan, ctx), user: pub }
 }
@@ -666,7 +698,9 @@ export async function disableTwoFactor(userId: string, code: string): Promise<vo
   })
   if (!user) throw new AppError('AUTH_TOKEN_INVALID')
   if (!user.totp_enabled || !user.totp_secret) throw new AppError('VALIDATION_ERROR', { message: 'La double authentification n’est pas active.' })
-  if (totp(user.totp_secret, user.email).validate({ token: code, window: 1 }) === null) throw new AppError('AUTH_2FA_INVALID')
+  await assertTotpNotLocked(userId)
+  if (totp(user.totp_secret, user.email).validate({ token: code, window: 1 }) === null) await recordTotpFailure(userId)
+  await redis().del(keys.twoFactorFailures(userId))
 
   await prisma().$transaction([
     prisma().users.update({ where: { id: userId }, data: { totp_secret: null, totp_enabled: false } }),

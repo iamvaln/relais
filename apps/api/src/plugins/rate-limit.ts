@@ -6,10 +6,25 @@
 import fp from 'fastify-plugin'
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import rateLimit from '@fastify/rate-limit'
+import { verifyAccessToken } from '../lib/jwt.js'
 import { redis } from '../lib/redis.js'
 
-function keyByUserOrIp(req: FastifyRequest): string {
-  return req.user ? `u:${req.user.id}` : `ip:${req.ip}`
+/**
+ * Audit HIGH-4 : le limiteur s'exécute en onRequest, avant `authenticate`,
+ * donc req.user n'est jamais posé ici. La clé « par utilisateur » vérifie
+ * elle-même le bearer (HMAC, sans base) ; un token invalide retombe sur l'IP.
+ */
+async function keyByUserOrIp(req: FastifyRequest): Promise<string> {
+  const header = req.headers.authorization
+  if (typeof header === 'string' && header.startsWith('Bearer ')) {
+    try {
+      const { sub } = await verifyAccessToken(header.slice(7))
+      return `u:${sub}`
+    } catch {
+      // token absent ou invalide : par IP
+    }
+  }
+  return `ip:${req.ip}`
 }
 
 export const limits = {
