@@ -45,6 +45,38 @@ describe('GET /transmission/config', () => {
   })
 })
 
+describe('GET /transmission/questions (bibliothèque des questions secrètes, BO-04)', () => {
+  it('liste les questions actives de type secret_question ou both, score ≥ vault.question_min_score, sans les questions journal', async () => {
+    const { accessToken } = await registerUser('adjoua@example.cm')
+    await prisma().checkin_questions.createMany({
+      data: [
+        { text_fr: 'Journal seulement', text_en: 'Journal only', category: 'shared_memory', usage_type: 'journal', reliability_score: 9 },
+        { text_fr: 'Trop faible', text_en: 'Too weak', category: 'places', usage_type: 'secret_question', reliability_score: 5 },
+        { text_fr: 'Archivée', text_en: 'Archived', category: 'places', usage_type: 'secret_question', reliability_score: 9, status: 'archived' },
+        { text_fr: 'Les deux usages', text_en: 'Both uses', category: 'shared_memory', usage_type: 'both', reliability_score: 8 },
+      ],
+    })
+    const r = await (await api()).get('/transmission/questions').set('Authorization', `Bearer ${accessToken}`).expect(200)
+    const questions = r.body.data.questions as { id: string; text_fr: string; text_en: string; category: string; reliability_score: number }[]
+    const texts = questions.map((q) => q.text_fr)
+    expect(texts).toContain('Les deux usages')
+    for (const excluded of ['Journal seulement', 'Trop faible', 'Archivée']) expect(texts).not.toContain(excluded)
+    for (const q of questions) {
+      expect(q).toEqual({ id: expect.any(String), text_fr: expect.any(String), text_en: expect.any(String), category: expect.any(String), reliability_score: expect.any(Number) })
+      expect(q.reliability_score).toBeGreaterThanOrEqual(6)
+    }
+    // Groupées par catégorie, puis par score décroissant : l'app propose les plus solides en premier
+    const seeded = await secretQuestionIds(1)
+    expect(questions.map((q) => q.id)).toContain(seeded[0])
+    const cats = questions.map((q) => q.category)
+    expect(cats).toEqual([...cats].sort())
+  })
+
+  it('exige une session', async () => {
+    await (await api()).get('/transmission/questions').expect(401)
+  })
+})
+
 describe('GET /transmission/relais-key (DEC-28)', () => {
   it('est public, expose relais_x25519_pk (32 bytes) + key_version, et se met en cache un jour', async () => {
     const r = await (await api()).get('/transmission/relais-key').expect(200)
@@ -80,6 +112,9 @@ describe('POST /transmission/contacts', () => {
     const cfg = await (await api()).get('/transmission/config').set(o.auth).expect(200)
     expect(cfg.body.data.contacts).toHaveLength(1)
     expect(cfg.body.data.contacts[0].id).toBe(r.body.data.id)
+    // L'owner relit secret_enc (sous K2) : nom, message, et depuis le lot 4 mobile email et téléphone du contact
+    expect(cfg.body.data.contacts[0].secret_enc).toBe(body.secret_enc)
+    expect(r.body.data.secret_enc).toBe(body.secret_enc)
     // Rien de lisible côté serveur : notification_enc et secret_enc restent des blobs
     const row = await prisma().trusted_contacts.findUniqueOrThrow({ where: { id: r.body.data.id } })
     expect(Buffer.from(row.notification_enc).toString('utf8')).not.toContain('herve@')

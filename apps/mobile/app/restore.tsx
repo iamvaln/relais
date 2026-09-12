@@ -7,6 +7,7 @@ import { api } from '@/lib/api'
 import { device } from '@/lib/device'
 import { messageFor } from '@/lib/errors'
 import { keyStore } from '@/state/keystore'
+import { openTransmission } from '@/state/transmission'
 import { openVault } from '@/state/vault'
 import { useSession } from '@/state/session'
 import { Body, Button, ErrorText, Field, PinField, Screen, Title } from '@/ui'
@@ -29,6 +30,8 @@ export default function Restore() {
       setRestoring(true)
       const { sync } = await openVault()
       await sync.restoreAll()
+      // Contacts de confiance : relus depuis secret_enc (K2) ; les réponses secrètes sont à ressaisir.
+      await (await openTransmission()).tx.restore()
       router.replace('/home')
     } catch (err) {
       if (err instanceof RestoreError) setError(t(lang, 'restore.failed'))

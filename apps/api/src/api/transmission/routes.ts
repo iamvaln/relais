@@ -27,6 +27,9 @@ import {
 export async function transmissionRoutes(app: FastifyInstance): Promise<void> {
   app.get('/config', { preHandler: [authenticate] }, async (req) => ok(await transmission.getConfig(req.user!.id)))
 
+  // Bibliothèque des questions secrètes (BO-04) : l'owner choisit, il ne rédige pas.
+  app.get('/questions', { preHandler: [authenticate] }, async () => ok(await transmission.listSecretQuestions()))
+
   // Clé publique vers laquelle l'app scelle { email, phone } (DEC-28) :
   // publique, non authentifiée, cacheable un jour.
   app.get('/relais-key', { config: { rateLimit: limits.relaisKey } }, async (_req, reply) => {

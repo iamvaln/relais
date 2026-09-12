@@ -28,7 +28,9 @@ justifier explicitement.
 - `packages/app-core/` — la logique de l'app sans React Native : politique
   PIN et backoff (DEC-26), device (`seed_enc_pin`, biométrie), onboarding,
   connexion, restauration, mot de passe, TOTP, coffre local (`vault/` :
-  fiches chiffrées dans SQLite, sync 3 s par catégorie, restauration).
+  fiches chiffrées dans SQLite, sync 3 s par catégorie, restauration),
+  transmission (`transmission/` : contacts chiffrés sur le device, réponses
+  secrètes jamais envoyées, activation, vérification annuelle, pause).
   Tests sous Node dans `test/` (vraie SQLite via `node:sqlite`), parcours
   contre l'API réelle dans `apps/api/test/app-core*.test.ts`.
 - `apps/mobile/` — l'app React Native (Expo SDK 57, Expo Router, Zustand,
@@ -86,6 +88,6 @@ localhost -p 55432 || scripts/dev-services.sh start` avant les tests.
 ## Ce qui n'est pas fait
 
 Logs API (export externe), fournisseur de paiement (encaissement manuel en
-V1), enregistrement Arbitrum, app mobile lots 4 à 6 (transmission,
-check-in et carnet, parcours du contact — socle, cœur crypto, onboarding,
-sécurité et coffre sont faits), interface du back office. La liste à jour est dans le README et `docs/backend.md` §2.
+V1), enregistrement Arbitrum, app mobile lots 5 et 6 (check-in et carnet,
+parcours du contact — socle, cœur crypto, onboarding, sécurité, coffre et
+transmission sont faits), interface du back office. La liste à jour est dans le README et `docs/backend.md` §2.
