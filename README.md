@@ -14,11 +14,12 @@ d'implémentation.
 |---|---|
 | Specs produit, techniques, backend, frontend, back office | ✅ v1 (`docs/specs/`) |
 | Schéma PostgreSQL v1.4 | ✅ Implémenté et testé (`prisma/`), Proposals 8 et 9 incluses |
-| API backend — auth, vault, transmission, check-in, relay, journal, admin, facturation, dashboard, tickets, jobs | ✅ 93 endpoints, 245 tests d'intégration (`apps/api/`) |
+| API backend — auth, vault, transmission, check-in, relay, journal, admin, facturation, dashboard, tickets, jobs | ✅ 93 endpoints, 248 tests d'intégration (`apps/api/`) |
 | Cœur crypto de l'app (seed, clés, coffre, Shamir, contacts, relay, carnet) | ✅ `packages/crypto-core`, 32 tests + 1 bout en bout contre l'API |
 | Client API partagé (mobile, back office web) | ✅ `packages/api-client`, testé contre l'API |
-| Logique de l'app (PIN, device, onboarding, session, coffre, transmission, check-in, carnet) | ✅ `packages/app-core`, testé sous Node et contre l'API |
-| App mobile — lots 1 à 5 : socle, onboarding et sécurité, coffre, transmission, check-in et carnet | ✅ `apps/mobile` ; lot 6 (parcours du contact) dans `docs/mobile.md` |
+| Logique de l'app (PIN, device, onboarding, session, coffre, transmission, check-in, carnet, parcours du contact) | ✅ `packages/app-core`, testé sous Node et contre l'API |
+| App mobile — lots 1 à 6 : socle, onboarding et sécurité, coffre, transmission, check-in et carnet, parcours du contact | ✅ `apps/mobile` ; décisions dans `docs/mobile.md` |
+| Page web du contact (pour qui n'installe pas l'app) | ✅ `apps/web-relay`, Vite, même logique que l'app (`app-core`) |
 | API backend — logs API, fournisseur de paiement | ⬜ À faire |
 | App mobile | ⬜ Non démarré |
 | Back office (interface) | ⬜ Non démarré — l'API `/admin/*` est prête |

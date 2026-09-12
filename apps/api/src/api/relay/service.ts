@@ -385,9 +385,18 @@ export async function status(token: string, now = new Date()): Promise<RelayStat
 /** K1 → comptes & accès, K2 → souvenirs, K3 → finances (Techniques §4). */
 const SLOT_CATEGORY: Record<KeySlot, VaultCategory> = { k1: 'accounts', k2: 'messages', k3: 'finances' }
 
+export interface RelayJournalEntryView {
+  month: string
+  mode: string
+  /** XChaCha20(K2, { question_id, mois, mode, texte }) — le contact le lit une fois K2 reconstituée. */
+  content_enc: string
+}
+
 export interface RelayDataView {
   secret_enc: string
   categories: Partial<Record<KeySlot, { category: VaultCategory; shares: string[]; p2: string | null }>>
+  /** E2-US07 : le carnet de vie, pour le Gardien du souvenir (K2) seulement. */
+  journal?: RelayJournalEntryView[]
 }
 
 function openShare(key: Uint8Array, sealed: Uint8Array): Uint8Array {
@@ -426,7 +435,16 @@ export async function data(token: string, now = new Date()): Promise<RelayDataVi
       p2: b64(p2),
     }
   }
-  return { secret_enc: b64(tc.secret_enc)!, categories }
+  const view: RelayDataView = { secret_enc: b64(tc.secret_enc)!, categories }
+  if (slots.includes('k2')) {
+    const entries = await prisma().journal_entries.findMany({
+      where: { user_id: tr.user_id },
+      orderBy: { entry_month: 'asc' },
+      select: { entry_month: true, mode: true, content_enc: true },
+    })
+    view.journal = entries.map((e) => ({ month: e.entry_month.toISOString().slice(0, 10), mode: e.mode, content_enc: b64(e.content_enc)! }))
+  }
+  return view
 }
 
 // --- Confirmation et purge (POST /relay/:token/confirm) -------------------------------
@@ -466,6 +484,10 @@ export async function purgeTransmission(transmissionId: string, userId: string, 
   await redis().del(escrowKeyId(transmissionId))
   await prisma().$transaction([
     prisma().escrow_shares.deleteMany({ where: { transmission_id: transmissionId } }),
+    // E5-US05 / E2-US07 : le carnet et les rétrospectives sont des données chiffrées de l'owner, elles partent aussi.
+    prisma().checkin_log.updateMany({ where: { user_id: userId }, data: { journal_entry_id: null } }),
+    prisma().journal_entries.deleteMany({ where: { user_id: userId } }),
+    prisma().annual_wrappeds.deleteMany({ where: { user_id: userId } }),
     prisma().trusted_contacts.updateMany({
       where: { transmission_id: configId },
       data: { storj_k1_path: null, storj_k2_path: null, storj_k3_path: null },

@@ -92,7 +92,7 @@ Le module **auth** de §3.1 v1.1, le module **vault** de §3.3 v1.1, le module
 | `GET /relay/:token` | **Public** (token du lien), 30/min/IP : questions, rôles, `verify_token`, Si_enc, `secret_enc`, état |
 | `POST /relay/:token/verify` | `{ failed: true }` ou `{ shares }` (33 octets par rôle : index Shamir + 32) ; part comparée au hash signé à l'activation (422 `RELAY_SHARE_INVALID`) ; 5 tentatives puis blocage 24 h, les autres contacts prévenus ; parts en escrow — voir §3 |
 | `GET /relay/:token/status` | Répondu / requis / total, catégories déverrouillées |
-| `GET /relay/:token/data` | Une fois N parts réunies : parts de l'escrow + P2 + `secret_enc`, par rôle détenu |
+| `GET /relay/:token/data` | Une fois N parts réunies : parts de l'escrow + P2 + `secret_enc`, par rôle détenu ; `journal` (carnet sous K2) pour le porteur de K2 — lot 6, voir §3 |
 | `POST /relay/:token/confirm` | 3/min/IP ; termine et purge quand chaque contact ayant répondu a confirmé |
 | `GET /journal/question` | Question du mois par mode (`essential`, `reflective` ; `free` → aucune), « déjà répondu » |
 | `POST /journal/entries` · `GET /journal/entries` · `GET /journal/entries/:id` · `GET /journal/entries/month/:ym` | Écritures signées Ed25519 (DEC-31), une entrée par mois, liste sans contenu, lecture par mois (`YYYY-MM`, 404 si vide) |
@@ -465,6 +465,17 @@ confirmation qui ne termine pas la transmission (E5-US03), les autres
 contacts non bloqués reçoivent un `contact_progress` — l'événement
 seulement, rien de personnel.
 
+### Relay : le carnet part avec K2 et disparaît à la purge
+
+Lot 6 mobile (12/09/2026). E2-US07 veut la capsule « incluse dans la
+transmission au Gardien du souvenir » : `GET /relay/:token/data` rend
+`journal` (mois, mode, `content_enc`) au contact qui porte K2, une fois la
+catégorie déverrouillée — un blob par mois, opaque pour le serveur, lisible
+par le contact avec la K2 qu'il a reconstituée. E5-US05 « toutes les
+données chiffrées sont supprimées » : la purge finale supprime aussi
+`journal_entries` et `annual_wrappeds` (les check-ins du mois sont détachés
+d'abord).
+
 ### Relay : fin de transmission et purge
 
 E5-US05 lu avec E5-US04 : un K1 et un K3 ont chacun leurs données. La
@@ -666,7 +677,7 @@ consigné dans `docs/open-questions.md` §D.1.
 
 ## 5. Vérifications
 
-245 tests d’intégration, sur PostgreSQL 16 et Redis réels, base reconstruite
+248 tests d’intégration, sur PostgreSQL 16 et Redis réels, base reconstruite
 depuis les migrations et le seed à chaque run. Chaque test repart d'une base
 et d'un stockage vides. Ils couvrent notamment :
 
@@ -728,7 +739,7 @@ et d'un stockage vides. Ils couvrent notamment :
   silence écoulé mais relances incomplètes → relance d'abord ; BullMQ :
   deux jobs planifiés (`0 9 * * *`, `30 * * * *`), démarrage idempotent,
   arrêt propre
-- relay (24 tests, test-first) : ouverture au déclenchement (ligne
+- relay (25 tests, test-first) : ouverture au déclenchement (ligne
   `transmissions`, escrow = `dms.escrow_ttl_hours`, un token HMAC par
   contact, emails, idempotent ; le job quotidien enchaîne balayage et
   ouverture) ; lien inconnu / expiré / clos → 404, bloqué → 423, aucune
@@ -816,6 +827,10 @@ et d'un stockage vides. Ils couvrent notamment :
 - check-in et carnet de l'app (`app-core-checkin`, 5 tests contre l'API
   réelle) : jeu et validation, carnet chiffré et signé, Wrapped calculé côté
   app — voir `docs/mobile.md` §5
+- parcours du contact (`app-core-relay`, 2 tests contre l'API réelle) :
+  lien, réponses vérifiées sur le device, attente, déverrouillage 2-of-2,
+  checklist, message, carnet, progression, « J'ai terminé », purge ;
+  blocage après cinq échecs — voir `docs/mobile.md` §5
 - transmission de l'app (`app-core-transmission`, 3 tests contre l'API
   réelle) : contacts, activation avec parts calculées côté app, parcours
   désactiver → modifier → réactiver, vérification annuelle, pause,

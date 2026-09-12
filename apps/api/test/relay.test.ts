@@ -312,6 +312,28 @@ describe('GET /relay/:token/data', () => {
     expect(Buffer.from(k1.p2, 'base64')).toEqual(P2_ACCOUNTS)
   })
 
+  it('E2-US07 : le porteur de K2 déverrouillé reçoit aussi le carnet (mois, mode, blob) ; un porteur K1 seul, non', async () => {
+    const { o, tokens, contacts } = await bothAnswered()
+    await prisma().journal_entries.createMany({
+      data: [
+        { user_id: o.userId, entry_month: new Date('2026-03-01T00:00:00Z'), mode: 'essential', content_enc: opaque(301, 80) },
+        { user_id: o.userId, entry_month: new Date('2026-05-01T00:00:00Z'), mode: 'free', content_enc: opaque(305, 80) },
+      ],
+    })
+    // Le contact 1 est aussi Gardien du souvenir et K2 est reconstituée
+    await prisma().trusted_contacts.update({ where: { id: contacts[0]!.id }, data: { has_k2_role: true } })
+    await prisma().transmissions.updateMany({ data: { k2_completed: true } })
+
+    const r = await (await api()).get(`/relay/${tokens.contact1}/data`).expect(200)
+    expect(Object.keys(r.body.data.categories).sort()).toEqual(['k1', 'k2'])
+    expect(r.body.data.journal).toEqual([
+      { month: '2026-03-01', mode: 'essential', content_enc: opaque(301, 80).toString('base64') },
+      { month: '2026-05-01', mode: 'free', content_enc: opaque(305, 80).toString('base64') },
+    ])
+    const other = await (await api()).get(`/relay/${tokens.contact2}/data`).expect(200)
+    expect(other.body.data.journal).toBeUndefined()
+  })
+
   it('escrow expiré (clé Redis disparue) : 409, rien de lisible', async () => {
     const { tokens } = await bothAnswered()
     const tr = await prisma().transmissions.findFirstOrThrow()
@@ -331,6 +353,8 @@ describe('POST /relay/:token/confirm (E5-US05)', () => {
   it('la transmission se termine quand chaque contact ayant répondu a confirmé : purge totale, log conservé', async () => {
     const { o, tokens, contacts } = await bothAnswered()
     const tr = await prisma().transmissions.findFirstOrThrow()
+    await prisma().journal_entries.create({ data: { user_id: o.userId, entry_month: new Date('2026-03-01T00:00:00Z'), mode: 'essential', content_enc: opaque(301, 80) } })
+    await prisma().annual_wrappeds.create({ data: { user_id: o.userId, year: 2026, stats_enc: opaque(400, 60), entry_count: 6 } })
     const first = await (await api()).post(`/relay/${tokens.contact1}/confirm`).expect(200)
     expect(first.body.data).toEqual({ confirmed: true, transmission_status: 'in_progress' })
     expect(await prisma().escrow_shares.count()).toBe(2)
@@ -352,6 +376,9 @@ describe('POST /relay/:token/confirm (E5-US05)', () => {
     const tc = await prisma().trusted_contacts.findUniqueOrThrow({ where: { id: contacts[0]!.id } })
     expect(tc.storj_k1_path).toBeNull()
     expect((await prisma().transmission_configs.findUniqueOrThrow({ where: { user_id: o.userId } })).status).toBe('completed')
+    // E5-US05 : le carnet et les rétrospectives partent avec le reste
+    expect(await prisma().journal_entries.count({ where: { user_id: o.userId } })).toBe(0)
+    expect(await prisma().annual_wrappeds.count({ where: { user_id: o.userId } })).toBe(0)
     // le lien est clos
     await (await api()).get(`/relay/${tokens.contact1}`).expect(404)
     // la confirmation qui termine la transmission ne prévient plus personne

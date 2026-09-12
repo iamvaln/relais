@@ -47,4 +47,7 @@ export class MemorySecureStorage implements SecureStorage {
   keys(): string[] {
     return [...this.items.keys()]
   }
+  values(): string[] {
+    return [...this.items.values()].map((i) => i.value)
+  }
 }

@@ -1,6 +1,6 @@
 // Côté contact, post-mortem (Techniques §5.6, DEC-13, E5-US02) : tout en local.
 //   réponses → K_i → verify_token s'ouvre ? → parts déchiffrées → POST /verify { shares }
-//   GET /data { categories: { kj: { shares, p2 } } } → combine → Kj → P2 → P1 → D
+//   GET /data { categories: { kj: { shares, p2 } } } → combine → Kj → P2 ouvert (ici P1, puis D)
 
 import { describe, expect, it } from 'vitest'
 import sodium from '../src/sodium.js'
@@ -9,6 +9,7 @@ import { mnemonicToSeed } from '../src/seed.js'
 import { buildSyncPayload, encryptLocal } from '../src/vault.js'
 import { type QuestionIds } from '../src/contacts.js'
 import { buildActivationBody, type ContactPlan } from '../src/activation.js'
+import { open } from '../src/aead.js'
 import { answerRelay, openSecret, reconstruct } from '../src/relay.js'
 
 const VECTOR = 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about'
@@ -56,7 +57,8 @@ describe('relay — parcours complet owner → contacts', () => {
     // Ce que GET /relay/:token/data rend une fois k1 et k2 déverrouillées
     const data = { secret_enc: body.contacts[0]!.secret_enc, categories: { k1: { category: 'accounts', shares: [a1.shares.k1!, a2.shares.k1!], p2: sync.payload }, k2: { category: 'messages', shares: [a1.shares.k2!, a2.shares.k2!], p2: null } } }
     const out = await reconstruct(data)
-    expect(Buffer.from(out.categories.k1!.data!)).toEqual(Buffer.from(D))
+    // P2 ouvert rend ce que l'owner a scellé — ici P1 ; l'app ouvre la couche suivante
+    expect(Buffer.from(await open(keys.k1, out.categories.k1!.data!))).toEqual(Buffer.from(D))
     expect(out.categories.k2!.data).toBeNull()
     expect(Buffer.from(out.categories.k1!.key)).toEqual(Buffer.from(keys.k1))
     expect(await openSecret(out.categories.k2!.key, data.secret_enc)).toEqual({ nom: 'Contact 1', role: 'famille', message_personnel: 'Pour toi, 1' })

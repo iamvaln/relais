@@ -55,6 +55,8 @@ jobs:
         run: npm run core:build
       - name: Bundle Metro de l'app mobile (Android) — imports, alias libsodium, polyfills
         run: cd apps/mobile && CI=1 npx expo export --platform android --output-dir /tmp/expo-export
+      - name: Page web du contact (apps/web-relay) — build Vite
+        run: npm run build --workspace apps/web-relay
       - run: npm run typecheck
       - run: npm run lint
       - run: npm test
