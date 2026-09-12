@@ -20,6 +20,7 @@ export const ErrorCodes = {
   AUTH_KEY_ALREADY_SET: { http: 409, message: 'La clé publique de ce compte est déjà enregistrée.' },
   AUTH_KEY_NOT_SET: { http: 409, message: "Ce compte n'a pas encore de clé publique." },
   VAULT_SYNC_FAILED: { http: 503, message: 'Échec de synchronisation du coffre.' },
+  VAULT_SYNC_STALE: { http: 409, message: 'Sauvegarde périmée ou rejouée : synchronisez de nouveau.' },
   TRANSMISSION_NOT_CONFIGURED: { http: 409, message: 'Transmission non configurée.' },
   TRANSMISSION_ALREADY_ACTIVE: { http: 409, message: 'Transmission déjà active.' },
   RELAY_TOKEN_INVALID: { http: 404, message: 'Lien invalide ou expiré.' },

@@ -2,7 +2,7 @@
 // qu'en production derrière un proxy connu, par nombre de sauts ou liste d'IP.
 
 import { describe, expect, it } from 'vitest'
-import { parseTrustProxy } from '../src/config/env.js'
+import { loadEnv, parseTrustProxy } from '../src/config/env.js'
 
 describe('parseTrustProxy', () => {
   it('absent ou false → false ; true → true ; un entier → nombre de sauts ; une liste → IP du proxy', () => {
@@ -17,5 +17,40 @@ describe('parseTrustProxy', () => {
     expect([two('x', 0), two('x', 1), two('x', 2)]).toEqual([true, true, false])
     expect(parseTrustProxy('10.0.0.1, 10.0.0.2')).toBe('10.0.0.1,10.0.0.2')
     expect(parseTrustProxy('loopback')).toBe('loopback')
+  })
+})
+
+describe('audit MEDIUM-8 : garde-fous de configuration en production', () => {
+  const prod: NodeJS.ProcessEnv = {
+    NODE_ENV: 'production',
+    DATABASE_URL: 'postgresql://relais@db/relais',
+    REDIS_URL: 'redis://redis:6379',
+    JWT_ACCESS_SECRET: 'a'.repeat(40),
+    JWT_STEPUP_SECRET: 'b'.repeat(40),
+    TOKEN_HMAC_SECRET: 'c'.repeat(40),
+    HCV_ADDR: 'https://vault.example',
+    HCV_TOKEN: 'hvs.x',
+    EMAIL_TRANSPORT: 'resend',
+    RESEND_API_KEY: 're_x',
+    STORAGE_BACKEND: 's3',
+    STORJ_ACCESS_KEY: 'k',
+    STORJ_SECRET_KEY: 's',
+    FRONTEND_URL: 'https://app.getrelais.app',
+    APP_URL: 'https://api.getrelais.app',
+  }
+
+  it('une configuration de production complète passe', () => {
+    expect(loadEnv(prod).NODE_ENV).toBe('production')
+  })
+
+  it('en production : transport email console, stockage fs ou local, URL en http → refus au démarrage', () => {
+    expect(() => loadEnv({ ...prod, EMAIL_TRANSPORT: 'console', RESEND_API_KEY: undefined })).toThrow(/EMAIL_TRANSPORT/)
+    expect(() => loadEnv({ ...prod, STORAGE_BACKEND: 'fs', STORJ_ACCESS_KEY: undefined, STORJ_SECRET_KEY: undefined })).toThrow(/STORAGE_BACKEND/)
+    expect(() => loadEnv({ ...prod, FRONTEND_URL: 'http://app.getrelais.app' })).toThrow(/https/)
+    expect(() => loadEnv({ ...prod, APP_URL: 'http://api.getrelais.app' })).toThrow(/https/)
+  })
+
+  it('hors production, console et fs restent permis', () => {
+    expect(loadEnv({ ...prod, NODE_ENV: 'development', HCV_ADDR: undefined, HCV_TOKEN: undefined, RELAIS_X25519_SK_DEV: 'ab'.repeat(32), EMAIL_TRANSPORT: 'console', STORAGE_BACKEND: 'fs', FRONTEND_URL: 'http://localhost:3000' }).EMAIL_TRANSPORT).toBe('console')
   })
 })

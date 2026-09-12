@@ -69,7 +69,7 @@ Le module **auth** de §3.1 v1.1, le module **vault** de §3.3 v1.1, le module
 | `GET /auth/restore/challenge` | DEC-06 |
 | `POST /auth/restore/verify` | DEC-06 |
 | `POST /auth/2fa/setup` · `verify` · `DELETE /auth/2fa` | E6-US02 ; `verify` rend 8 codes de récupération à l'activation et en accepte un (`recovery_code`) au login — voir §3 |
-| `POST /vault/sync` | Blob chiffré + signature Ed25519 (DEC-07), taille plafonnée par `vault.max_size_mb` |
+| `POST /vault/sync` | Blob chiffré + `ts` + signature Ed25519 liant catégorie et horodatage (DEC-07, audit MEDIUM-7 : fenêtre ± 5 min, jamais en arrière), taille plafonnée par `vault.max_size_mb` |
 | `GET /vault/sync-status` | Date et taille par catégorie, lues sur le stockage |
 | `POST /vault/restore` | Renvoie le blob tel quel |
 | `GET /transmission/relais-key` | **Public**, 60/min/IP, cache 24 h — DEC-28 |
@@ -118,6 +118,7 @@ Jobs (§4), BullMQ, worker dans le processus API derrière `JOBS_ENABLED=true` :
 |---|---|---|
 | `deadman:checkin` | 09:00 UTC | Relances J+7/14/21, passage `triggered`, puis ouverture des transmissions : ligne `transmissions`, un token de relay par contact, emails ; lot 5 : push le jour de l'échéance, avec la relance 1, et à J-3 de la fin d'une pause (+ email `pause_ending`), reprise d'une pause échue — voir §3 |
 | `relay:cleanup` | toutes les heures (h+30) | Escrows expirés → `expired` + nouveaux liens, jusqu'à `dms.relay_max_restarts` (3) expirations puis arrêt et alerte dashboard ; accès déverrouillé depuis plus de 30 jours → purge |
+| `maintenance:purge` | horaire (:15) | OTP, challenges de restauration et sessions expirés (audit MEDIUM-9) |
 | `billing:expire` | 09:45 UTC | Échéance dépassée → grâce (premium conservé, email) ; grâce écoulée → expiré, plan gratuit, email |
 
 Non livré : `/user/*`, `PUT /transmission/recipients` (sans objet depuis
@@ -503,6 +504,41 @@ les autres suivent dans des PR dédiées.
   verrouillent 15 minutes (`AUTH_ACCOUNT_LOCKED`) l'activation ou la
   désactivation.
 
+### Audit de sécurité (12/09/2026) : les six constats MEDIUM corrigés
+
+- **Inscription en cours** : `POST /auth/register` sur un email dont
+  l'inscription attend son OTP ne remplace plus le `pending` Redis (nom,
+  téléphone, hash du mot de passe) et n'envoie aucun nouveau code ; réponse
+  générique, la victime garde son code. `resend-otp` reste le seul moyen d'en
+  obtenir un autre (5/h/email).
+- **Oracles d'énumération** : `POST /auth/password/reset` vérifie d'abord le
+  code (sans le consommer, un mauvais code compte une tentative) et répond
+  `AUTH_OTP_INVALID` de la même façon pour un compte inconnu, sans clé ou
+  avec clé ; la signature n'est examinée qu'avec un code valide
+  (`AUTH_RESTORE_FAILED`, code non consommé), puis l'OTP est consommé. Les
+  chemins « compte inconnu » de `reset-request` et `resend-otp` coûtent un
+  hachage factice. Le 423 du login sur un compte verrouillé est conservé :
+  E1-US03 veut un message de verrouillage, et il ne survient qu'après cinq
+  échecs sur ce compte.
+- **Signature du vault** : le message signé est désormais
+  `SHA256("relais:vault:v1|catégorie|ts|" ‖ P2)` ; `ts` (ms) est obligatoire,
+  dans une fenêtre de ± 5 minutes et strictement supérieur au dernier accepté
+  pour l'utilisateur et la catégorie (Redis `vault:sync:ts`). Un corps
+  capturé ne peut ni changer de catégorie (401) ni revenir en arrière ou être
+  rejoué (409 `VAULT_SYNC_STALE`). crypto-core `syncMessage`/`buildSyncPayload`
+  et app-core suivent.
+- **Production** : `NODE_ENV=production` exige `EMAIL_TRANSPORT=resend`,
+  `STORAGE_BACKEND=s3` et des `FRONTEND_URL`/`APP_URL` en https ; le transport
+  console n'imprime qu'en `development`.
+- **RGPD et purge** : la suppression d'un compte efface aussi les OTP par
+  adresse (ceux d'inscription ont `user_id NULL`) ; le job `maintenance:purge`
+  (horaire, :15) supprime OTP, challenges de restauration et sessions
+  expirés.
+- **Ouverture résiliente** : une `notification_enc` qui ne s'ouvre plus
+  (rotation de clé, ligne corrompue) est journalisée (identifiant haché) et
+  ignorée, à l'ouverture d'une transmission comme à la relance admin ; les
+  autres contacts reçoivent leur lien.
+
 ### Relay : fin de transmission et purge
 
 E5-US05 lu avec E5-US04 : un K1 et un K3 ont chacun leurs données. La
@@ -704,7 +740,7 @@ consigné dans `docs/open-questions.md` §D.1.
 
 ## 5. Vérifications
 
-255 tests d’intégration, sur PostgreSQL 16 et Redis réels, base reconstruite
+266 tests d’intégration, sur PostgreSQL 16 et Redis réels, base reconstruite
 depuis les migrations et le seed à chaque run. Chaque test repart d'une base
 et d'un stockage vides. Ils couvrent notamment :
 

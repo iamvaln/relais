@@ -269,6 +269,8 @@ describe('DELETE /admin/users/:id (RGPD)', () => {
     await trigger(new Date())
 
     await prisma().two_factor_recovery_codes.create({ data: { user_id: o.userId, code_hash: 'a'.repeat(64) } })
+    // Audit MEDIUM-9 : l'OTP d'inscription porte l'email en clair et user_id NULL — il doit partir aussi
+    await prisma().email_otp.create({ data: { user_id: null, email: o.email, otp_hash: 'f'.repeat(64), purpose: 'registration', expires_at: new Date(Date.now() + 3600_000) } })
 
     const adminRole = await adminWithRole('admin')
     await (await api()).delete(`/admin/users/${o.userId}`).set(adminRole.auth).send({ reason: 'demande RGPD' }).expect(403)
@@ -288,6 +290,7 @@ describe('DELETE /admin/users/:id (RGPD)', () => {
     expect(await prisma().trusted_contacts.count({ where: { user_id: o.userId } })).toBe(0)
     expect(await prisma().sessions.count({ where: { user_id: o.userId } })).toBe(0)
     expect(await prisma().two_factor_recovery_codes.count({ where: { user_id: o.userId } })).toBe(0)
+    expect(await prisma().email_otp.count({ where: { email: o.email } })).toBe(0)
     expect((await prisma().transmission_configs.findUniqueOrThrow({ where: { user_id: o.userId } })).status).toBe('inactive')
     const tr = await prisma().transmissions.findFirstOrThrow({ where: { user_id: o.userId } })
     expect(tr).toMatchObject({ status: 'cancelled', cancelled_by_admin: sa.id })

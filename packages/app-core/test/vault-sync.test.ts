@@ -5,7 +5,7 @@
 // l'API dans apps/api/test/app-core-vault.test.ts.
 
 import { describe, expect, it } from 'vitest'
-import { deriveCategoryKeys, deriveSigningKeypair, mnemonicToSeed, open, verifyPayload } from '@relais/crypto-core'
+import { deriveCategoryKeys, deriveSigningKeypair, mnemonicToSeed, open, verifyPayload, syncMessage } from '@relais/crypto-core'
 import { LocalVault, VaultSync, type SyncPayload, type VaultCategory, type VaultTransport } from '../src/vault/index.js'
 import { NodeSqlite } from './sqlite-node.js'
 
@@ -74,7 +74,7 @@ describe('VaultSync', () => {
     // P2 signé, opaque, et il contient bien les deux lignes accounts
     const accounts = transport.sent.find((s) => s.category === 'accounts')!
     const p2 = new Uint8Array(Buffer.from(accounts.payload, 'base64'))
-    expect(await verifyPayload(p2, new Uint8Array(Buffer.from(accounts.signature, 'base64')), signer.publicKey)).toBe(true)
+    expect(await verifyPayload(syncMessage('accounts', accounts.ts, p2), new Uint8Array(Buffer.from(accounts.signature, 'base64')), signer.publicKey)).toBe(true)
     expect(accounts.payload.includes('Orange')).toBe(false)
     const rows = JSON.parse(Buffer.from(await open(keys.k1, p2)).toString('utf8')) as { id: string }[]
     expect(rows.map((r) => r.id)).toEqual(['id-1', 'id-2'])

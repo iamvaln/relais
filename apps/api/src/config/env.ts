@@ -123,6 +123,17 @@ const schema = z.object({
   .refine((e) => Boolean(e.HCV_ADDR) || Boolean(e.RELAIS_X25519_SK_DEV), {
     message: 'RELAIS_X25519_SK_DEV est requis hors production (ou HCV_ADDR + HCV_TOKEN)',
   })
+  // Audit MEDIUM-8 : en production, pas de transport console (OTP et adresses sur stdout),
+  // pas de stockage local, pas d'URL en clair dans les emails.
+  .refine((e) => e.NODE_ENV !== 'production' || e.EMAIL_TRANSPORT === 'resend', {
+    message: 'EMAIL_TRANSPORT doit être resend en production (le transport console imprime les OTP)',
+  })
+  .refine((e) => e.NODE_ENV !== 'production' || e.STORAGE_BACKEND === 's3', {
+    message: 'STORAGE_BACKEND doit être s3 en production',
+  })
+  .refine((e) => e.NODE_ENV !== 'production' || (e.FRONTEND_URL.startsWith('https://') && e.APP_URL.startsWith('https://')), {
+    message: 'FRONTEND_URL et APP_URL doivent être en https en production',
+  })
 
 export type Env = z.infer<typeof schema>
 
