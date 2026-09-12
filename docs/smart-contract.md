@@ -119,6 +119,12 @@ et toute divergence de §2 rendra `isTriggered()` faux ou prématuré.
 
 ## 8. Décisions à prendre avant une v2 du contrat
 
+Tranchées le 12/09/2026 : le design de la v2 est dans
+`docs/smart-contract-v2.md` (opérateur qui écrit, owner qui signe ;
+silence aligné sur `next_checkin_due` ; déclenchement sans permission et
+pause qui expire on-chain ; packs adressés par contenu). La liste ci-dessous
+est conservée pour l'historique.
+
 1. Qui signe (owner, opérateur, ou EIP-712 relayé).
 2. Aligner le silence sur `next_checkin_due` + trois relances, ou changer
    DEC-35 pour le modèle du contrat.

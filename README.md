@@ -23,7 +23,7 @@ d'implémentation.
 | API backend — logs API, fournisseur de paiement | ⬜ À faire |
 | App mobile | ⬜ Non démarré |
 | Back office (interface) | ✅ Lots 1 à 3 (connexion TOTP, tableau de bord, utilisateurs, transmissions, questions, configuration, facturation, tickets, monitoring) — `packages/admin-core` + `apps/web-admin` (React, Vite), décisions dans `docs/backoffice.md` |
-| Smart contract Arbitrum | ⬜ Proposition reçue le 12/09, revue dans `docs/smart-contract.md` — à retravailler avant intégration |
+| Smart contract Arbitrum | ⬜ Proposition reçue le 12/09, revue dans `docs/smart-contract.md` ; design de la v2 dans `docs/smart-contract-v2.md` — contrat, API et clients à écrire |
 
 ## Documentation
 
