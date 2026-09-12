@@ -45,7 +45,8 @@ justifier explicitement.
   décisions : `docs/mobile.md`.
 - `packages/admin-core/` — la logique du back office sans React : client
   de l'API `/admin` (jeton 8 h, jamais de refresh, 401 = session perdue),
-  session sur `SessionStore`, grille des rôles, filtres. Tests sous Node
+  session sur `SessionStore`, grille des rôles, filtres, valeurs de
+  configuration typées. Tests sous Node
   dans `test/`, parcours contre l'API réelle dans
   `apps/api/test/admin-core.test.ts`.
 - `apps/web-admin/` — le back office (React 19, Vite, TanStack Query,
@@ -105,7 +106,7 @@ localhost -p 55432 || scripts/dev-services.sh start` avant les tests.
 
 Logs API (export externe), fournisseur de paiement (encaissement manuel en
 V1), enregistrement Arbitrum (proposition de contrat à retravailler,
-`docs/smart-contract.md`), back office lots 2 et 3 (transmissions,
-questions, configuration ; facturation, tickets, monitoring). L'app mobile (six
+`docs/smart-contract.md`), back office lot 3 (facturation, tickets,
+monitoring). L'app mobile (six
 lots) et la page web du contact sont faites ; tests Maestro et vérification
 sur device restent à mener. La liste à jour est dans le README et `docs/backend.md` §2.

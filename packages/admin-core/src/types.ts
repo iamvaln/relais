@@ -97,3 +97,117 @@ export interface HealthView {
   services: Record<string, ServiceStatus>
   [k: string]: unknown
 }
+
+// --- BO-03 Transmissions ------------------------------------------------------
+
+export type TransmissionRunStatus = 'triggered' | 'in_progress' | 'completed' | 'cancelled' | 'expired'
+
+export interface TransmissionsFilter {
+  status?: TransmissionRunStatus | '' | undefined
+  page?: number | undefined
+  limit?: number | undefined
+}
+
+export interface TransmissionRowView {
+  id: string
+  status: string
+  triggered_at: string
+  schema: { n: number; m: number }
+  contacts_notified: number
+  contacts_confirmed: number
+  unlocked: { k1: boolean; k2: boolean; k3: boolean }
+  escrow_active: boolean
+  escrow_expires_at: string
+  escrow_ttl_seconds: number
+  escrow_extended_count: number
+  completed_at: string | null
+  cancelled_at: string | null
+}
+
+export interface TransmissionContactView {
+  id: string
+  status: string
+  fail_count: number
+  blocked: boolean
+  roles: { k1: boolean; k2: boolean; k3: boolean }
+  notified_at: string
+  answered_at: string | null
+  confirmed_at: string | null
+}
+
+export interface AuditRowView {
+  id: string
+  action: string
+  admin_id: string | null
+  reason: string | null
+  created_at: string
+}
+
+export interface TransmissionDetailView extends TransmissionRowView {
+  user_id: string
+  cancellation_reason: string | null
+  contacts: TransmissionContactView[]
+  audit: AuditRowView[]
+}
+
+// --- BO-04 Questions ------------------------------------------------------------
+
+export const QUESTION_CATEGORIES = [
+  'childhood', 'places', 'events', 'people', 'habits', 'shared_memory', 'other',
+  'month_memory', 'relations', 'work', 'gratitude', 'introspection', 'legacy', 'lightness',
+] as const
+export type QuestionCategory = (typeof QUESTION_CATEGORIES)[number]
+export type QuestionUsage = 'secret_question' | 'journal' | 'both'
+export type QuestionStatus = 'active' | 'archived' | 'review'
+export type QuestionMode = 'essential' | 'reflective' | 'all'
+
+export interface QuestionsFilter {
+  usage_type?: QuestionUsage | '' | undefined
+  status?: QuestionStatus | '' | undefined
+  category?: QuestionCategory | '' | undefined
+}
+
+export interface QuestionInput {
+  text_fr: string
+  text_en: string
+  category: QuestionCategory
+  usage_type: QuestionUsage
+  reliability_score: number
+  risk_notes?: string
+  cycle_month?: number
+  mode_target?: QuestionMode
+}
+
+export interface QuestionUpdate extends Partial<QuestionInput> {
+  status?: 'active' | 'review'
+}
+
+export interface QuestionView {
+  id: string
+  text_fr: string
+  text_en: string
+  category: string
+  usage_type: string
+  reliability_score: number
+  status: string
+  risk_notes: string | null
+  cycle_month: number | null
+  mode_target: string | null
+  usage_count: number
+  failure_rate: number
+  block_rate: number
+  created_at: string
+  updated_at: string
+}
+
+// --- BO-05 Configuration ---------------------------------------------------------
+
+export interface ConfigView {
+  key: string
+  value: unknown
+  config_type: string
+  category: string
+  description: string
+  updated_by: string | null
+  updated_at: string
+}

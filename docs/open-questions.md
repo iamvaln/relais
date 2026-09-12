@@ -243,6 +243,7 @@ corrigent, voir chaque écart en §B) ; spec suivie pour B.5 et B.6, faits.
 
 | Point | État |
 |---|---|
+| Import CSV des questions (BO-04, super_admin) | Aucun endpoint dans l'API ; le back office (lot 2) n'offre que l'ajout unitaire. Reporté (décision du 12/09/2026, `docs/backoffice.md`) : `POST /admin/questions/import` si le besoin se confirme. |
 | `billing.trial_days` (BO-05, défaut 0) | Aucune règle ne dit ce qu'un essai débloque ni comment il finit. Sans effet dans l'API. |
 | Parcours d'achat in-app (`subscription_upgraded` PostHog) | Aucun fournisseur de paiement ; encaissement manuel via `PUT /admin/billing/:id/plan`. |
 | Alertes dashboard « Storj dégradé » et « espace Storj > 80 % » | Aucun compteur d'erreurs ni API d'usage du bucket. Non calculées. |
