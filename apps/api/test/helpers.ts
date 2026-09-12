@@ -116,6 +116,12 @@ export async function stepUp(accessToken: string, action: string): Promise<strin
   return res.body.data.step_up_token as string
 }
 
+/** Audit LOW-13 : l'enregistrement de la clé publique exige un step-up `set_key` (le PIN vient d'être posé). */
+export async function registerKey(accessToken: string, ed25519_pk: string): Promise<void> {
+  const su = await stepUp(accessToken, 'set_key')
+  await (await api()).post('/auth/keys').set('Authorization', `Bearer ${accessToken}`).set('X-Step-Up-Token', su).send({ ed25519_pk }).expect(200)
+}
+
 // --- Ed25519 côté "device" : le test joue le rôle de l'app mobile -------------
 
 export interface DeviceKeys {

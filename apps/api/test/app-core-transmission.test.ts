@@ -8,7 +8,7 @@ import { checkActivation, ContactStore, DeviceVault, MemorySecureStorage, Onboar
 import { deriveCategoryKeys, deriveSigningKeypair } from '@relais/crypto-core'
 import { NodeSqlite } from '../../../packages/app-core/test/sqlite-node.js'
 import { prisma } from '../src/lib/prisma.js'
-import { closeAll, getApp, lastEmailTo, lastOtp, mailbox, resetState, STRONG_PASSWORD } from './helpers.js'
+import { closeAll, getApp, lastEmailTo, lastOtp, mailbox, resetRateLimits, resetState, STRONG_PASSWORD } from './helpers.js'
 
 let baseUrl = ''
 beforeAll(async () => {
@@ -47,6 +47,7 @@ const ANSWERS_2: [string, string, string] = ['Douala', 'Médor', '1985']
 describe('transmission ↔ API', () => {
   it('questions de la bibliothèque, contacts, schéma, délais, récapitulatif, activation avec email de désignation ; contacts figés, puis parcours de modification', async () => {
     const d = await onboardedDevice()
+    await resetRateLimits() // le parcours enchaîne plus de dix step-up dans la minute (dont set_key à l'onboarding)
     const { tx, store } = await transmissionOn(d)
 
     const questions = await tx.questions()

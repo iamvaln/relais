@@ -2,7 +2,7 @@ import { afterAll, beforeEach, describe, expect, it } from 'vitest'
 import { prisma } from '../src/lib/prisma.js'
 import sodium from '../src/lib/sodium.js'
 import { objectStore } from '../src/services/storage/index.js'
-import { api, closeAll, generateDeviceKeys, lastEmailTo, registerUser, resetState, signWith, stepUp, type DeviceKeys } from './helpers.js'
+import { api, closeAll, generateDeviceKeys, lastEmailTo, registerKey, registerUser, resetState, signWith, stepUp, type DeviceKeys } from './helpers.js'
 import { buildActivationBody, buildContactBody, buildShare, fetchRelaisKey, plainShareBytes, sealToRelais, sha256Hex, signHash, type ActivationContact } from './transmission-helpers.js'
 
 /** Owner avec clé publique enregistrée + clé de Relais récupérée. */
@@ -10,7 +10,7 @@ async function owner(email = 'adjoua@example.cm') {
   const u = await registerUser(email)
   const keys: DeviceKeys = generateDeviceKeys()
   const auth = { Authorization: `Bearer ${u.accessToken}` }
-  await (await api()).post('/auth/keys').set(auth).send({ ed25519_pk: keys.publicKeyBase64 }).expect(200)
+  await registerKey(u.accessToken, keys.publicKeyBase64)
   const relaisPk = await fetchRelaisKey()
   return { ...u, keys, auth, relaisPk }
 }

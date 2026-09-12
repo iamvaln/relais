@@ -453,11 +453,14 @@ export async function registerPublicKey(userId: string, pkBase64: string): Promi
   if (!pk || pk.length !== ED25519_PK_BYTES) {
     throw new AppError('VALIDATION_ERROR', { details: { ed25519_pk: `${ED25519_PK_BYTES} bytes attendus` } })
   }
-  const user = await prisma().users.findUnique({ where: { id: userId }, select: { ed25519_pk: true } })
-  if (!user) throw new AppError('AUTH_TOKEN_INVALID')
-  if (user.ed25519_pk) throw new AppError('AUTH_KEY_ALREADY_SET')
+  // Audit LOW-13 : une seule écriture conditionnelle — deux enregistrements
+  // parallèles ne peuvent pas gagner tous les deux (plus de lecture puis update).
   // Prisma 6 attend Uint8Array<ArrayBuffer> ; Buffer est typé sur ArrayBufferLike.
-  await prisma().users.update({ where: { id: userId }, data: { ed25519_pk: new Uint8Array(pk) } })
+  const { count } = await prisma().users.updateMany({ where: { id: userId, ed25519_pk: null }, data: { ed25519_pk: new Uint8Array(pk) } })
+  if (count === 1) return
+  const user = await prisma().users.findUnique({ where: { id: userId }, select: { id: true } })
+  if (!user) throw new AppError('AUTH_TOKEN_INVALID')
+  throw new AppError('AUTH_KEY_ALREADY_SET')
 }
 
 // --- Mot de passe (E6-US03) -----------------------------------------------------
@@ -485,6 +488,7 @@ export async function changePassword(
 // --- Restauration par challenge Ed25519 (DEC-06) --------------------------------
 
 const RESTORE_CHALLENGE_TTL_MS = 5 * 60_000
+const RESTORE_PROOF_TTL_S = 15 * 60
 
 export async function createRestoreChallenge(userId: string): Promise<{ challenge_id: string; challenge: string; expires_at: string }> {
   const user = await prisma().users.findUnique({ where: { id: userId }, select: { ed25519_pk: true } })
@@ -517,6 +521,8 @@ export async function verifyRestoreChallenge(userId: string, challengeId: string
     throw new AppError('AUTH_RESTORE_FAILED')
   }
 
+  // Audit LOW-13 : la preuve du seed ouvre la restauration du coffre pour un quart d'heure (DEC-06).
+  await redis().set(keys.restoreProved(userId), '1', 'EX', RESTORE_PROOF_TTL_S)
   await emailService().send({
     userId,
     to: row.users.email,

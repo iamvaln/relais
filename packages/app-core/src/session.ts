@@ -33,18 +33,26 @@ export async function completeTwoFactor(api: ApiClient, input: { tempToken: stri
  * seed signe le challenge du serveur ; si la clé correspond, le PIN est posé
  * et le seed rendu pour le KeyStore. Le seed ne transite jamais.
  */
+/**
+ * Prouve la possession du seed au serveur : challenge signé Ed25519 (DEC-06).
+ * Ouvre la restauration du coffre pour un quart d'heure (audit LOW-13).
+ */
+export async function proveSeed(api: ApiClient, signer: { privateKey: Uint8Array }): Promise<void> {
+  const challenge = await api.auth.restoreChallenge()
+  const signature = await signRaw(fromBase64(challenge.challenge), signer.privateKey)
+  try {
+    await api.auth.restoreVerify({ challenge_id: challenge.challenge_id, signature: toBase64(signature) })
+  } catch {
+    throw new RestoreError()
+  }
+}
+
 export async function restoreWithWords(deps: { api: ApiClient; device: DeviceVault }, input: { words: string; pin: string }): Promise<{ seed: Uint8Array }> {
   if (validateMnemonic(input.words) === null) throw new RestoreError('Phrase de récupération invalide')
   const seed = mnemonicToSeed(input.words)
   const signer = await deriveSigningKeypair(seed)
   try {
-    const challenge = await deps.api.auth.restoreChallenge()
-    const signature = await signRaw(fromBase64(challenge.challenge), signer.privateKey)
-    try {
-      await deps.api.auth.restoreVerify({ challenge_id: challenge.challenge_id, signature: toBase64(signature) })
-    } catch {
-      throw new RestoreError()
-    }
+    await proveSeed(deps.api, signer)
     await deps.device.setupPin(seed, input.pin)
     return { seed }
   } catch (err) {

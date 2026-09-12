@@ -4,7 +4,7 @@
 
 import { createHash } from 'node:crypto'
 import sodium from '../src/lib/sodium.js'
-import { api, generateDeviceKeys, lastEmailTo, mailbox, registerUser, signWith, stepUp, type DeviceKeys } from './helpers.js'
+import { api, generateDeviceKeys, lastEmailTo, mailbox, registerKey, registerUser, signWith, stepUp, type DeviceKeys } from './helpers.js'
 
 export async function sealToRelais(relaisPkBase64: string, payload: object): Promise<string> {
   await sodium.ready
@@ -125,7 +125,7 @@ export async function makeOwner(email = 'adjoua@example.cm'): Promise<Owner> {
   const u = await registerUser(email)
   const keys = generateDeviceKeys()
   const auth = { Authorization: `Bearer ${u.accessToken}` }
-  await (await api()).post('/auth/keys').set(auth).send({ ed25519_pk: keys.publicKeyBase64 }).expect(200)
+  await registerKey(u.accessToken, keys.publicKeyBase64)
   return { ...u, keys, auth, relaisPk: await fetchRelaisKey() }
 }
 

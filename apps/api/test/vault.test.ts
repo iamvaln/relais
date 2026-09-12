@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { afterAll, beforeEach, describe, expect, it } from 'vitest'
 import { prisma } from '../src/lib/prisma.js'
 import { objectStore } from '../src/services/storage/index.js'
-import { api, closeAll, generateDeviceKeys, registerUser, resetState, signWith, type DeviceKeys } from './helpers.js'
+import { api, closeAll, generateDeviceKeys, registerKey, registerUser, resetState, signWith, type DeviceKeys } from './helpers.js'
 
 beforeEach(resetState)
 afterAll(closeAll)
@@ -25,12 +25,15 @@ function body(keys: DeviceKeys, category: string, data: Buffer, ts = Date.now())
 async function userWithKey(email = 'adjoua@example.cm') {
   const u = await registerUser(email)
   const keys = generateDeviceKeys()
-  await (await api())
-    .post('/auth/keys')
-    .set('Authorization', `Bearer ${u.accessToken}`)
-    .send({ ed25519_pk: keys.publicKeyBase64 })
-    .expect(200)
+  await registerKey(u.accessToken, keys.publicKeyBase64)
   return { ...u, keys, auth: { Authorization: `Bearer ${u.accessToken}` } }
+}
+
+/** Audit LOW-13 : la restauration exige d'avoir prouvé le seed (challenge Ed25519, DEC-06) dans le quart d'heure. */
+async function proveRestore(u: { keys: DeviceKeys; auth: { Authorization: string } }): Promise<void> {
+  const client = await api()
+  const ch = await client.get('/auth/restore/challenge').set(u.auth).expect(200)
+  await client.post('/auth/restore/verify').set(u.auth).send({ challenge_id: ch.body.data.challenge_id, signature: signWith(u.keys, Buffer.from(ch.body.data.challenge, 'base64')) }).expect(200)
 }
 
 describe('POST /vault/sync (DEC-07, DEC-21)', () => {
@@ -179,6 +182,9 @@ describe('GET /vault/sync-status et POST /vault/restore', () => {
     expect(after.body.data.finances).toMatchObject({ size: 512 })
     expect(after.body.data.finances.synced_at).toBeTypeOf('string')
 
+    const unproved = await client.post('/vault/restore').set(auth).send({ category: 'finances' }).expect(403)
+    expect(unproved.body.error.code).toBe('AUTH_RESTORE_REQUIRED') // audit LOW-13
+    await proveRestore({ keys, auth })
     const restored = await client.post('/vault/restore').set(auth).send({ category: 'finances' }).expect(200)
     expect(Buffer.from(restored.body.data.payload, 'base64').equals(data)).toBe(true)
 
@@ -195,6 +201,7 @@ describe('GET /vault/sync-status et POST /vault/restore', () => {
 
     const status = await client.get('/vault/sync-status').set(b.auth).expect(200)
     expect(status.body.data.accounts).toBeNull()
+    await proveRestore(b)
     await client.post('/vault/restore').set(b.auth).send({ category: 'accounts' }).expect(404)
   })
 

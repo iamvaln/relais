@@ -30,7 +30,7 @@ import {
 } from '@relais/crypto-core'
 import { trigger } from '../src/jobs/deadman.js'
 import { prisma } from '../src/lib/prisma.js'
-import { api, closeAll, mailbox, registerUser, resetState, stepUp } from './helpers.js'
+import { api, closeAll, mailbox, registerKey, registerUser, resetState, stepUp } from './helpers.js'
 import { relayTokenFromEmail, secretQuestionIds } from './transmission-helpers.js'
 
 beforeEach(resetState)
@@ -47,7 +47,7 @@ describe('crypto-core ↔ API', () => {
     const seed = mnemonicToSeed(words)
     const keys = await deriveCategoryKeys(seed)
     const signer = await deriveSigningKeypair(seed)
-    await client.post('/auth/keys').set(auth).send({ ed25519_pk: toBase64(signer.publicKey) }).expect(200)
+    await registerKey(u.accessToken, toBase64(signer.publicKey))
 
     // Nouveau device (DEC-06) : les 12 mots suffisent à prouver la possession
     const ch = await client.get('/auth/restore/challenge').set(auth).expect(200)

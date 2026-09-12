@@ -134,7 +134,8 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
 
   // --- Clé publique (DEC-05) ---------------------------------------------------
 
-  app.post<{ Body: KeysBody }>('/keys', { schema: { body: keysBody }, preHandler: [authenticate] }, async (req) => {
+  // Audit LOW-13 : preuve du PIN (qui vient d'être posé) — un access token volé pendant l'onboarding ne fixe plus la clé à vie.
+  app.post<{ Body: KeysBody }>('/keys', { schema: { body: keysBody }, preHandler: [authenticate, requireStepUp('set_key')] }, async (req) => {
     await auth.registerPublicKey(req.user!.id, req.body.ed25519_pk)
     return ok({ registered: true })
   })
