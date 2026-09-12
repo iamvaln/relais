@@ -6,8 +6,9 @@ import { hmacToken } from '../src/lib/crypto.js'
 import { prisma } from '../src/lib/prisma.js'
 import { redis } from '../src/lib/redis.js'
 import { vaultKey } from '../src/api/vault/service.js'
+import { escrowKeyId } from '../src/api/relay/service.js'
 import { objectStore } from '../src/services/storage/index.js'
-import { api, closeAll, lastEmailTo, mailbox, resetState } from './helpers.js'
+import { api, closeAll, lastEmailTo, mailbox, pushbox, resetState, stepUp } from './helpers.js'
 import { activateTransmission, makeOwner, opaque, plainShareBytes, type ActivationContact, type Owner } from './transmission-helpers.js'
 
 const HOUR = 3600 * 1000
@@ -65,6 +66,25 @@ describe('deadman trigger — ouverture de la transmission', () => {
     // Idempotent : la config reste 'triggered', mais la transmission existe déjà.
     expect(await trigger(NOW)).toEqual({ transmissions: 0, contacts_notified: 0 })
     expect(await prisma().transmissions.count()).toBe(1)
+  })
+
+  it('prévient aussi l’owner : email transmission_triggered avec le lien d’annulation, et un push — décision du 12/09/2026', async () => {
+    const o = await makeOwner()
+    await activateTransmission(o)
+    await markTriggered(o)
+    await prisma().push_tokens.create({ data: { user_id: o.userId, token: `sub_${o.userId}`, platform: 'android' } })
+    mailbox.clear()
+    pushbox.clear()
+
+    await trigger(NOW)
+
+    const mail = lastEmailTo(o.email)
+    expect(mail?.subject).toBe('Relais — ta transmission est déclenchée')
+    expect(mail?.text).toContain('/transmission/cancel')
+    expect(mail?.text).not.toContain('contact1@')
+    expect(await prisma().email_log.count({ where: { user_id: o.userId, email_type: 'transmission_triggered' } })).toBe(1)
+    expect(pushbox.sent.map((p) => p.title)).toEqual(['Ta transmission est déclenchée'])
+    expect(pushbox.sent[0]!.route).toBe('/transmission/cancel')
   })
 
   it('lit dms.escrow_ttl_hours dans app_config', async () => {
@@ -133,6 +153,73 @@ describe('audit MEDIUM-10 : une sealed box illisible n’empêche pas de préven
     expect(lastEmailTo('contact1@example.cm')).toBeUndefined()
     expect(lastEmailTo('contact2@example.cm')).toBeDefined()
     expect(await prisma().transmission_contacts.count()).toBe(2)
+  })
+})
+
+describe('l’owner prévenu pendant la transmission (12/09/2026)', () => {
+  async function opened(o: Owner) {
+    await activateTransmission(o)
+    await markTriggered(o)
+    await prisma().push_tokens.create({ data: { user_id: o.userId, token: `sub_${o.userId}`, platform: 'android' } })
+    await trigger(NOW)
+    const token = tokenFromEmail('contact1@example.cm')
+    mailbox.clear()
+    pushbox.clear()
+    return token
+  }
+
+  it('un contact réussit ses questions → email contact_answered et push à l’owner', async () => {
+    const o = await makeOwner()
+    const token = await opened(o)
+    await (await api()).post(`/relay/${token}/verify`).send({ shares: { k1: plainShareBytes(11).toString('base64') } }).expect(200)
+    expect(lastEmailTo(o.email)?.subject).toBe('Relais — un contact a déverrouillé sa part')
+    expect(lastEmailTo(o.email)?.text).not.toContain('contact1')
+    expect(await prisma().email_log.count({ where: { user_id: o.userId, email_type: 'contact_answered' } })).toBe(1)
+    expect(pushbox.sent.map((p) => p.title)).toEqual(['Un contact a déverrouillé sa part'])
+  })
+
+  it('un contact épuise ses cinq tentatives → email contact_blocked et push à l’owner, une seule fois', async () => {
+    const o = await makeOwner()
+    const token = await opened(o)
+    for (let i = 0; i < 5; i++) await (await api()).post(`/relay/${token}/verify`).send({ failed: true })
+    expect(lastEmailTo(o.email)?.subject).toBe('Relais — un contact est bloqué')
+    expect(await prisma().email_log.count({ where: { user_id: o.userId, email_type: 'contact_blocked' } })).toBe(1)
+    expect(pushbox.sent.map((p) => p.title)).toEqual(['Un contact est bloqué'])
+  })
+
+  it('l’owner annule lui-même (POST /transmission/cancel, step-up cancel_transmission) : escrow purgé, liens morts, config de nouveau active, contacts prévenus', async () => {
+    const o = await makeOwner()
+    const token = await opened(o)
+    await (await api()).post(`/relay/${token}/verify`).send({ shares: { k1: plainShareBytes(11).toString('base64') } }).expect(200)
+    const tr = await prisma().transmissions.findFirstOrThrow({ where: { user_id: o.userId } })
+    expect(await redis().exists(escrowKeyId(tr.id))).toBe(1)
+    mailbox.clear()
+
+    const noStepUp = await (await api()).post('/transmission/cancel').set(o.auth).expect(403)
+    expect(noStepUp.body.error.code).toBe('AUTH_STEPUP_REQUIRED')
+
+    const su = await stepUp(o.accessToken, 'cancel_transmission')
+    const r = await (await api()).post('/transmission/cancel').set(o.auth).set('X-Step-Up-Token', su).expect(200)
+    expect(r.body.data.cancelled).toBe(true)
+    expect(new Date(r.body.data.next_checkin_due).getTime()).toBeGreaterThan(Date.now())
+
+    const after = await prisma().transmissions.findUniqueOrThrow({ where: { id: tr.id } })
+    expect(after).toMatchObject({ status: 'cancelled', cancelled_by_admin: null, cancellation_reason: 'owner' })
+    expect(await prisma().escrow_shares.count({ where: { transmission_id: tr.id } })).toBe(0)
+    expect(await redis().exists(escrowKeyId(tr.id))).toBe(0)
+    await (await api()).get(`/relay/${token}`).expect(404)
+    const cfg = await prisma().transmission_configs.findUniqueOrThrow({ where: { user_id: o.userId } })
+    expect(cfg).toMatchObject({ status: 'active', relance_count: 0 })
+    expect(cfg.next_checkin_due!.getTime()).toBeGreaterThan(Date.now())
+    // Les contacts apprennent que les liens ne fonctionnent plus — l'événement seulement
+    for (const email of ['contact1@example.cm', 'contact2@example.cm']) {
+      expect(lastEmailTo(email)?.subject).toBe('Relais — du nouveau sur une transmission')
+      expect(lastEmailTo(email)?.text).toContain('annulée')
+      expect(lastEmailTo(email)?.text).not.toContain(o.userId)
+    }
+    // Plus rien à annuler
+    const again = await (await api()).post('/transmission/cancel').set(o.auth).set('X-Step-Up-Token', await stepUp(o.accessToken, 'cancel_transmission')).expect(409)
+    expect(again.body.error.code).toBe('TRANSMISSION_NOT_TRIGGERED')
   })
 })
 

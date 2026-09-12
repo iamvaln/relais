@@ -8,6 +8,7 @@ import { checkActivation, ContactStore, DeviceVault, MemorySecureStorage, Onboar
 import { deriveCategoryKeys, deriveSigningKeypair } from '@relais/crypto-core'
 import { NodeSqlite } from '../../../packages/app-core/test/sqlite-node.js'
 import { prisma } from '../src/lib/prisma.js'
+import { trigger } from '../src/jobs/deadman.js'
 import { closeAll, getApp, lastEmailTo, lastOtp, mailbox, resetRateLimits, resetState, STRONG_PASSWORD } from './helpers.js'
 
 let baseUrl = ''
@@ -151,6 +152,26 @@ describe('transmission ↔ API', () => {
     await other.store.update(restored[0]!.id, { answers: ANSWERS_1 })
     expect(await other.tx.restore()).toBe(2)
     expect((await other.store.list()).map((r) => r.answers)).toEqual([ANSWERS_1, null])
+  })
+
+  it('transmission déclenchée à tort : l’owner l’annule depuis l’app (step-up cancel_transmission), sa configuration redevient active', async () => {
+    const d = await onboardedDevice()
+    const { tx } = await transmissionOn(d)
+    const qids = (await tx.questions()).slice(0, 3).map((q) => q.id) as [string, string, string]
+    await tx.saveContact({ name: 'Hervé Ngo', email: 'herve@example.cm', phone: '+237699000001', message: '', roles: { k1: true, k2: true, k3: true }, questionIds: qids, answers: ANSWERS_1 })
+    await tx.saveContact({ name: 'Paul', email: 'paul@example.cm', phone: null, message: '', roles: { k1: true, k2: true, k3: true }, questionIds: qids, answers: ANSWERS_2 })
+    await tx.activate()
+    await prisma().transmission_configs.updateMany({ where: { status: 'active' }, data: { status: 'triggered' } })
+    await trigger(new Date())
+    expect((await tx.config()).status).toBe('triggered')
+    mailbox.clear()
+
+    const r = await tx.cancelTriggered()
+    expect(r.cancelled).toBe(true)
+    expect(Date.parse(r.next_checkin_due)).toBeGreaterThan(Date.now())
+    expect((await tx.config()).status).toBe('active')
+    expect(lastEmailTo('herve@example.cm')?.text).toContain('annulée')
+    await expect(tx.cancelTriggered()).rejects.toMatchObject({ code: 'TRANSMISSION_NOT_TRIGGERED' })
   })
 
   it('les erreurs de l’API remontent telles quelles (ApiError avec son code)', async () => {

@@ -7,6 +7,7 @@ import { requireStepUp } from '../../middleware/require-step-up.js'
 import { limits } from '../../plugins/rate-limit.js'
 import { relaisKeyVersion, relaisPublicKeyBase64 } from '../../services/secrets/index.js'
 import * as transmission from './service.js'
+import { cancelByOwner } from '../relay/service.js'
 import {
   activateBody,
   configBody,
@@ -83,6 +84,9 @@ export async function transmissionRoutes(app: FastifyInstance): Promise<void> {
   )
 
   app.delete('/pause', { preHandler: [authenticate] }, async (req) => ok(await transmission.resume(req.user!.id)))
+
+  // L'owner est vivant : il annule lui-même une transmission déclenchée (12/09/2026), sous step-up.
+  app.post('/cancel', { preHandler: [authenticate, requireStepUp('cancel_transmission')] }, async (req) => ok(await cancelByOwner(req.user!.id)))
 
   app.delete('/', { preHandler: [authenticate, requireStepUp('delete_transmission')] }, async (req) =>
     ok(await transmission.deactivate(req.user!.id)),

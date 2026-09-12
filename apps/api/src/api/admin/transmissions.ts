@@ -10,14 +10,13 @@ import { AppError } from '../../lib/errors.js'
 import { prisma } from '../../lib/prisma.js'
 import { redis } from '../../lib/redis.js'
 import { emailService } from '../../services/email/index.js'
-import { escrowKeyId } from '../relay/service.js'
+import { closeTransmission, escrowKeyId, notifyContactsCancelled, notifyOwner } from '../relay/service.js'
 import { openNotification } from '../transmission/service.js'
 import type { Page } from './users.js'
 import type { RequestContext } from './service.js'
 import type { ExtendEscrowBody, TransmissionListQuery } from './schemas.js'
 
 const HOUR_MS = 3600 * 1000
-const WEEK_MS = 7 * 24 * HOUR_MS
 const OPEN = ['triggered', 'in_progress']
 
 // --- Vues ------------------------------------------------------------------------
@@ -229,30 +228,15 @@ export async function notifyContacts(adminId: string, id: string, reason: string
 
 /**
  * Annulation (super_admin, BO-03) : l'owner est vivant. Escrow purgé, liens
- * morts, et sa configuration reprend vie — active, cycle de check-in relancé.
+ * morts, sa configuration reprend vie (logique partagée avec l'annulation par
+ * l'owner, `closeTransmission`) ; les contacts sont prévenus.
  */
 export async function cancelTransmission(adminId: string, id: string, reason: string, ctx: RequestContext, now = new Date()): Promise<TransmissionDetailView> {
   const t = await rowOrThrow(id)
   assertOpen(t)
-  await redis().del(escrowKeyId(id))
-  const cfg = await prisma().transmission_configs.findUniqueOrThrow({ where: { id: t.transmission_config_id }, select: { checkin_frequency_weeks: true } })
-  await prisma().$transaction([
-    prisma().escrow_shares.deleteMany({ where: { transmission_id: id } }),
-    prisma().transmissions.update({
-      where: { id },
-      data: { status: 'cancelled', cancelled_at: now, cancelled_by_admin: adminId, cancellation_reason: reason },
-    }),
-    prisma().transmission_configs.update({
-      where: { id: t.transmission_config_id },
-      data: {
-        status: 'active',
-        last_checkin_at: now,
-        next_checkin_due: new Date(now.getTime() + cfg.checkin_frequency_weeks * WEEK_MS),
-        relance_count: 0,
-        last_relance_at: null,
-      },
-    }),
-  ])
+  await closeTransmission(t, { adminId, reason }, now)
+  const owner = await prisma().users.findUniqueOrThrow({ where: { id: t.user_id }, select: { language: true } })
+  await notifyContactsCancelled(id, t.user_id, owner.language === 'en' ? 'en' : 'fr')
   await audit({ adminId, action: 'TRANSMISSION_CANCEL', targetType: 'transmission', targetId: id, userId: t.user_id, before: { status: t.status }, after: { status: 'cancelled' }, reason, ip: ctx.ip })
   return getTransmission(id, now)
 }
@@ -272,5 +256,8 @@ export async function unblockContact(adminId: string, id: string, contactId: str
     prisma().trusted_contacts.update({ where: { id: tcId }, data: { blocked_until: null, fail_count: 0 } }),
   ])
   await audit({ adminId, action: 'CONTACT_UNBLOCK', targetType: 'transmission', targetId: id, userId: t.user_id, before: { fail_count: c.fail_count, blocked: c.blocked }, after: { fail_count: 0, blocked: false }, reason, ip: ctx.ip })
+  // L'owner est prévenu (12/09/2026) — un déblocage sur son coffre n'est pas anodin.
+  const owner = await prisma().users.findUniqueOrThrow({ where: { id: t.user_id }, select: { id: true, email: true, full_name: true, language: true } })
+  await notifyOwner(owner, 'contact_unblocked')
   return toContact(updated)
 }

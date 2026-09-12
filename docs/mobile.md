@@ -104,6 +104,7 @@ client HTTP dans `packages/api-client`. L'app ne fait que les brancher.
 | Check-in et carnet (lot 5) | Une entrée déjà écrite ce mois est passée à `POST /checkin/complete` (`journal_entry_id`) pour se rattacher au check-in ; écrite après, elle s'y rattache seule (Fix-09a). « Validé par simple ouverture de l'app » n'est pas retenu, comme côté API. |
 | Rôle dans `secret_enc` (lot 4) | `role` = les rôles détenus, `k1,k2,k3` joints par des virgules ; l'app du contact (lot 6) traduit. |
 | Écart de spec | E6-US03 dit qu'après un changement de mot de passe « K1 K2 K3 sont recalculées, P1 rechiffré ». Depuis DEC-02/05 les clés viennent du seed : rien à rechiffrer. À corriger dans les User Stories. |
+| Transmission déclenchée à tort (12/09/2026) | L'owner est prévenu par email et push au déclenchement, à la réponse réussie d'un contact, au blocage et au déblocage (`docs/backend.md` §3). L'écran `/transmission/cancel` (bouton « Je suis là » sur l'écran transmission, cible du push et du lien des emails) appelle `POST /transmission/cancel` sous PIN (`Transmission.cancelTriggered`, step-up `cancel_transmission`) : contacts prévenus, liens morts, check-ins repris. Le push n'ouvre que `/checkin`, `/transmission` et `/transmission/cancel`. |
 
 ## 4. Lancer
 

@@ -135,7 +135,7 @@ export class Transmission {
     return this.relaisPk
   }
 
-  private async stepUp(action: 'edit_contacts' | 'edit_transmission' | 'activate_transmission' | 'delete_transmission'): Promise<string> {
+  private async stepUp(action: 'edit_contacts' | 'edit_transmission' | 'activate_transmission' | 'delete_transmission' | 'cancel_transmission'): Promise<string> {
     return (await this.deps.api.auth.stepUp(action)).step_up_token
   }
 
@@ -225,6 +225,15 @@ export class Transmission {
 
   async deactivate(): Promise<{ deactivated: true }> {
     return this.deps.api.delete('/transmission', undefined, { stepUpToken: await this.stepUp('delete_transmission') })
+  }
+
+  /**
+   * Transmission déclenchée à tort (l'owner est vivant) : il l'annule lui-même
+   * sous PIN (décision du 12/09/2026). Escrow purgé, liens des contacts morts,
+   * configuration de nouveau active ; 409 TRANSMISSION_NOT_TRIGGERED sinon.
+   */
+  async cancelTriggered(): Promise<{ cancelled: true; next_checkin_due: string }> {
+    return this.deps.api.post('/transmission/cancel', undefined, { stepUpToken: await this.stepUp('cancel_transmission') })
   }
 
   // --- Pause (E6-US04) ----------------------------------------------------------------

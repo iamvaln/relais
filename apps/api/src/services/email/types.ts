@@ -28,6 +28,11 @@ export type EmailType =
   | 'contact_progress'
   // Lot 5 mobile (E4-US04) — migration 20260912000000
   | 'pause_ending'
+  // L'owner prévenu après le déclenchement (12/09/2026) — migration 20260914000000
+  | 'transmission_triggered'
+  | 'contact_answered'
+  | 'contact_blocked'
+  | 'contact_unblocked'
 
 export interface RenderedEmail {
   subject: string

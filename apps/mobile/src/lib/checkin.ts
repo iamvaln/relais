@@ -20,9 +20,10 @@ export function badgeKey(badge: string): MessageKey {
 }
 
 /** Une notification n'ouvre que les écrans qu'elle a le droit d'ouvrir. */
-const PUSH_ROUTES = new Set(['/checkin', '/transmission'])
+export type PushRoute = '/checkin' | '/transmission' | '/transmission/cancel'
+const PUSH_ROUTES = new Set<string>(['/checkin', '/transmission', '/transmission/cancel'])
 
-export function routeForNotification(data: unknown): '/checkin' | '/transmission' | '/home' {
+export function routeForNotification(data: unknown): PushRoute | '/home' {
   const route = (data as { route?: unknown } | undefined)?.route
-  return typeof route === 'string' && PUSH_ROUTES.has(route) ? (route as '/checkin' | '/transmission') : '/home'
+  return typeof route === 'string' && PUSH_ROUTES.has(route) ? (route as PushRoute) : '/home'
 }

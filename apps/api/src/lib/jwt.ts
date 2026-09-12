@@ -26,6 +26,8 @@ export const STEP_UP_ACTIONS = [
   'disable_2fa',
   'set_key',
   'admin_action',
+  /** L'owner annule lui-même une transmission déclenchée (12/09/2026). */
+  'cancel_transmission',
 ] as const
 export type StepUpAction = (typeof STEP_UP_ACTIONS)[number]
 

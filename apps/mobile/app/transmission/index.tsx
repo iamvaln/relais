@@ -93,6 +93,7 @@ export default function TransmissionHome() {
 
         {editable && m >= 2 && <Button title={t(lang, 'transmission.activate')} onPress={() => router.push('/transmission/activate')} />}
         {(status === 'active' || status === 'paused') && <Button title={t(lang, 'transmission.modify')} secondary onPress={() => setModifying(true)} />}
+        {status === 'triggered' && <Button title={t(lang, 'transmission.cancelTriggered')} onPress={() => router.push('/transmission/cancel')} />}
         {status === 'active' && <Button title={t(lang, 'transmission.pause')} secondary onPress={() => router.push('/transmission/pause')} />}
         {status === 'paused' && (
           <Button

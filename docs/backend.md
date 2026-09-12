@@ -83,6 +83,7 @@ Le module **auth** de §3.1 v1.1, le module **vault** de §3.3 v1.1, le module
 | `POST /transmission/activate` | Step-up `activate_transmission` — DEC-29, DEC-30, Proposal-8 (`plain_hash` + `plain_sig` par part), email `contact_designated` — voir §3 |
 | `POST /transmission/pause` · `DELETE /transmission/pause` | E4-US04, 7 / 30 / 90 jours, plafond `dms.pause_max_months` |
 | `DELETE /transmission` | Step-up `delete_transmission`, parts purgées |
+| `POST /transmission/cancel` | Step-up `cancel_transmission` : l'owner vivant annule une transmission déclenchée — escrow purgé, liens morts, config de nouveau active, contacts prévenus (12/09/2026), voir §3 |
 | `GET /transmission/contacts/:id/verify-challenge` · `POST /transmission/contacts/:id/verify` | Vérification annuelle — challenge serveur (5 min, usage unique) puis attestation signée `SHA256(verify_token ‖ challenge)`, voir §3 |
 | `GET /checkin/status` | Échéance, retard en jours, relances, « validé ce mois » |
 | `GET /checkin/game` · `POST /checkin/game/answer` | Défi côté serveur, 10 réponses/h/user (§7.1) — voir §3 |
@@ -602,6 +603,30 @@ nouveaux emails (E5-US03). Proposal-9 : au bout de `dms.relay_max_restarts`
 expirations (3, lu dans `app_config` avec repli), il ne repart plus — la
 config reste `triggered` sans transmission ouverte et le dashboard remonte
 `transmission_stalled` (BO-03) ; à l'admin de joindre les contacts.
+
+### L'owner est prévenu après le déclenchement, et peut annuler lui-même
+
+Jusqu'au 12/09/2026, le déclenchement n'envoyait rien à l'owner : les
+contacts recevaient leurs liens, les autres contacts apprenaient un blocage
+ou une confirmation, et seul un admin pouvait annuler. Or un déclenchement
+n'est pas une preuve de décès — c'est trois relances sans réponse — et le
+coffre peut contenir les propres accès de l'owner. Décision du fondateur :
+
+- l'owner reçoit un email (tracé dans `email_log`) et un push à chaque
+  étape : `transmission_triggered` à l'ouverture, `contact_answered` quand
+  un contact réussit ses questions, `contact_blocked` au cinquième échec,
+  `contact_unblocked` quand un admin redonne ses tentatives (BO-02, email
+  seul). Jamais d'identité de contact : l'événement seulement, et le lien
+  mène à l'annulation (`notifyOwner`, migration `20260914000000`) ;
+- `POST /transmission/cancel` (step-up `cancel_transmission`, neuvième
+  action DEC-25) : l'owner vivant reprend la main sans attendre le support.
+  Même logique que l'annulation admin (`closeTransmission`) : clé Redis et
+  parts scellées purgées, transmission `cancelled` sans `cancelled_by_admin`
+  et motif `owner`, liens des contacts morts (404), configuration de nouveau
+  `active` avec un cycle de check-in relancé ; 409
+  `TRANSMISSION_NOT_TRIGGERED` sans transmission ouverte. Les contacts
+  reçoivent un `contact_progress` d'événement `cancelled` — l'annulation
+  admin les prévient désormais aussi.
 
 ### Relay : l'email de déclenchement ne contient pas le message personnel
 

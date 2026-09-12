@@ -466,6 +466,10 @@ describe('POST /admin/transmissions/:id/contacts/:cid/unblock', () => {
     expect(tc.blocked_until).toBeNull()
     const log = await prisma().audit_logs.findFirstOrThrow({ where: { action: 'CONTACT_UNBLOCK' } })
     expect(log).toMatchObject({ admin_id: support.id, target_type: 'transmission', target_id: transmissionId })
+    // L'owner est prévenu (12/09/2026) : email contact_unblocked, sans identité de contact
+    expect(lastEmailTo(o.email)?.subject).toBe('Relais — un contact a été débloqué')
+    expect(lastEmailTo(o.email)?.text).not.toContain('contact2')
+    expect(await prisma().email_log.count({ where: { user_id: o.userId, email_type: 'contact_unblocked' } })).toBe(1)
   })
 })
 

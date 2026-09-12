@@ -43,7 +43,26 @@ const fr: Record<EmailType, Template> = {
   }),
   contact_progress: (p) => ({
     subject: 'Relais — du nouveau sur une transmission',
-    text: `Bonjour,\n\n${p.event === 'blocked' ? 'Un autre contact de confiance a épuisé ses tentatives et est bloqué 24 heures.' : 'Un autre contact de confiance a terminé sa part.'} Vous n'avez rien à faire de plus si vous avez déjà répondu.\n\nRelais`,
+    text:
+      p.event === 'cancelled'
+        ? `Bonjour,\n\nLa transmission qui vous avait été confiée a été annulée : la personne qui vous fait confiance a donné signe de vie. Le lien que vous avez reçu ne fonctionne plus, et ce que vous auriez pu ouvrir a été effacé. Vous n'avez rien à faire.\n\nRelais`
+        : `Bonjour,\n\n${p.event === 'blocked' ? 'Un autre contact de confiance a épuisé ses tentatives et est bloqué 24 heures.' : 'Un autre contact de confiance a terminé sa part.'} Vous n'avez rien à faire de plus si vous avez déjà répondu.\n\nRelais`,
+  }),
+  transmission_triggered: (p) => ({
+    subject: 'Relais — ta transmission est déclenchée',
+    text: `Bonjour ${p.name ?? ''},\n\nSans nouvelles de toi malgré nos relances, ta transmission vient d'être déclenchée : tes contacts de confiance ont reçu leurs liens et pourront ouvrir ton coffre s'ils répondent à leurs questions.\n\nSi tu es là, annule-la maintenant depuis l'app (code PIN demandé) : ${p.link}\nTes contacts seront prévenus, leurs liens ne fonctionneront plus et tes check-ins reprendront.\n\nSi c'est une erreur ou si tu n'arrives pas à annuler : support@relais.app\n\nRelais`,
+  }),
+  contact_answered: (p) => ({
+    subject: 'Relais — un contact a déverrouillé sa part',
+    text: `Bonjour ${p.name ?? ''},\n\nUn de tes contacts de confiance vient de répondre correctement à ses questions : une part de ton coffre est déverrouillée.\n\nSi ce n'est pas prévu, annule la transmission maintenant depuis l'app : ${p.link}\n\nRelais`,
+  }),
+  contact_blocked: (p) => ({
+    subject: 'Relais — un contact est bloqué',
+    text: `Bonjour ${p.name ?? ''},\n\nUn de tes contacts de confiance a donné cinq mauvaises réponses : son accès est bloqué 24 heures. Si quelqu'un tente d'ouvrir ton coffre à ta place, c'est le moment d'annuler la transmission depuis l'app : ${p.link}\n\nRelais`,
+  }),
+  contact_unblocked: (p) => ({
+    subject: 'Relais — un contact a été débloqué',
+    text: `Bonjour ${p.name ?? ''},\n\nÀ sa demande, notre équipe a redonné ses tentatives à un de tes contacts de confiance sur ta transmission en cours. Si ce n'est pas prévu, annule la transmission depuis l'app : ${p.link}\n\nRelais`,
   }),
   transmission_contact: (p) => ({
     subject: `${p.owner ?? 'Un proche'} vous a confié quelque chose`,
@@ -122,7 +141,26 @@ const en: Record<EmailType, Template> = {
   }),
   contact_progress: (p) => ({
     subject: 'Relais — an update on a transmission',
-    text: `Hello,\n\n${p.event === 'blocked' ? 'Another trusted contact ran out of attempts and is blocked for 24 hours.' : 'Another trusted contact has completed their part.'} Nothing more to do if you have already answered.\n\nRelais`,
+    text:
+      p.event === 'cancelled'
+        ? `Hello,\n\nThe transmission entrusted to you has been cancelled: the person who trusts you gave a sign of life. The link you received no longer works, and what you could have opened has been erased. There is nothing to do.\n\nRelais`
+        : `Hello,\n\n${p.event === 'blocked' ? 'Another trusted contact ran out of attempts and is blocked for 24 hours.' : 'Another trusted contact has completed their part.'} Nothing more to do if you have already answered.\n\nRelais`,
+  }),
+  transmission_triggered: (p) => ({
+    subject: 'Relais — your transmission is triggered',
+    text: `Hello ${p.name ?? ''},\n\nWith no news from you despite our reminders, your transmission has just been triggered: your trusted contacts received their links and can open your vault once they answer their questions.\n\nIf you are here, cancel it now from the app (PIN required): ${p.link}\nYour contacts will be told, their links will stop working and your check-ins will resume.\n\nIf this is a mistake or you cannot cancel: support@relais.app\n\nRelais`,
+  }),
+  contact_answered: (p) => ({
+    subject: 'Relais — a contact unlocked their share',
+    text: `Hello ${p.name ?? ''},\n\nOne of your trusted contacts just answered their questions correctly: a share of your vault is unlocked.\n\nIf this is unexpected, cancel the transmission now from the app: ${p.link}\n\nRelais`,
+  }),
+  contact_blocked: (p) => ({
+    subject: 'Relais — a contact is blocked',
+    text: `Hello ${p.name ?? ''},\n\nOne of your trusted contacts gave five wrong answers: their access is blocked for 24 hours. If someone is trying to open your vault in your place, now is the time to cancel the transmission from the app: ${p.link}\n\nRelais`,
+  }),
+  contact_unblocked: (p) => ({
+    subject: 'Relais — a contact was unblocked',
+    text: `Hello ${p.name ?? ''},\n\nAt their request, our team gave one of your trusted contacts their attempts back on your ongoing transmission. If this is unexpected, cancel the transmission from the app: ${p.link}\n\nRelais`,
   }),
   transmission_contact: (p) => ({
     subject: `${p.owner ?? 'Someone close to you'} entrusted you with something`,
