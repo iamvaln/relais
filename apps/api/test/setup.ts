@@ -13,3 +13,4 @@ process.env.STORAGE_BACKEND = 'memory'
 // 32 bytes fixes — la clé publique correspondante est dérivée par le serveur
 process.env.RELAIS_X25519_SK_DEV ??= Buffer.alloc(32, 7).toString('hex')
 process.env.FRONTEND_URL ??= 'http://localhost:3000'
+process.env.ADMIN_URL ??= 'http://localhost:5173'

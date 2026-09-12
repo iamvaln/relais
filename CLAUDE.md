@@ -43,6 +43,14 @@ justifier explicitement.
   sans extension (Metro), `Buffer` polyfillé, alias libsodium dans
   `metro.config.js` ; `npx expo export` vérifie le bundle. Notes, lots et
   décisions : `docs/mobile.md`.
+- `packages/admin-core/` — la logique du back office sans React : client
+  de l'API `/admin` (jeton 8 h, jamais de refresh, 401 = session perdue),
+  session sur `SessionStore`, grille des rôles, filtres. Tests sous Node
+  dans `test/`, parcours contre l'API réelle dans
+  `apps/api/test/admin-core.test.ts`.
+- `apps/web-admin/` — le back office (React 19, Vite, TanStack Query,
+  react-router) : écrans minces sur `admin-core`, CSS maison, FR/EN,
+  `VITE_API_URL` au build. Notes, lots et décisions : `docs/backoffice.md`.
 - `apps/web-relay/` — la page web du parcours du contact (Vite, TypeScript
   sans framework) : même logique que l'app (`app-core` `relay/`), tout le
   déchiffrement dans le navigateur, `VITE_API_URL` au build, rien de lisible
@@ -96,6 +104,8 @@ localhost -p 55432 || scripts/dev-services.sh start` avant les tests.
 ## Ce qui n'est pas fait
 
 Logs API (export externe), fournisseur de paiement (encaissement manuel en
-V1), enregistrement Arbitrum, interface du back office. L'app mobile (six
+V1), enregistrement Arbitrum (proposition de contrat à retravailler,
+`docs/smart-contract.md`), back office lots 2 et 3 (transmissions,
+questions, configuration ; facturation, tickets, monitoring). L'app mobile (six
 lots) et la page web du contact sont faites ; tests Maestro et vérification
 sur device restent à mener. La liste à jour est dans le README et `docs/backend.md` §2.

@@ -39,6 +39,7 @@
     "zod": "^3.25.0"
   },
   "devDependencies": {
+    "@relais/admin-core": "0.1.0",
     "@relais/api-client": "0.1.0",
     "@relais/app-core": "0.1.0",
     "@relais/crypto-core": "0.1.0",

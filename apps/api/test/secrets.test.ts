@@ -9,7 +9,7 @@ import { env, loadEnv, setEnvForTests } from '../src/config/env.js'
 import { fetchHcvSecret, relaisPublicKeyBase64, resetSecretsForTests } from '../src/services/secrets/index.js'
 import { healthReport } from '../src/api/health/routes.js'
 
-const BASE = { ...process.env, RELAIS_X25519_SK_DEV: undefined, HCV_ADDR: undefined, HCV_TOKEN: undefined }
+const BASE = { ...process.env, RELAIS_X25519_SK_DEV: undefined, HCV_ADDR: undefined, HCV_TOKEN: undefined, ADMIN_URL: undefined }
 const KEY_HEX = Buffer.alloc(32, 9).toString('hex')
 const TOKEN = 'hvs.test-token'
 

@@ -30,8 +30,10 @@ export const securityPlugin = fp(async (app: FastifyInstance) => {
     noSniff: true,
   })
 
+  // Deux origines navigateur : la page du contact et le back office (lot 1 du back office).
+  const origins = [env().FRONTEND_URL, env().ADMIN_URL].filter((o): o is string => Boolean(o))
   await app.register(cors, {
-    origin: env().FRONTEND_URL,
+    origin: origins,
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE'],
     allowedHeaders: ['Content-Type', 'Authorization', 'X-Step-Up-Token'],
