@@ -476,6 +476,33 @@ données chiffrées sont supprimées » : la purge finale supprime aussi
 `journal_entries` et `annual_wrappeds` (les check-ins du mois sont détachés
 d'abord).
 
+### Audit de sécurité (12/09/2026) : les trois constats HIGH corrigés
+
+L'audit interne de `apps/api` (rapport dans l'historique de la tâche 50)
+relevait quinze constats ; les trois graves sont corrigés ici, test-first,
+les autres suivent dans des PR dédiées.
+
+- **Purge par un seul contact** : `POST /relay/:token/confirm` n'exigeait que
+  le statut `answered` ; le premier contact à répondre pouvait donc « terminer »
+  et purger coffre et parts avant tout déverrouillage, même si l'owner était
+  vivant. Désormais la confirmation est refusée (`RELAY_NOT_UNLOCKED`) tant
+  qu'aucune catégorie d'un rôle détenu par ce contact n'est déverrouillée —
+  la même règle que `GET /data`.
+- **Annulation admin** : `trigger()` cherchait une config `triggered` « sans
+  ligne `transmissions` » ; après `POST /admin/transmissions/:id/cancel` la
+  ligne `cancelled` restait, et la config ne rouvrait plus jamais de
+  transmission au silence suivant, sans erreur. Seules `triggered` et
+  `in_progress` comptent maintenant comme ouvertes.
+- **Limites de débit contournables et force brute TOTP** : `trustProxy: true`
+  faisait de `X-Forwarded-For` l'IP vue par les limites, donc toutes
+  contournables ; et le limiteur s'exécutant avant `authenticate`, les
+  limites « par utilisateur » étaient en réalité par IP. `TRUST_PROXY` est
+  faux par défaut (nombre de sauts ou liste d'IP en production), la clé par
+  utilisateur vérifie elle-même le bearer (HMAC, sans base), et le TOTP compte
+  ses échecs : cinq codes faux consomment le `temp_token` au login, et
+  verrouillent 15 minutes (`AUTH_ACCOUNT_LOCKED`) l'activation ou la
+  désactivation.
+
 ### Relay : fin de transmission et purge
 
 E5-US05 lu avec E5-US04 : un K1 et un K3 ont chacun leurs données. La
@@ -677,7 +704,7 @@ consigné dans `docs/open-questions.md` §D.1.
 
 ## 5. Vérifications
 
-248 tests d’intégration, sur PostgreSQL 16 et Redis réels, base reconstruite
+255 tests d’intégration, sur PostgreSQL 16 et Redis réels, base reconstruite
 depuis les migrations et le seed à chaque run. Chaque test repart d'une base
 et d'un stockage vides. Ils couvrent notamment :
 
@@ -739,7 +766,7 @@ et d'un stockage vides. Ils couvrent notamment :
   silence écoulé mais relances incomplètes → relance d'abord ; BullMQ :
   deux jobs planifiés (`0 9 * * *`, `30 * * * *`), démarrage idempotent,
   arrêt propre
-- relay (25 tests, test-first) : ouverture au déclenchement (ligne
+- relay (27 tests, test-first) : ouverture au déclenchement (ligne
   `transmissions`, escrow = `dms.escrow_ttl_hours`, un token HMAC par
   contact, emails, idempotent ; le job quotidien enchaîne balayage et
   ouverture) ; lien inconnu / expiré / clos → 404, bloqué → 423, aucune
@@ -827,6 +854,12 @@ et d'un stockage vides. Ils couvrent notamment :
 - check-in et carnet de l'app (`app-core-checkin`, 5 tests contre l'API
   réelle) : jeu et validation, carnet chiffré et signé, Wrapped calculé côté
   app — voir `docs/mobile.md` §5
+- audit HIGH (7 tests) : confirmation refusée sans catégorie déverrouillée et
+  rien de purgé ; annulation admin puis nouveau silence → nouvelle
+  transmission, anciens liens clos, idempotent ; `X-Forwarded-For` sans effet
+  sur le limiteur ; limite par utilisateur distincte par compte sur une même
+  IP ; cinq TOTP faux consomment le `temp_token` puis verrouillent la
+  désactivation 15 min ; `parseTrustProxy`
 - parcours du contact (`app-core-relay`, 2 tests contre l'API réelle) :
   lien, réponses vérifiées sur le device, attente, déverrouillage 2-of-2,
   checklist, message, carnet, progression, « J'ai terminé », purge ;

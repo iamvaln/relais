@@ -463,6 +463,12 @@ export async function confirm(token: string, now = new Date()): Promise<ConfirmR
   const c = await loadContact(token, now)
   if (c.status !== 'answered' && c.status !== 'confirmed') throw new AppError('RELAY_NOT_UNLOCKED', { message: 'Répondez d’abord aux questions.' })
   const tr = c.transmissions
+  // Audit HIGH-1 : « J'ai terminé » n'a de sens qu'une fois l'accès ouvert. Sans
+  // cette garde, le premier contact à répondre pouvait purger le coffre seul.
+  const tc = c.trusted_contacts
+  const held: Record<KeySlot, boolean> = { k1: tc.has_k1_role, k2: tc.has_k2_role, k3: tc.has_k3_role }
+  const unlocked: Record<KeySlot, boolean> = { k1: tr.k1_completed, k2: tr.k2_completed, k3: tr.k3_completed }
+  if (!KEY_SLOTS.some((s) => held[s] && unlocked[s])) throw new AppError('RELAY_NOT_UNLOCKED', { message: 'L’accès n’est pas encore ouvert.' })
   if (c.status === 'answered') {
     await prisma().transmission_contacts.update({ where: { id: c.id }, data: { status: 'confirmed', confirmed_at: now } })
   }

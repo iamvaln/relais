@@ -173,10 +173,15 @@ export interface TriggerResult {
   contacts_notified: number
 }
 
-/** Une config 'triggered' sans ligne `transmissions` est une transmission à ouvrir. Idempotent. */
+/**
+ * Une config 'triggered' sans transmission ouverte (triggered, in_progress) est
+ * une transmission à ouvrir. Idempotent. Audit HIGH-3 : une transmission
+ * cancelled, expired ou completed ne compte pas — sinon une annulation admin
+ * condamnait la config à ne plus jamais prévenir personne.
+ */
 export async function trigger(now = new Date()): Promise<TriggerResult> {
   const pending = await prisma().transmission_configs.findMany({
-    where: { status: 'triggered', transmissions: { none: {} } },
+    where: { status: 'triggered', transmissions: { none: { status: { in: ['triggered', 'in_progress'] } } } },
     select: { id: true },
   })
   const result: TriggerResult = { transmissions: 0, contacts_notified: 0 }

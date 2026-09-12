@@ -35,6 +35,11 @@ export const keys = {
   stepUpUsed: (jti: string) => `auth:stepup:used:${jti}`,
   /** Token temporaire entre login et validation TOTP. */
   twoFactorPending: (token: string) => `auth:2fa:pending:${token}`,
+  /** Échecs TOTP par temp_token au login (audit HIGH-4) : 5 → le temp_token est consommé. */
+  twoFactorLoginFailures: (token: string) => `auth:2fa:fail:${token}`,
+  /** Échecs TOTP par utilisateur (activation, désactivation) et verrou 15 min. */
+  twoFactorFailures: (userId: string) => `auth:2fa:userfail:${userId}`,
+  twoFactorLock: (userId: string) => `auth:2fa:lock:${userId}`,
   /** Secret TOTP en cours d'activation, pas encore confirmé. */
   twoFactorSetup: (userId: string) => `auth:2fa:setup:${userId}`,
   /** Regénérations OTP par heure et par email (security.otp_max_regen_hr). */
