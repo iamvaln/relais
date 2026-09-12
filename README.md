@@ -14,7 +14,7 @@ d'implémentation.
 |---|---|
 | Specs produit, techniques, backend, frontend, back office | ✅ v1 (`docs/specs/`) |
 | Schéma PostgreSQL v1.4 | ✅ Implémenté et testé (`prisma/`), Proposals 8 et 9 incluses |
-| API backend — auth, vault, transmission, check-in, relay, journal, admin, facturation, dashboard, tickets, jobs | ✅ 94 endpoints, 283 tests d'intégration (`apps/api/`) |
+| API backend — auth, vault, transmission, check-in, relay, journal, admin, facturation, dashboard, tickets, jobs | ✅ 94 endpoints, 286 tests d'intégration (`apps/api/`) |
 | Cœur crypto de l'app (seed, clés, coffre, Shamir, contacts, relay, carnet) | ✅ `packages/crypto-core`, 32 tests + 1 bout en bout contre l'API |
 | Client API partagé (mobile, back office web) | ✅ `packages/api-client`, testé contre l'API |
 | Logique de l'app (PIN, device, onboarding, session, coffre, transmission, check-in, carnet, parcours du contact) | ✅ `packages/app-core`, testé sous Node et contre l'API |
