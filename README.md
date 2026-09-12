@@ -39,6 +39,8 @@ d'implémentation.
 - [`docs/open-questions.md`](docs/open-questions.md) — points tranchés par les
   specs, écarts de contrat entre la révision de septembre 2026 et l'API, et
   ce qui reste à trancher
+- [`docs/specs/errata-2026-09.md`](docs/specs/errata-2026-09.md) — ce qu'il reste à
+  corriger dans les `.docx`, document par document, pour qu'ils décrivent l'API livrée
 - [`docs/specs/`](docs/specs/) — les 10 documents de spec convertis en markdown
   (sources `.docx` dans `specs/`)
 
