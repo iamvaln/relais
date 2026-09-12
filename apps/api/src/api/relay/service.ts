@@ -9,6 +9,7 @@ import { env } from '../../config/env.js'
 import { configInt } from '../../lib/app-config.js'
 import { decodeBase64, hmacToken, randomToken, sha256Hex } from '../../lib/crypto.js'
 import { AppError } from '../../lib/errors.js'
+import { logger } from '../../lib/logger.js'
 import { prisma } from '../../lib/prisma.js'
 import { redis } from '../../lib/redis.js'
 import sodium from '../../lib/sodium.js'
@@ -67,7 +68,15 @@ export async function startTransmission(configId: string, now = new Date()): Pro
   const locale = cfg.users.language === 'en' ? 'en' : 'fr'
   for (const c of cfg.trusted_contacts) {
     const token = tokens.find((t) => t.contactId === c.id)!.token
-    const { email } = await openNotification(c.notification_enc)
+    // Audit MEDIUM-10 : une sealed box qui ne s'ouvre plus (rotation de clé,
+    // ligne corrompue) ne doit pas priver les autres contacts de leur lien.
+    let email: string
+    try {
+      email = (await openNotification(c.notification_enc)).email
+    } catch (err) {
+      logger().warn({ contact: sha256Hex(c.id).slice(0, 16), err: err instanceof Error ? err.message : String(err) }, 'relay: notification_enc illisible, contact ignoré')
+      continue
+    }
     const { sent } = await emailService().send({
       userId: cfg.user_id,
       to: email,

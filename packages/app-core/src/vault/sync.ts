@@ -16,6 +16,8 @@ export interface SyncPayload {
   category: VaultCategory
   payload: string
   signature: string
+  /** Horodatage client (ms), signé avec la catégorie et le blob (audit MEDIUM-7). */
+  ts: number
 }
 
 export type SyncStatus = Record<VaultCategory, { synced_at: string; size: number } | null>

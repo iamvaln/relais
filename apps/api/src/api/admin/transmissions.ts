@@ -207,7 +207,13 @@ export async function notifyContacts(adminId: string, id: string, reason: string
       where: { id: c.id },
       data: { relay_token_hash: hmacToken(token), relay_token_expires_at: t.escrow_expires_at, relay_token_used: false, notified_at: now },
     })
-    const { email } = await openNotification(c.trusted_contacts.notification_enc)
+    // Audit MEDIUM-10 : une sealed box illisible n'arrête pas la relance des autres.
+    let email: string
+    try {
+      email = (await openNotification(c.trusted_contacts.notification_enc)).email
+    } catch {
+      continue
+    }
     const { sent } = await emailService().send({
       userId: t.user_id,
       to: email,

@@ -55,7 +55,7 @@ export function emailService(): EmailService {
     const transport =
       e.EMAIL_TRANSPORT === 'resend' && e.RESEND_API_KEY
         ? new ResendTransport(e.RESEND_API_KEY)
-        : new ConsoleTransport(e.NODE_ENV === 'test')
+        : new ConsoleTransport(e.NODE_ENV !== 'development') // n'imprime qu'en dev (audit MEDIUM-8)
     instance = new EmailService(transport)
   }
   return instance

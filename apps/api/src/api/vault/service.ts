@@ -11,6 +11,7 @@ import { createHash } from 'node:crypto'
 import { decodeBase64, ed25519Verify } from '../../lib/crypto.js'
 import { AppError } from '../../lib/errors.js'
 import { prisma } from '../../lib/prisma.js'
+import { keys, redis } from '../../lib/redis.js'
 import { objectStore } from '../../services/storage/index.js'
 import { VAULT_CATEGORIES, type VaultCategory } from './schemas.js'
 
@@ -35,9 +36,17 @@ async function maxSizeBytes(): Promise<number> {
  * avec un access token volé. La signature porte sur SHA256 du blob envoyé —
  * c'est la seule chose que le serveur puisse recalculer.
  */
+const SYNC_WINDOW_MS = 5 * 60 * 1000
+
+/** Préfixe du message signé (audit MEDIUM-7) — identique à crypto-core `syncMessage`. */
+export function syncMessagePrefix(category: VaultCategory, ts: number): Buffer {
+  return Buffer.from(`relais:vault:v1|${category}|${ts}|`)
+}
+
 export async function sync(
   userId: string,
-  input: { category: VaultCategory; payload: string; signature: string },
+  input: { category: VaultCategory; payload: string; signature: string; ts: number },
+  now = Date.now(),
 ): Promise<{ synced_at: string; storj_path: string; size: number }> {
   const user = await prisma().users.findUnique({ where: { id: userId }, select: { ed25519_pk: true } })
   if (!user) throw new AppError('AUTH_TOKEN_INVALID')
@@ -56,10 +65,18 @@ export async function sync(
     })
   }
 
-  const hash = createHash('sha256').update(payload).digest()
+  // Audit MEDIUM-7 : la signature lie la catégorie et l'horodatage au blob.
+  // Un corps capturé ne peut ni changer de catégorie ni revenir en arrière.
+  if (Math.abs(now - input.ts) > SYNC_WINDOW_MS) {
+    throw new AppError('VAULT_SYNC_STALE', { message: 'Horodatage hors fenêtre — vérifiez l’heure du device.' })
+  }
+  const hash = createHash('sha256').update(syncMessagePrefix(input.category, input.ts)).update(payload).digest()
   if (!ed25519Verify(Buffer.from(user.ed25519_pk), hash, signature)) {
     throw new AppError('AUTH_TOKEN_INVALID', { message: 'Signature du coffre invalide.' })
   }
+  const tsKey = keys.vaultSyncTs(userId, input.category)
+  const last = Number((await redis().get(tsKey)) ?? 0)
+  if (input.ts <= last) throw new AppError('VAULT_SYNC_STALE', { message: 'Un sync plus récent existe déjà pour cette catégorie.' })
 
   const key = vaultKey(userId, input.category)
   try {
@@ -67,6 +84,7 @@ export async function sync(
   } catch (err) {
     throw new AppError('VAULT_SYNC_FAILED', { cause: err })
   }
+  await redis().set(tsKey, String(input.ts))
 
   // Premier sync : mémoriser le préfixe (§3.3 v1.1, étape 3). La ligne
   // transmission_configs est créée inactive si elle n'existe pas encore.

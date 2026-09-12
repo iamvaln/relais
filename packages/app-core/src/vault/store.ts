@@ -143,7 +143,7 @@ export class LocalVault {
       where.push('urgency = ?')
       params.push(filter.urgency)
     }
-    const rows = await this.db.all<Row>(`SELECT * FROM vault_items${where.length ? ` WHERE ${where.join(' AND ')}` : ''} ORDER BY created_at ASC, id ASC`, params)
+    const rows = await this.db.all<Row>(`SELECT * FROM vault_items${where.length ? ` WHERE ${where.join(' AND ')}` : ''} ORDER BY created_at ASC, rowid ASC`, params)
     const items = await Promise.all(rows.map((r) => this.decrypt(r)))
     if (!filter.search?.trim()) return items
     const needles = normalize(filter.search).split(/\s+/).filter(Boolean)
@@ -162,7 +162,7 @@ export class LocalVault {
 
   /** Les lignes d'une catégorie telles quelles (payload opaque, en base64) — ce qui part en backup. */
   async exportCategory(category: VaultCategory): Promise<EncryptedRow[]> {
-    const rows = await this.db.all<Row>('SELECT * FROM vault_items WHERE category = ? ORDER BY created_at ASC, id ASC', [category])
+    const rows = await this.db.all<Row>('SELECT * FROM vault_items WHERE category = ? ORDER BY created_at ASC, rowid ASC', [category])
     return rows.map((r) => ({ id: r.id, category: r.category, urgency: r.urgency, payload: b64(r.payload), created_at: r.created_at, updated_at: r.updated_at }))
   }
 

@@ -329,7 +329,8 @@ export async function deleteUser(adminId: string, id: string, reason: string, ct
     prisma().annual_wrappeds.deleteMany({ where: { user_id: id } }),
     prisma().sessions.deleteMany({ where: { user_id: id } }),
     prisma().restore_challenges.deleteMany({ where: { user_id: id } }),
-    prisma().email_otp.deleteMany({ where: { user_id: id } }),
+    // Audit MEDIUM-9 : l'OTP d'inscription porte l'email en clair avec user_id NULL — par adresse aussi.
+    prisma().email_otp.deleteMany({ where: { OR: [{ user_id: id }, { email: u.email }] } }),
     prisma().push_tokens.deleteMany({ where: { user_id: id } }),
     prisma().two_factor_recovery_codes.deleteMany({ where: { user_id: id } }),
     prisma().support_tickets.updateMany({ where: { user_id: id }, data: { user_email: 'deleted' } }),

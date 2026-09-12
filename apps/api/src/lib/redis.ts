@@ -46,6 +46,8 @@ export const keys = {
   otpRegen: (email: string) => `otp:regen:${email}`,
   /** Session du back office (8 h) — sa présence vaut validité du token admin. */
   adminSession: (sid: string) => `admin:session:${sid}`,
+  /** Dernier horodatage de sync accepté par catégorie (audit MEDIUM-7) : ni rejeu ni retour en arrière. */
+  vaultSyncTs: (userId: string, category: string) => `vault:sync:ts:${userId}:${category}`,
   /** Défi de check-in en cours pour un utilisateur (24 h). */
   checkinGame: (userId: string) => `checkin:game:${userId}`,
   /** Jeu réussi, à échanger contre un check-in (usage unique, 15 min). */

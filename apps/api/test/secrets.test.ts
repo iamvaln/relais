@@ -17,7 +17,9 @@ describe('configuration de la clé privée', () => {
   it('production : HCV_ADDR et HCV_TOKEN requis, RELAIS_X25519_SK_DEV interdit', () => {
     expect(() => loadEnv({ ...BASE, NODE_ENV: 'production' })).toThrow(/HCV_ADDR/)
     expect(() => loadEnv({ ...BASE, NODE_ENV: 'production', HCV_ADDR: 'https://vault.example.com', HCV_TOKEN: TOKEN, RELAIS_X25519_SK_DEV: KEY_HEX })).toThrow(/RELAIS_X25519_SK_DEV/)
-    const ok = loadEnv({ ...BASE, NODE_ENV: 'production', HCV_ADDR: 'https://vault.example.com', HCV_TOKEN: TOKEN })
+    // Audit MEDIUM-8 : la production exige aussi resend, s3 et des URL https
+    const PROD = { EMAIL_TRANSPORT: 'resend', RESEND_API_KEY: 're_x', STORAGE_BACKEND: 's3', STORJ_ACCESS_KEY: 'k', STORJ_SECRET_KEY: 's', FRONTEND_URL: 'https://app.getrelais.app', APP_URL: 'https://api.getrelais.app' }
+    const ok = loadEnv({ ...BASE, ...PROD, NODE_ENV: 'production', HCV_ADDR: 'https://vault.example.com', HCV_TOKEN: TOKEN })
     expect(ok.HCV_SECRET_PATH).toBe('secret/data/relais/x25519_sk')
   })
 

@@ -122,6 +122,20 @@ describe('audit HIGH-3 : après une annulation par l’admin, un nouveau silence
   })
 })
 
+describe('audit MEDIUM-10 : une sealed box illisible n’empêche pas de prévenir les autres contacts', () => {
+  it('le contact dont la notification ne s’ouvre plus est ignoré, l’autre reçoit son lien, le job ne lève pas', async () => {
+    const o = await makeOwner()
+    const contacts = await activateTransmission(o)
+    await prisma().trusted_contacts.update({ where: { id: contacts[0]!.id }, data: { notification_enc: opaque(777, 120) } })
+    await markTriggered(o)
+    mailbox.clear()
+    expect(await trigger(new Date())).toEqual({ transmissions: 1, contacts_notified: 1 })
+    expect(lastEmailTo('contact1@example.cm')).toBeUndefined()
+    expect(lastEmailTo('contact2@example.cm')).toBeDefined()
+    expect(await prisma().transmission_contacts.count()).toBe(2)
+  })
+})
+
 describe('GET /relay/:token', () => {
   it('lien inconnu → 404 RELAY_TOKEN_INVALID', async () => {
     const r = await (await api()).get(`/relay/${'a'.repeat(43)}`).expect(404)

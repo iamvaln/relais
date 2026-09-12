@@ -158,7 +158,12 @@ async function createOtp(email: string, purpose: OtpPurpose, userId: string | nu
  * Vérifie et consomme un OTP. Compte les échecs sur la ligne ; à 5 l'OTP est
  * invalidé (email_otp.attempts <= 5 est un CHECK du schéma).
  */
-async function consumeOtp(email: string, purpose: OtpPurpose, code: string): Promise<{ userId: string | null }> {
+/**
+ * Vérifie un OTP. `consume: false` (audit MEDIUM-6) vérifie sans le brûler —
+ * un mauvais code compte quand même comme une tentative, sinon on pourrait
+ * l'énumérer gratuitement.
+ */
+async function matchOtp(email: string, purpose: OtpPurpose, code: string, consume: boolean): Promise<{ userId: string | null }> {
   const otp = await prisma().email_otp.findFirst({
     where: { email, purpose, used_at: null, expires_at: { gt: new Date() } },
     orderBy: { created_at: 'desc' },
@@ -167,7 +172,7 @@ async function consumeOtp(email: string, purpose: OtpPurpose, code: string): Pro
   if (!otp) throw new AppError('AUTH_OTP_INVALID')
 
   if (safeEqualHex(otp.otp_hash, hmacToken(code))) {
-    await prisma().email_otp.update({ where: { id: otp.id }, data: { used_at: new Date() } })
+    if (consume) await prisma().email_otp.update({ where: { id: otp.id }, data: { used_at: new Date() } })
     return { userId: otp.user_id }
   }
 
@@ -178,6 +183,10 @@ async function consumeOtp(email: string, purpose: OtpPurpose, code: string): Pro
   }
   await prisma().email_otp.update({ where: { id: otp.id }, data: { attempts } })
   throw new AppError('AUTH_OTP_INVALID')
+}
+
+async function consumeOtp(email: string, purpose: OtpPurpose, code: string): Promise<{ userId: string | null }> {
+  return matchOtp(email, purpose, code, true)
 }
 
 /** security.otp_max_regen_hr : 5 regénérations / heure / email. */
@@ -222,6 +231,14 @@ export async function register(input: {
     await hashPassword(input.password)
     return
   }
+  // Audit MEDIUM-5 : une inscription en attente n'est jamais remplacée — sinon
+  // un tiers qui connaît l'adresse y glisse son mot de passe pendant que la
+  // victime saisit le code. Même réponse, aucun nouveau code ; la victime
+  // garde le sien (resend-otp reste possible).
+  if (await redis().exists(keys.pendingRegistration(email))) {
+    await hashPassword(input.password)
+    return
+  }
 
   const pending: PendingRegistration = {
     full_name: input.full_name.trim(),
@@ -244,7 +261,10 @@ export async function register(input: {
 export async function resendRegistrationOtp(rawEmail: string): Promise<void> {
   const email = normalizeEmail(rawEmail)
   const raw = await redis().get(keys.pendingRegistration(email))
-  if (!raw) return // rien en attente : réponse générique
+  if (!raw) {
+    await equalizeTiming() // rien en attente : réponse générique, même durée (audit MEDIUM-6)
+    return
+  }
   await assertOtpRegenAllowed(email)
   const pending = JSON.parse(raw) as PendingRegistration
   await redis().expire(keys.pendingRegistration(email), PENDING_TTL_SECONDS)
@@ -522,7 +542,10 @@ export async function requestPasswordReset(rawEmail: string): Promise<void> {
     where: { email },
     select: { id: true, language: true, account_status: true, deleted_at: true },
   })
-  if (!user || user.deleted_at || user.account_status !== 'active') return // générique
+  if (!user || user.deleted_at || user.account_status !== 'active') {
+    await equalizeTiming() // générique, même durée (audit MEDIUM-6)
+    return
+  }
   await assertOtpRegenAllowed(email)
   const { code, minutes } = await createOtp(email, 'password_reset', user.id)
   await emailService().send({
@@ -547,18 +570,24 @@ export async function resetPassword(input: {
     where: { email },
     select: { id: true, language: true, ed25519_pk: true },
   })
-  if (!user) throw new AppError('AUTH_OTP_INVALID')
+  if (!user) {
+    await equalizeTiming()
+    throw new AppError('AUTH_OTP_INVALID')
+  }
 
-  // Si le compte a une clé, la signature est obligatoire et vérifiée AVANT de
-  // consommer l'OTP : un attaquant avec accès à la boîte mail mais sans le
-  // seed ne doit pas pouvoir brûler l'OTP du propriétaire.
+  // Audit MEDIUM-6 : le code d'abord, sans le consommer — un mauvais code
+  // répond AUTH_OTP_INVALID que le compte ait une clé ou non, rien à
+  // apprendre sur l'adresse. Puis, si le compte a une clé, la signature est
+  // obligatoire et vérifiée AVANT de consommer l'OTP : un attaquant avec
+  // accès à la boîte mail mais sans le seed ne doit pas pouvoir brûler l'OTP
+  // du propriétaire.
+  await matchOtp(email, 'password_reset', input.code, false)
   if (user.ed25519_pk) {
     const sig = input.signature ? decodeBase64(input.signature) : null
     if (!sig || !ed25519Verify(Buffer.from(user.ed25519_pk), passwordResetMessage(email, input.code), sig)) {
       throw new AppError('AUTH_RESTORE_FAILED')
     }
   }
-
   await consumeOtp(email, 'password_reset', input.code)
 
   await prisma().users.update({

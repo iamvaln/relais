@@ -18,7 +18,7 @@ chaque fonction efface ses copies de secrets (`wipe`).
 | `keys` | K1/K2/K3 = Argon2id(seed, ctx) ; paire Ed25519 = `crypto_sign_seed_keypair(seed[0:32])` ; `signPayload` = Ed25519 sur SHA256(payload), `signRaw` sur le message | DEC-05/06/07 |
 | `aead` | Enveloppe XChaCha20-Poly1305 `[version 1][nonce 24][ciphertext+tag]`, données associées optionnelles | Techniques §2 |
 | `pin` | `seed_enc_pin` = seal(Argon2id(PIN, sel aléatoire), seed) ; le sel accompagne le blob dans le SecureStore | DEC-01 à 04 |
-| `vault` | P1 = seal(Ki, D), P2 = seal(Ki, P1), corps de `POST /vault/sync` signé sur SHA256(P2) ; `openBackup` pour la restauration | DEC-07/16 |
+| `vault` | P1 = seal(Ki, D), P2 = seal(Ki, P1), corps de `POST /vault/sync` signé sur SHA256(`relais:vault:v1|catégorie|ts|` ‖ P2) (`syncMessage`, audit MEDIUM-7) ; `openBackup` pour la restauration | DEC-07/16 |
 | `shamir` | N-of-M sur GF(2^8), polynôme AES 0x11b, parts de **33 octets** (index + 32) | Techniques §4 |
 | `contacts` | K_i depuis les réponses, `verify_token`, sealed box de notification signée, `secret_enc` (nom, rôle, message, et depuis le lot 4 mobile email et téléphone), part préparée (`enc`, `sig`, `plain_hash`, `plain_sig`) | DEC-12/20/28/29, Proposal-8 |
 | `activation` | Corps complet de `POST /transmission/contacts` et `POST /transmission/activate` : découpe chaque Kj en N-of-|porteurs de kj|, la i-ème part au i-ème porteur | Techniques §5.3 |

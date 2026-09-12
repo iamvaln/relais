@@ -1,7 +1,7 @@
 // Câblage BullMQ du balayage quotidien (Backend Specs §4.1, §4.2).
 
 import { afterAll, describe, expect, it } from 'vitest'
-import { BILLING_CRON, BILLING_JOB, CLEANUP_CRON, CLEANUP_JOB, DEADMAN_CRON, DEADMAN_JOB, startJobs, stopJobs } from '../src/jobs/queue.js'
+import { BILLING_CRON, BILLING_JOB, CLEANUP_CRON, CLEANUP_JOB, DEADMAN_CRON, DEADMAN_JOB, MAINTENANCE_CRON, MAINTENANCE_JOB, startJobs, stopJobs } from '../src/jobs/queue.js'
 import { closeAll } from './helpers.js'
 
 afterAll(closeAll)
@@ -11,10 +11,11 @@ describe('startJobs', () => {
     const queue = await startJobs()
     await startJobs() // idempotent
     const schedulers = (await queue.getJobSchedulers()).sort((a, b) => (a.key ?? '').localeCompare(b.key ?? ''))
-    expect(schedulers).toHaveLength(3)
+    expect(schedulers).toHaveLength(4)
     expect(schedulers).toMatchObject([
       { key: BILLING_JOB, pattern: BILLING_CRON },
       { key: DEADMAN_JOB, pattern: DEADMAN_CRON },
+      { key: MAINTENANCE_JOB, pattern: MAINTENANCE_CRON },
       { key: CLEANUP_JOB, pattern: CLEANUP_CRON },
     ])
     expect(BILLING_CRON).toBe('45 9 * * *')

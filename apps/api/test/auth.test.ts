@@ -581,6 +581,53 @@ describe('2FA TOTP (E6-US02)', () => {
   })
 })
 
+describe('audit MEDIUM-5 : une inscription en cours ne se détourne pas', () => {
+  it('un second register sur le même email ne remplace pas le pending ni le code : la victime finit avec son propre mot de passe', async () => {
+    const client = await api()
+    await client.post('/auth/register').send({ full_name: 'Adjoua Ngo', email: EMAIL, phone: '+237699000000', password: STRONG_PASSWORD, language: 'fr' }).expect(200)
+    const victimCode = lastOtp()
+    const before = mailbox.sent.length
+    // L'attaquant, qui connaît l'adresse, tente de prendre la main sur l'inscription
+    await client.post('/auth/register').send({ full_name: 'Attaquant', email: EMAIL, phone: '+237600000000', password: 'Autre-Passe-77!', language: 'en' }).expect(200)
+    expect(mailbox.sent.length).toBe(before)
+    // Le code de la victime reste le seul valable, et c'est son mot de passe qui compte
+    await client.post('/auth/email/verify').send({ email: EMAIL, code: victimCode }).expect(200)
+    const login = await client.post('/auth/login').send({ email: EMAIL, password: STRONG_PASSWORD }).expect(200)
+    expect(login.body.data.user.full_name).toBe('Adjoua Ngo')
+    await client.post('/auth/login').send({ email: EMAIL, password: 'Autre-Passe-77!' }).expect(401)
+  })
+})
+
+describe('audit MEDIUM-6 : pas d’oracle d’existence d’un compte sur la réinitialisation', () => {
+  it('compte inconnu, compte sans clé, compte avec clé sans signature : même AUTH_OTP_INVALID tant que le code est faux', async () => {
+    const client = await api()
+    const unknown = await client.post('/auth/password/reset').send({ email: 'inconnu@example.cm', code: '123456', new_password: STRONG_PASSWORD }).expect(401)
+    expect(unknown.body.error.code).toBe('AUTH_OTP_INVALID')
+
+    const u = await registerUser(EMAIL)
+    const noKey = await client.post('/auth/password/reset').send({ email: EMAIL, code: '123456', new_password: STRONG_PASSWORD }).expect(401)
+    expect(noKey.body.error.code).toBe('AUTH_OTP_INVALID')
+
+    const keys = generateDeviceKeys()
+    await client.post('/auth/keys').set('Authorization', `Bearer ${u.accessToken}`).send({ ed25519_pk: keys.publicKeyBase64 }).expect(200)
+    const withKey = await client.post('/auth/password/reset').send({ email: EMAIL, code: '123456', new_password: STRONG_PASSWORD }).expect(401)
+    expect(withKey.body.error.code).toBe('AUTH_OTP_INVALID')
+  })
+
+  it('avec un code valide mais sans la bonne signature : AUTH_RESTORE_FAILED, et le code n’est pas consommé', async () => {
+    const client = await api()
+    const u = await registerUser(EMAIL)
+    const keys = generateDeviceKeys()
+    await client.post('/auth/keys').set('Authorization', `Bearer ${u.accessToken}`).send({ ed25519_pk: keys.publicKeyBase64 }).expect(200)
+    await client.post('/auth/password/reset-request').send({ email: EMAIL }).expect(200)
+    const code = lastOtp()
+    const bad = await client.post('/auth/password/reset').send({ email: EMAIL, code, new_password: STRONG_PASSWORD, signature: Buffer.alloc(64).toString('base64') }).expect(401)
+    expect(bad.body.error.code).toBe('AUTH_RESTORE_FAILED')
+    const otp = await prisma().email_otp.findFirstOrThrow({ where: { email: EMAIL, purpose: 'password_reset' }, orderBy: { created_at: 'desc' } })
+    expect(otp.used_at).toBeNull()
+  })
+})
+
 describe('rate limiting (§7.1)', () => {
   it('audit HIGH-4 : X-Forwarded-For ne change pas l’IP vue par le limiteur (TRUST_PROXY faux par défaut)', async () => {
     const client = await api()
