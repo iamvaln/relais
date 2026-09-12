@@ -21,9 +21,8 @@ d'implémentation.
 | App mobile — lots 1 à 6 : socle, onboarding et sécurité, coffre, transmission, check-in et carnet, parcours du contact | ✅ `apps/mobile` ; décisions dans `docs/mobile.md` |
 | Page web du contact (pour qui n'installe pas l'app) | ✅ `apps/web-relay`, Vite, même logique que l'app (`app-core`) |
 | API backend — logs API, fournisseur de paiement | ⬜ À faire |
-| App mobile | ⬜ Non démarré |
 | Back office (interface) | ✅ Lots 1 à 3 (connexion TOTP, tableau de bord, utilisateurs, transmissions, questions, configuration, facturation, tickets, monitoring) — `packages/admin-core` + `apps/web-admin` (React, Vite), décisions dans `docs/backoffice.md` |
-| Smart contract Arbitrum | ⬜ Proposition reçue le 12/09, revue dans `docs/smart-contract.md` ; design de la v2 dans `docs/smart-contract-v2.md` — contrat, API et clients à écrire |
+| Smart contract Arbitrum | 🟨 Lot 1 : contrat `contracts/src/RelaisDms.sol` écrit test-first (48 tests Foundry : machine à états, fuzz, invariants) ; API (lot 2) et clients (lot 3) à écrire — design dans `docs/smart-contract-v2.md` |
 
 ## Documentation
 
@@ -100,6 +99,21 @@ TOTP, utilisateurs, transmissions, questions, configuration, audit), écrit
 test-first lui aussi, avec la facturation (encaissement manuel, grâce,
 rétrogradation, export). Premier admin : `npm run admin:create -w apps/api`.
 Détails et écarts dans [`docs/backend.md`](docs/backend.md).
+
+## Contrat Arbitrum
+
+```bash
+git submodule update --init            # forge-std
+cd contracts
+forge test                             # 48 tests : machine à états, fuzz, invariants
+forge test --gas-report
+```
+
+`RelaisDms.sol` est le chemin de secours : minuteur public que n'importe qui
+peut déclencher après le silence, registre de la clé Ed25519 et des hachés
+des parts, annuaire des CID des packs. L'opérateur écrit, l'owner signe,
+tout le monde vérifie. Design et décisions dans
+[`docs/smart-contract-v2.md`](docs/smart-contract-v2.md).
 
 ## Principe non négociable
 

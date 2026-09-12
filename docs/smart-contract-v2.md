@@ -306,7 +306,10 @@ temps), pas de proxy — une v3 sera un nouveau contrat et une migration par
 
 ## 7. Ce qu'il reste à trancher avant d'écrire
 
-| Point | Proposition | Alternative |
+**Tranché le 12/09/2026** (« Go, lance le lot 1 d'Arbitrum v2 avec les
+valeurs du §7 ») : la colonne « Proposition » fait foi.
+
+| Point | Proposition (retenue) | Alternative |
 |---|---|---|
 | Épinglage IPFS | Storj (déjà fournisseur) + un second épingleur | web3.storage seul |
 | Score minimum du mode autonome | 8 | 7, ou pas de plancher (déconseillé) |
@@ -321,3 +324,68 @@ Contrat et tests Foundry : trois jours. API (signataire, file, réconciliation,
 packs, migrations) : quatre jours. Clients (signatures, choix du mode, carte
 d'autonomie, parcours autonome app et web) : quatre jours. Testnet un mois
 en miroir avant tout déclenchement de secours.
+
+## 9. Lot 1 — le contrat ✅ (12/09/2026)
+
+`contracts/` : Foundry (`forge-std` en sous-module, `git submodule update
+--init`), solc 0.8.30, EVM `cancun`, optimiseur 10 000 passes, sans
+métadonnées CBOR. `src/RelaisDms.sol` (≈ 7,3 Ko déployés), trois suites dans
+`test/` : 37 tests unitaires sur la machine à états, 4 tests fuzz (512
+tirages), 7 invariants (128 séquences de 64 appels) sur un handler qui joue
+des appels valides ou non (48 tests). Deux mutations vérifiées détectées par les
+invariants (échéance qui recule, `trigger` sans condition).
+`.gas-snapshot` est commité et vérifié en CI (job « Contrat » : `forge fmt
+--check`, `forge build --sizes`, `forge test`, `forge snapshot --check`).
+
+```bash
+cd contracts
+forge test                 # unitaires + fuzz + invariants
+forge test --gas-report    # gaz par fonction
+forge snapshot             # met à jour .gas-snapshot après un changement voulu
+```
+
+Décisions prises en écrivant, par rapport au §2 :
+
+- **Dates alignées au jour, exigées et non arrondies** : `nextDue` et
+  `until` doivent être des multiples de 86 400 (`BadDueDate`,
+  `BadPauseDate`). Le contrat ne tronque rien en silence : ce que l'API
+  envoie est ce que la chaîne publie.
+- **`subject == keccak256(ed25519Pk)` est vérifié on-chain** à
+  l'enregistrement (`SubjectMismatch`) : le pseudonyme est lié à la clé,
+  personne ne peut enregistrer une clé sous un autre sujet.
+- **La monotonie de `nextCheckinDue` survit à tout** : `deactivate` et
+  `complete` la conservent, un `register` suivant doit la dépasser. Un
+  rejeu d'une ancienne signature de check-in est donc impossible même
+  après un cycle complet.
+- **`checkin` pendant une pause vaut reprise** (l'app fait un check-in,
+  l'API n'a pas à choisir entre deux appels) ; `resume` reste pour la
+  reprise explicite depuis l'écran de pause. Les deux exigent une échéance
+  strictement plus grande.
+- **`trigger` n'a pas de passe-droit** : l'opérateur y est soumis à la même
+  condition que n'importe qui. `Triggered` publie l'adresse de l'appelant.
+- **`deactivate` (signature owner) et `complete` (opérateur) effacent les
+  pointeurs et les hachés** : après une purge, la chaîne ne pointe plus vers
+  rien. `deactivate` part de tout état vivant (Active, Paused, Triggered).
+- **Pointeurs bornés et gelés par le contrat** : au plus `m` CID de packs,
+  exactement `m` hachés de parts (`BadThreshold`) ; permis en `Active` ou
+  `Paused` seulement — une fois `Triggered`, rien de ce qui décrit les
+  blobs ne bouge plus, et `complete` efface tout. Un `bytes32` de CID est le digest sha2-256 d'un
+  CIDv1 `raw` ; le lecteur reconstruit le CID (`bafkrei…`).
+- **La signature Ed25519 n'est contrôlée qu'en longueur** (64 octets,
+  `BadSignature`) et publiée telle quelle dans l'événement : la
+  vérification est hors chaîne, par quiconque, avec `ed25519Pk` (D1).
+- **Vues** : `triggerable(s) ⇔ secondsUntilTriggerable(s) == 0` ;
+  `type(uint256).max` quand le minuteur ne court pas (Inactive, Triggered,
+  Completed, sujet inconnu).
+- **Rien ne rentre** : pas de `receive` ni de `fallback` (l'ETH est
+  refusé), aucun appel externe, aucune dépendance hors `forge-std` pour les
+  tests.
+
+Gaz mesuré (tests unitaires, optimiseur 10 000) : `register` ≈ 80 k,
+`checkin` ≈ 28 k, `pause` ≈ 33 k, `trigger` ≈ 52 k, `cancelTrigger` ≈ 27 k,
+`setPointers` ≈ 63 k pour trois packs. Sur Arbitrum, quelques centimes par
+écriture.
+
+Non fait dans ce lot, et volontairement : aucun script de déploiement (il
+viendra avec le lot 2, l'API et Anvil en CI), pas de vérification Ed25519
+on-chain (D1), pas de proxy (§2).

@@ -328,7 +328,10 @@ l'état. **Design de la v2 écrit le 12/09/2026** (« Go, écris le design
 Arbitrum v2 ») dans `docs/smart-contract-v2.md` : les cinq points du
 tableau y sont tranchés (D1 à D5) ; les décisions encore ouvertes (pinning
 IPFS, plancher du score d'autonomie, mode par défaut, publication de P2,
-granularité des dates, garde de la clé opérateur) sont dans son §7.
+granularité des dates, garde de la clé opérateur) sont dans son §7,
+**tranchées le 12/09/2026** avec les valeurs proposées. **Lot 1 fait le
+12/09/2026** : le contrat `contracts/src/RelaisDms.sol`, écrit test-first
+(§9 du design). Lots 2 (API) et 3 (clients) à venir.
 Tableau conservé pour l'historique :
 
 | Point | Constat | Décision attendue |
