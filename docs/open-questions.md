@@ -243,6 +243,7 @@ corrigent, voir chaque écart en §B) ; spec suivie pour B.5 et B.6, faits.
 
 | Point | État |
 |---|---|
+| Assignation d'un ticket à un collègue (BO-02) | L'API accepte `assigned_to` mais rien ne liste les admins ; le back office (lot 3) n'assigne qu'à soi-même. Un `GET /admin/admins` viendra avec la gestion des comptes admin (décision du 12/09/2026, `docs/backoffice.md`). |
 | Import CSV des questions (BO-04, super_admin) | Aucun endpoint dans l'API ; le back office (lot 2) n'offre que l'ajout unitaire. Reporté (décision du 12/09/2026, `docs/backoffice.md`) : `POST /admin/questions/import` si le besoin se confirme. |
 | `billing.trial_days` (BO-05, défaut 0) | Aucune règle ne dit ce qu'un essai débloque ni comment il finit. Sans effet dans l'API. |
 | Parcours d'achat in-app (`subscription_upgraded` PostHog) | Aucun fournisseur de paiement ; encaissement manuel via `PUT /admin/billing/:id/plan`. |

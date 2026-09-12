@@ -18,6 +18,9 @@ const DEFAULT_PRICE_FCFA = 10000
 export interface SubscriptionView {
   id: string
   user_id: string
+  /** Identité de l'abonné (BO lot 3, décision du 12/09/2026) : la finance retrouve qui a payé sans le module Utilisateurs. */
+  user_email: string
+  full_name: string
   plan: string
   status: string
   started_at: string
@@ -33,16 +36,20 @@ export interface SubscriptionView {
   extension_reason: string | null
 }
 
+const withUser = { users: { select: { email: true, full_name: true } } } as const
+
 type Row = NonNullable<Awaited<ReturnType<typeof find>>>
 
 async function find(id: string) {
-  return prisma().subscriptions.findUnique({ where: { id } })
+  return prisma().subscriptions.findUnique({ where: { id }, include: withUser })
 }
 
 function toView(s: Row): SubscriptionView {
   return {
     id: s.id,
     user_id: s.user_id,
+    user_email: s.users.email,
+    full_name: s.users.full_name,
     plan: s.plan,
     status: s.status,
     started_at: s.started_at.toISOString(),
@@ -79,10 +86,24 @@ function snapshot(s: Row): Record<string, unknown> {
 export async function listSubscriptions(q: SubscriptionListQuery): Promise<Page<SubscriptionView>> {
   const page = Math.max(1, Number.parseInt(q.page ?? '1', 10))
   const limit = Math.min(100, Math.max(1, Number.parseInt(q.limit ?? '20', 10)))
-  const where = { ...(q.plan ? { plan: q.plan } : {}), ...(q.status ? { status: q.status } : {}) }
+  const where = {
+    ...(q.plan ? { plan: q.plan } : {}),
+    ...(q.status ? { status: q.status } : {}),
+    ...(q.search
+      ? {
+          users: {
+            OR: [
+              { email: { contains: q.search, mode: 'insensitive' as const } },
+              { full_name: { contains: q.search, mode: 'insensitive' as const } },
+              { phone: { contains: q.search } },
+            ],
+          },
+        }
+      : {}),
+  }
   const [total, rows] = await Promise.all([
     prisma().subscriptions.count({ where }),
-    prisma().subscriptions.findMany({ where, orderBy: { updated_at: 'desc' }, skip: (page - 1) * limit, take: limit }),
+    prisma().subscriptions.findMany({ where, orderBy: { updated_at: 'desc' }, skip: (page - 1) * limit, take: limit, include: withUser }),
   ])
   return { items: rows.map(toView), total, page, limit }
 }
@@ -101,6 +122,7 @@ export async function changePlan(adminId: string, id: string, body: PlanChangeBo
       prisma().subscriptions.update({
         where: { id },
         data: { plan: 'free', status: 'active', expires_at: null, grace_until: null, price_fcfa: null, updated_at: now },
+        include: withUser,
       }),
       prisma().users.update({ where: { id: s.user_id }, data: { plan: 'free' } }),
       prisma().payment_events.create({
@@ -127,6 +149,7 @@ export async function changePlan(adminId: string, id: string, body: PlanChangeBo
         price_fcfa: price,
         updated_at: now,
       },
+      include: withUser,
     }),
     prisma().users.update({ where: { id: s.user_id }, data: { plan: 'premium' } }),
     prisma().payment_events.create({
@@ -163,6 +186,7 @@ export async function extendSubscription(adminId: string, id: string, body: Exte
         extension_reason: body.reason,
         updated_at: now,
       },
+      include: withUser,
     }),
     prisma().users.update({ where: { id: s.user_id }, data: { plan: 'premium' } }),
     prisma().payment_events.create({ data: { user_id: s.user_id, subscription_id: id, event_type: 'admin_extended', notes: body.reason } }),

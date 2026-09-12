@@ -37,6 +37,8 @@ export const securityPlugin = fp(async (app: FastifyInstance) => {
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE'],
     allowedHeaders: ['Content-Type', 'Authorization', 'X-Step-Up-Token'],
+    // Le nom du fichier de l'export CSV (BO-07), sinon invisible en cross-origin.
+    exposedHeaders: ['Content-Disposition'],
   })
 
   await app.register(cookie)

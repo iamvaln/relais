@@ -263,6 +263,8 @@ export const subscriptionListQuery = {
   type: 'object',
   additionalProperties: false,
   properties: {
+    /** BO lot 3 : nom, email ou téléphone de l'abonné — la finance n'a pas le module Utilisateurs. */
+    search: { type: 'string', maxLength: 100 },
     plan: { type: 'string', enum: ['free', 'premium'] },
     status: { type: 'string', enum: ['active', 'grace', 'expired', 'cancelled'] },
     page: { type: 'string', pattern: '^[0-9]{1,4}$' },
@@ -270,6 +272,7 @@ export const subscriptionListQuery = {
   },
 } as const
 export interface SubscriptionListQuery {
+  search?: string
   plan?: string
   status?: string
   page?: string

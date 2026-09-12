@@ -42,7 +42,7 @@ tr.row { cursor: pointer; } tr.row:hover { background: #fbf7f1; }
 .toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: end; margin-bottom: 14px; }
 .toolbar label { min-width: 160px; } .toolbar .grow { flex: 1; min-width: 240px; }
 .actions { display: flex; flex-wrap: wrap; gap: 8px; }
-.dl { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; margin: 0; } .dl dt { color: var(--muted); } .dl dd { margin: 0; }
+.dl { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; margin: 0; } .dl dt { color: var(--muted); } .dl dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
 .login { min-height: 100vh; display: grid; place-items: center; padding: 16px; }
 .login form { width: 100%; max-width: 380px; display: flex; flex-direction: column; gap: 12px; }
 .lang { display: inline-flex; border: 1px solid var(--line); border-radius: 999px; overflow: hidden; }

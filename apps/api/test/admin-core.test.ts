@@ -260,3 +260,124 @@ describe('BO-05 configuration', () => {
     expect(await d2.client.config.list().catch((e: unknown) => e)).toMatchObject({ status: 403, code: 'AUTH_FORBIDDEN' })
   })
 })
+
+// --- Lot 3 : BO-07 facturation, BO-02 tickets, BO-06 monitoring ---------------------------
+
+describe('BO-07 facturation', () => {
+  it('finance : vue d’ensemble, abonnements avec recherche, passage premium, extension, rétrogradation, export CSV ; support refusé', async () => {
+    const adjoua = await registerUser('adjoua@example.cm', { name: 'Adjoua Ngo' })
+    await registerUser('herve@example.cm', { name: 'Hervé Kamga' })
+    const a = await adminAccount('finance')
+    const d = device()
+    await d.session.login({ email: a.email, password: PASSWORD, code: codeFor(a.totp_secret) })
+
+    const before = await d.client.billing.overview()
+    expect(before).toMatchObject({ price_fcfa: 10000, active_premium: 0, revenue_total_fcfa: 0 })
+
+    const all = await d.client.billing.subscriptions()
+    expect(all.total).toBe(2)
+    const found = await d.client.billing.subscriptions({ search: 'adjoua' })
+    expect(found.items).toHaveLength(1)
+    const sub = found.items[0]!
+    expect(sub).toMatchObject({ user_id: adjoua.userId, user_email: 'adjoua@example.cm', full_name: 'Adjoua Ngo', plan: 'free', status: 'active' })
+
+    const premium = await d.client.billing.changePlan(sub.id, { plan: 'premium', provider_ref: 'MOMO-42', reason: 'paiement Mobile Money reçu' })
+    expect(premium).toMatchObject({ id: sub.id, plan: 'premium', status: 'active', price_fcfa: 10000 })
+    expect(premium.expires_at).not.toBeNull()
+    const extended = await d.client.billing.extend(sub.id, 30, 'geste commercial')
+    expect(new Date(extended.expires_at!).getTime() - new Date(premium.expires_at!).getTime()).toBe(30 * 24 * 3600 * 1000)
+    expect(extended.extended_count).toBe(1)
+    expect((await d.client.billing.overview()).active_premium).toBe(1)
+    expect((await d.client.billing.subscriptions({ plan: 'premium' })).items.map((s) => s.id)).toEqual([sub.id])
+
+    const today = new Date().toISOString().slice(0, 10)
+    const csv = await d.client.billing.exportCsv(today, today)
+    expect(csv.filename).toBe(`relais-billing-${today}_${today}.csv`)
+    const lines = csv.csv.trim().split('\n')
+    expect(lines[0]).toBe('created_at,event_type,user_id,subscription_id,amount_fcfa,currency,provider_ref,notes')
+    expect(lines).toHaveLength(3) // created + admin_extended
+    expect(csv.csv).not.toContain('example.cm')
+    const bad = await d.client.billing.exportCsv('2026-02-01', '2026-01-01').catch((e: unknown) => e)
+    expect(bad).toMatchObject({ status: 400, code: 'VALIDATION_ERROR' })
+
+    const free = await d.client.billing.changePlan(sub.id, { plan: 'free', reason: 'remboursé' })
+    expect(free).toMatchObject({ plan: 'free', expires_at: null })
+
+    const support = await adminAccount('support')
+    const d2 = device()
+    await d2.session.login({ email: support.email, password: PASSWORD, code: codeFor(support.totp_secret) })
+    expect(await d2.client.billing.overview().catch((e: unknown) => e)).toMatchObject({ status: 403, code: 'AUTH_FORBIDDEN' })
+    expect(await d2.client.billing.exportCsv(today, today).catch((e: unknown) => e)).toMatchObject({ status: 403, code: 'AUTH_FORBIDDEN' })
+  })
+
+  it('export CSV : un jeton révoqué ferme la session comme les autres appels', async () => {
+    const a = await adminAccount('finance')
+    let lost = 0
+    const d = device(() => lost++)
+    await d.session.login({ email: a.email, password: PASSWORD, code: codeFor(a.totp_secret) })
+    const other = new AdminClient({ baseUrl })
+    other.token = d.client.token
+    await other.logout()
+    const err = await d.client.billing.exportCsv('2026-01-01', '2026-01-31').catch((e: unknown) => e)
+    expect(err).toMatchObject({ status: 401 })
+    expect(lost).toBe(1)
+    expect(d.client.token).toBeNull()
+  })
+})
+
+const TICKET = { email: 'adjoua@example.cm', subject: 'Compte bloqué', body: 'Je n’arrive plus à me connecter depuis hier.', category: 'account_locked' }
+
+describe('BO-02 tickets', () => {
+  it('support : file filtrable, détail, prise en charge à soi-même, priorité, résolution avec note ; finance refusé', async () => {
+    const u = await registerUser('adjoua@example.cm')
+    const t1 = (await (await api()).post('/support/tickets').send(TICKET).expect(201)).body.data as { id: string }
+    const t2 = (await (await api()).post('/support/tickets').send({ ...TICKET, email: 'x@example.cm', subject: 'OTP', category: 'otp_issue' }).expect(201)).body.data as { id: string }
+    const a = await adminAccount('support')
+    const d = device()
+    const me = await d.session.login({ email: a.email, password: PASSWORD, code: codeFor(a.totp_secret) })
+
+    const all = await d.client.tickets.list()
+    expect(all.total).toBe(2)
+    expect((await d.client.tickets.list({ category: 'otp_issue' })).items.map((t) => t.id)).toEqual([t2.id])
+    const one = await d.client.tickets.get(t1.id)
+    expect(one).toMatchObject({ id: t1.id, user_id: u.userId, user_email: 'adjoua@example.cm', status: 'open', priority: 'normal', assigned_to: null })
+
+    const taken = await d.client.tickets.take(t1.id, me.id)
+    expect(taken).toMatchObject({ status: 'in_progress', assigned_to: me.id })
+    expect((await d.client.tickets.update(t1.id, { priority: 'high' })).priority).toBe('high')
+    const done = await d.client.tickets.update(t1.id, { status: 'resolved', resolution_note: 'Compte débloqué, email envoyé.' })
+    expect(done.status).toBe('resolved')
+    expect(done.resolved_at).not.toBeNull()
+    expect((await d.client.tickets.list({ status: 'open' })).items.map((t) => t.id)).toEqual([t2.id])
+
+    const finance = await adminAccount('finance')
+    const d2 = device()
+    await d2.session.login({ email: finance.email, password: PASSWORD, code: codeFor(finance.totp_secret) })
+    expect(await d2.client.tickets.list().catch((e: unknown) => e)).toMatchObject({ status: 403, code: 'AUTH_FORBIDDEN' })
+  })
+})
+
+describe('BO-06 monitoring', () => {
+  it('admin : santé détaillée (jobs, compteurs) et journal d’audit filtrable ; support refusé', async () => {
+    const u = await registerUser('adjoua@example.cm')
+    const a = await adminAccount('admin')
+    const d = device()
+    await d.session.login({ email: a.email, password: PASSWORD, code: codeFor(a.totp_secret) })
+    await d.client.users.unblock(u.userId, 'r')
+
+    const health = await d.client.health()
+    expect(health).toMatchObject({ services: { postgres: 'ok', redis: 'ok' }, jobs: { enabled: false }, counts: { users: 1, transmissions_open: 0, escrows_active: 0 } })
+
+    const logs = await d.client.audit({ action: 'ACCOUNT_UNBLOCK' })
+    expect(logs.total).toBe(1)
+    expect(logs.items[0]).toMatchObject({ action: 'ACCOUNT_UNBLOCK', admin_id: a.id, target_type: 'user', target_id: u.userId, reason: 'r' })
+    expect(logs.items[0]!.ip_hash).toHaveLength(64)
+    expect((await d.client.audit({ admin_id: a.id })).total).toBe(2) // login + unblock
+    expect((await d.client.audit({ target_id: u.userId, limit: 10 })).limit).toBe(10)
+
+    const support = await adminAccount('support')
+    const d2 = device()
+    await d2.session.login({ email: support.email, password: PASSWORD, code: codeFor(support.totp_secret) })
+    expect(await d2.client.audit().catch((e: unknown) => e)).toMatchObject({ status: 403, code: 'AUTH_FORBIDDEN' })
+  })
+})

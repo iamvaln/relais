@@ -92,10 +92,13 @@ export interface DashboardView {
 
 export type ServiceStatus = 'ok' | 'down' | 'unconfigured'
 
+/** GET /admin/health : la sonde publique, plus les jobs et trois compteurs (BO-06). */
 export interface HealthView {
   status: string
   services: Record<string, ServiceStatus>
-  [k: string]: unknown
+  uptime: number
+  jobs: { enabled: boolean }
+  counts: { users: number; transmissions_open: number; escrows_active: number }
 }
 
 // --- BO-03 Transmissions ------------------------------------------------------
@@ -210,4 +213,124 @@ export interface ConfigView {
   description: string
   updated_by: string | null
   updated_at: string
+}
+
+// --- BO-07 Facturation -----------------------------------------------------------
+
+export type SubscriptionStatus = 'active' | 'grace' | 'expired' | 'cancelled'
+
+export interface SubscriptionsFilter {
+  search?: string | undefined
+  plan?: UserPlan | '' | undefined
+  status?: SubscriptionStatus | '' | undefined
+  page?: number | undefined
+  limit?: number | undefined
+}
+
+export interface SubscriptionView {
+  id: string
+  user_id: string
+  user_email: string
+  full_name: string
+  plan: string
+  status: string
+  started_at: string
+  expires_at: string | null
+  grace_until: string | null
+  cancelled_at: string | null
+  price_fcfa: number | null
+  currency: string
+  auto_renew: boolean
+  extended_count: number
+  last_extended_by: string | null
+  last_extended_at: string | null
+  extension_reason: string | null
+}
+
+export interface PlanChange {
+  plan: UserPlan
+  /** Montant encaissé (Mobile Money, hors app) ; défaut billing.premium_price_fcfa. */
+  amount_fcfa?: number
+  provider_ref?: string
+  reason: string
+}
+
+export interface BillingOverview {
+  price_fcfa: number
+  active_premium: number
+  in_grace: number
+  mrr_fcfa: number
+  arr_fcfa: number
+  renewals_this_month: number
+  churns_this_month: number
+  revenue_this_month_fcfa: number
+  revenue_total_fcfa: number
+}
+
+export interface CsvExport {
+  filename: string
+  csv: string
+}
+
+// --- BO-02 Tickets ---------------------------------------------------------------
+
+export type TicketStatus = 'open' | 'in_progress' | 'resolved' | 'closed'
+export type TicketPriority = 'urgent' | 'high' | 'normal' | 'low'
+export type TicketCategory = 'account_locked' | 'otp_issue' | 'transmission' | 'subscription' | 'rgpd' | 'other'
+
+export interface TicketsFilter {
+  status?: TicketStatus | '' | undefined
+  priority?: TicketPriority | '' | undefined
+  category?: TicketCategory | '' | undefined
+  page?: number | undefined
+  limit?: number | undefined
+}
+
+export interface TicketView {
+  id: string
+  subject: string
+  body: string
+  category: string
+  status: string
+  priority: string
+  resolution_note: string | null
+  created_at: string
+  updated_at: string
+  resolved_at: string | null
+  user_id: string | null
+  user_email: string
+  assigned_to: string | null
+}
+
+export interface TicketUpdate {
+  status?: TicketStatus
+  priority?: TicketPriority
+  assigned_to?: string | null
+  resolution_note?: string
+}
+
+// --- BO-06 Monitoring ------------------------------------------------------------
+
+export interface AuditFilter {
+  action?: string | undefined
+  admin_id?: string | undefined
+  target_id?: string | undefined
+  from?: string | undefined
+  to?: string | undefined
+  page?: number | undefined
+  limit?: number | undefined
+}
+
+export interface AuditView {
+  id: string
+  admin_id: string | null
+  user_id: string | null
+  action: string
+  target_type: string | null
+  target_id: string | null
+  value_before: unknown
+  value_after: unknown
+  reason: string | null
+  ip_hash: string
+  created_at: string
 }

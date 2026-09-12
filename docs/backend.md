@@ -106,7 +106,7 @@ Le module **auth** de §3.1 v1.1, le module **vault** de §3.3 v1.1, le module
 | `GET` · `POST /admin/questions` · `PUT …/:id` · `PUT …/:id/archive` | BO-04, rôle admin, audité |
 | `GET /admin/config` · `PUT /admin/config/:key` | BO-05, super_admin, validé par type, avant/après audité |
 | `GET /admin/logs/audit` · `GET /admin/health` | BO-06 |
-| `GET /admin/billing/overview` · `GET /admin/billing/subscriptions` · `GET /admin/billing/export` | BO-07, rôles finance / super_admin |
+| `GET /admin/billing/overview` · `GET /admin/billing/subscriptions` · `GET /admin/billing/export` | BO-07, rôles finance / super_admin ; la liste porte `user_email` et `full_name` et accepte `search` (BO lot 3) ; l'export reste sans email |
 | `PUT /admin/billing/:id/plan` · `POST /admin/billing/:id/extend` | Encaissement manuel, renouvellement, rétrogradation, geste commercial — voir §3 |
 | `GET /admin/dashboard` | BO-01 : les huit KPIs et les alertes calculables, triées par criticité — voir §3 |
 | `POST /support/tickets` · `GET /support/tickets` | Ouvert sans compte (email, 3/h/IP) ou avec token ; ses propres tickets — voir §3 |
@@ -720,6 +720,17 @@ côtés, `subscription_expired`. Un renouvellement pendant la grâce prolonge
 à partir de l'échéance ; après expiration il repart d'aujourd'hui. Une
 extension admin (`POST …/extend`, sans paiement, `admin_extended`) réactive
 un compte en grâce ou expiré.
+
+### Facturation : la liste des abonnements nomme l'abonné (BO lot 3)
+
+La liste ne portait que des identifiants. Or la finance n'a pas le module
+Utilisateurs (grille §2 du Back Office) et doit retrouver qui a payé par
+Mobile Money. Décision du 12/09/2026 : `GET /admin/billing/subscriptions`
+rend `user_email` et `full_name` et accepte `search` (nom, email, téléphone,
+même règle que `GET /admin/users`). L'export CSV, lui, reste sans email —
+un fichier circule plus loin qu'un écran. Même jour, pour le back office :
+`Content-Disposition` est exposé en CORS (`exposedHeaders`), sans quoi le
+navigateur enregistre l'export sous un nom générique.
 
 ### Dashboard : « actifs 30 j » = sessions utilisées, alertes limitées à ce que la base sait
 

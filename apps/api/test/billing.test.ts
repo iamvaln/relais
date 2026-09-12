@@ -110,9 +110,9 @@ describe('POST /admin/billing/:id/extend', () => {
 })
 
 describe('GET /admin/billing/subscriptions', () => {
-  it('liste paginée, filtrable par plan et statut', async () => {
-    const a = await registerUser('a@example.cm')
-    await registerUser('b@example.cm')
+  it('liste paginée, filtrable par plan et statut ; identité de l’abonné (BO lot 3) et recherche par nom, email, téléphone', async () => {
+    const a = await registerUser('adjoua@example.cm', { name: 'Adjoua Ngo' })
+    await registerUser('herve@example.cm', { name: 'Hervé Kamga' })
     const sa = await loginAdmin()
     const subA = await subscriptionOf(a.userId)
     await (await api()).put(`/admin/billing/${subA.id}/plan`).set(sa.auth).send({ plan: 'premium', reason: 'x' }).expect(200)
@@ -120,8 +120,14 @@ describe('GET /admin/billing/subscriptions', () => {
     expect(all.body.data.total).toBe(2)
     const premium = await (await api()).get('/admin/billing/subscriptions?plan=premium').set(sa.auth).expect(200)
     expect(premium.body.data.items.map((s: { user_id: string }) => s.user_id)).toEqual([a.userId])
-    expect(premium.body.data.items[0]).toMatchObject({ id: subA.id, plan: 'premium', status: 'active', price_fcfa: 10000 })
-    expect(JSON.stringify(all.body.data)).not.toContain('example.cm')
+    expect(premium.body.data.items[0]).toMatchObject({ id: subA.id, plan: 'premium', status: 'active', price_fcfa: 10000, user_email: 'adjoua@example.cm', full_name: 'Adjoua Ngo' })
+
+    // La finance n'a pas le module Utilisateurs : elle retrouve l'abonné ici (décision du 12/09/2026).
+    const byName = await (await api()).get('/admin/billing/subscriptions?search=kamga').set(sa.auth).expect(200)
+    expect(byName.body.data.items.map((s: { user_email: string }) => s.user_email)).toEqual(['herve@example.cm'])
+    const byEmail = await (await api()).get('/admin/billing/subscriptions?search=ADJOUA@').set(sa.auth).expect(200)
+    expect(byEmail.body.data.total).toBe(1)
+    expect((await (await api()).get('/admin/billing/subscriptions?search=personne').set(sa.auth).expect(200)).body.data.items).toEqual([])
   })
 })
 

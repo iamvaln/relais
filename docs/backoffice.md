@@ -25,7 +25,7 @@ tickets — `docs/backend.md` §3). Deux workspaces :
 |---|---|---|
 | 1 | Connexion email + mot de passe + TOTP, session 8 h, coquille et menu par rôle, tableau de bord (KPIs, alertes, santé des services), utilisateurs (liste filtrable et paginée, fiche, débloquer, regénérer l'OTP, suspendre, changer l'email, supprimer RGPD avec double confirmation) | ✅ |
 | 2 | Transmissions (liste filtrée et paginée, détail en statuts et compteurs, étendre l'escrow +24/48 h, relancer, annuler, débloquer un contact), questions (bibliothèque filtrable, ajout, modification, archivage), configuration (BO-05, par catégorie, validation typée, double confirmation) | ✅ |
-| 3 | Facturation (vue d'ensemble, abonnements, changement de plan, extension, export CSV), tickets, monitoring (santé, audit) | ⬜ |
+| 3 | Facturation (vue d'ensemble, abonnements avec recherche, passage premium, renouvellement, extension, rétrogradation, export CSV), tickets (file filtrable, détail, prise en charge, priorité, résolution, fermeture, réouverture), monitoring (santé de l'API, jobs, compteurs, journal d'audit filtrable avec avant/après) | ✅ |
 
 ## 2. Décisions (12 septembre 2026)
 
@@ -52,6 +52,19 @@ tickets — `docs/backend.md` §3). Deux workspaces :
 | Transmissions : rafraîchissement | La liste se recharge toutes les 60 s (TTL de l'escrow) ; le détail se met à jour depuis la réponse de chaque action. |
 | `api-client` dans un navigateur | Bug corrigé dans ce lot : `fetch` était appelé comme méthode de l'instance, ce que Chrome et Firefox refusent (« Illegal invocation ») — les tests sous Node ne le voyaient pas. Le lot 1 et la page web du contact ne pouvaient donc pas joindre l'API depuis un navigateur. Test reproduit avec un `fetch` strict sur `this` (`apps/api/test/api-client.test.ts`). |
 | Vérification visuelle | Parcours joué dans Chromium (Playwright, hors dépôt) contre l'API réelle : connexion, déblocage d'un contact, extension d'escrow, ajout d'une question, modification de `dms.escrow_ttl_hours` avec ressaisie de la clé, bascule EN. |
+
+### Lot 3 (12 septembre 2026)
+
+| Sujet | Décision |
+|---|---|
+| Facturation : retrouver l'abonné | La finance n'a pas le module Utilisateurs. **Ajout API test-first** : `GET /admin/billing/subscriptions` accepte `search` (nom, email, téléphone, comme BO-02) et chaque ligne porte `user_email` et `full_name`. L'export CSV reste sans email (identifiants seulement). Alternative écartée : identifiants seuls, avec dépendance au support. |
+| Facturation : actions | Ce que l'API permet (`subscriptionActions`) : un gratuit passe premium ; un premium se renouvelle (12 mois à partir de l'échéance), se prolonge (jours offerts, 1 à 365) ou redescend en gratuit ; un gratuit expiré ou en grâce peut aussi recevoir des jours. Montant pré-rempli avec `billing.premium_price_fcfa`, référence de paiement facultative, motif obligatoire. |
+| Facturation : export CSV | Requête brute hors enveloppe (`AdminClient.download`), nom de fichier lu dans `Content-Disposition` — l'API l'expose désormais en CORS (`Access-Control-Expose-Headers`, test `cors.test.ts`), sinon le navigateur ne le voit pas. Fichier enregistré depuis un `Blob`. Un 401 ferme la session comme les autres appels. |
+| Tickets : assignation | **À soi-même seulement** (« Prendre en charge » : `assigned_to` = admin connecté, statut en cours). Rien ne liste les admins dans l'API ; un `GET /admin/admins` et un sélecteur viendront avec la gestion des comptes admin — consigné dans `docs/open-questions.md` §E. |
+| Tickets : transitions | `nextTicketStatuses` : ouvert → prise en charge ou résolu ; en cours → résolu ; résolu → fermé ou réouvert ; fermé → réouvert. Résoudre exige une note (visible par le demandeur connecté). La priorité se change à tout moment. |
+| Monitoring | Santé (`GET /admin/health` : sondes, uptime, jobs, compteurs) rafraîchie toutes les 60 s ; journal d'audit filtrable (action parmi les codes du CHECK, admin, cible, dates) dans l'URL, 50 par page, avant/après dépliables. Aucun contenu utilisateur : identifiants et IP hachée seulement. |
+| Menu | Les huit modules existent : la route de repli « bientôt » est retirée, une URL inconnue renvoie à l'accueil du rôle. |
+| Vérification visuelle | Chromium contre l'API réelle : recherche d'un abonné, passage premium, téléchargement du CSV (nom `relais-billing-…`), prise en charge et résolution d'un ticket, journal filtré sur `PLAN_CHANGE` avec détails, bascule EN. |
 
 ## 3. Lancer
 
