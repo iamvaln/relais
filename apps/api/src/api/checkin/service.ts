@@ -6,6 +6,10 @@ import { AppError } from '../../lib/errors.js'
 import { prisma } from '../../lib/prisma.js'
 import { keys, redis } from '../../lib/redis.js'
 import { GAMES, isCorrect, type Lang } from './games.js'
+import { DAY_S } from '../../services/chain/message.js'
+import { prepareChainAction } from '../../services/chain/sync.js'
+import type { ChainField } from '../../services/chain/schema.js'
+import { chainContext } from '../transmission/service.js'
 
 const DAY_MS = 24 * 3600 * 1000
 const WEEK_MS = 7 * DAY_MS
@@ -195,8 +199,19 @@ async function consumeToken(userId: string, token: string): Promise<CheckinToken
   return payload
 }
 
-export async function complete(userId: string, token: string, journalEntryId: string | undefined, now = new Date()): Promise<CompleteResult> {
+export async function complete(userId: string, token: string, journalEntryId: string | undefined, now = new Date(), chainField?: ChainField): Promise<CompleteResult> {
   const cfg = await requireActiveTransmission(userId)
+  // Lot 2a : la signature on-chain est vérifiée avant de consommer le jeton — un refus laisse le jeu gagné.
+  const nextDueAt = new Date(now.getTime() + cfg.checkin_frequency_weeks * WEEK_MS)
+  const chain = chainField
+    ? await prepareChainAction(chainField, 'checkin', ['checkin', 'register'], await chainContext(userId), {
+        nextDue: nextDueAt,
+        n: cfg.schema_n,
+        m: await prisma().trusted_contacts.count({ where: { transmission_id: cfg.id, contact_status: { not: 'removed' } } }),
+        silenceSecs: cfg.silence_duration_months * 30 * DAY_S,
+        checkinFreqSecs: cfg.checkin_frequency_weeks * 7 * DAY_S,
+      })
+    : null
   const game = await consumeToken(userId, token)
 
   if (journalEntryId) {
@@ -212,6 +227,7 @@ export async function complete(userId: string, token: string, journalEntryId: st
 
   let streak: number
   let badge: string | null = null
+  let created: { id: string } | undefined
   if (existing) {
     streak = existing.streak_at_checkin
   } else {
@@ -224,7 +240,7 @@ export async function complete(userId: string, token: string, journalEntryId: st
     ])
     streak = prev ? prev.streak_at_checkin + 1 : 1
     badge = before === 0 ? 'first_checkin' : (STREAK_BADGES[streak] ?? null)
-    await prisma().checkin_log.create({
+    created = await prisma().checkin_log.create({
       data: {
         user_id: userId,
         transmission_id: cfg.id,
@@ -236,15 +252,17 @@ export async function complete(userId: string, token: string, journalEntryId: st
         badge_earned: badge,
         journal_entry_id: journalEntryId ?? null,
       },
+      select: { id: true },
     })
   }
 
   // Le check-in annule la procédure de relance en cours (§4.2) et repart pour un cycle.
-  const nextDue = new Date(now.getTime() + cfg.checkin_frequency_weeks * WEEK_MS)
+  const nextDue = nextDueAt
   await prisma().transmission_configs.update({
     where: { id: cfg.id },
     data: { last_checkin_at: now, next_checkin_due: nextDue, relance_count: 0, last_relance_at: null },
   })
+  await chain?.enqueue({ userId, configId: cfg.id, refId: created?.id })
 
   return {
     checked_in: true,

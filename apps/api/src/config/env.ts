@@ -98,6 +98,18 @@ const schema = z.object({
   ONESIGNAL_REST_API_KEY: z.string().min(1).optional(),
   ONESIGNAL_API_URL: z.string().url().default('https://api.onesignal.com'),
 
+  // Chaîne Arbitrum (lot 2a, docs/smart-contract-v2.md §3) : miroir on-chain
+  // du minuteur. Désactivée par défaut ; activée, l'API relaie les écritures
+  // signées par l'owner avec une clé opérateur chiffrée au repos.
+  CHAIN_ENABLED: z.enum(['true', 'false']).default('false'),
+  CHAIN_RPC_URL: z.string().url().optional(),
+  CHAIN_CONTRACT_ADDRESS: z.string().regex(/^0x[0-9a-fA-F]{40}$/, 'CHAIN_CONTRACT_ADDRESS : adresse 0x sur 20 octets').optional(),
+  /** Clé secp256k1 de l'opérateur, scellée `enc1:` sous CHAIN_KEY_ENC_KEY (npm run chain:keygen). */
+  CHAIN_OPERATOR_KEY_ENC: z.string().regex(/^enc1:[A-Za-z0-9+/=]+$/, 'CHAIN_OPERATOR_KEY_ENC : scellé enc1: attendu (npm run chain:keygen)').optional(),
+  CHAIN_KEY_ENC_KEY: z.string().min(32, 'CHAIN_KEY_ENC_KEY : 32 caractères minimum').optional(),
+  /** true : un `Triggered` posé par un tiers sur la chaîne ouvre la transmission en base (fin du mode miroir). */
+  CHAIN_TRUST_TRIGGERS: z.enum(['true', 'false']).default('false'),
+
   EMAIL_TRANSPORT: z.enum(['console', 'resend']).default('console'),
   RESEND_API_KEY: z.string().optional(),
   EMAIL_FROM: z.string().default('Relais <noreply@relais.app>'),
@@ -144,6 +156,15 @@ const schema = z.object({
   .refine((e) => e.NODE_ENV !== 'production' || !e.ADMIN_URL || e.ADMIN_URL.startsWith('https://'), {
     message: 'ADMIN_URL doit être en https en production',
   })
+  .refine((e) => e.CHAIN_ENABLED !== 'true' || Boolean(e.CHAIN_RPC_URL), { message: 'CHAIN_RPC_URL est requise quand CHAIN_ENABLED=true', path: ['CHAIN_RPC_URL'] })
+  .refine((e) => e.CHAIN_ENABLED !== 'true' || Boolean(e.CHAIN_CONTRACT_ADDRESS), { message: 'CHAIN_CONTRACT_ADDRESS est requise quand CHAIN_ENABLED=true', path: ['CHAIN_CONTRACT_ADDRESS'] })
+  .refine((e) => e.CHAIN_ENABLED !== 'true' || Boolean(e.CHAIN_OPERATOR_KEY_ENC), { message: 'CHAIN_OPERATOR_KEY_ENC est requise quand CHAIN_ENABLED=true', path: ['CHAIN_OPERATOR_KEY_ENC'] })
+  .refine((e) => e.CHAIN_ENABLED !== 'true' || Boolean(e.CHAIN_KEY_ENC_KEY), { message: 'CHAIN_KEY_ENC_KEY est requise quand CHAIN_ENABLED=true', path: ['CHAIN_KEY_ENC_KEY'] })
+  .refine((e) => !e.CHAIN_KEY_ENC_KEY || ![e.JWT_ACCESS_SECRET, e.JWT_STEPUP_SECRET, e.TOKEN_HMAC_SECRET, e.TOTP_ENC_KEY].includes(e.CHAIN_KEY_ENC_KEY), {
+    message: 'CHAIN_KEY_ENC_KEY doit être distincte des secrets JWT, HMAC et TOTP',
+    path: ['CHAIN_KEY_ENC_KEY'],
+  })
+  .refine((e) => e.CHAIN_TRUST_TRIGGERS !== 'true' || e.CHAIN_ENABLED === 'true', { message: 'CHAIN_TRUST_TRIGGERS exige CHAIN_ENABLED=true', path: ['CHAIN_TRUST_TRIGGERS'] })
 
 export type Env = z.infer<typeof schema>
 

@@ -20,6 +20,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@noble/hashes": "^2.4.0",
     "@scure/bip39": "^2.4.0",
     "libsodium-wrappers-sumo": "^0.8.4"
   },

@@ -16,7 +16,10 @@ import sodium from '../../lib/sodium.js'
 import { emailService } from '../../services/email/index.js'
 import { pushService } from '../../services/push/index.js'
 import { objectStore } from '../../services/storage/index.js'
-import { openNotification } from '../transmission/service.js'
+import { chainContext, openNotification } from '../transmission/service.js'
+import { enqueueChainWrite, prepareChainAction } from '../../services/chain/sync.js'
+import type { ChainField } from '../../services/chain/schema.js'
+import type { Hex } from 'viem'
 import { vaultKey, vaultPrefix } from '../vault/service.js'
 import type { VaultCategory } from '../vault/schemas.js'
 import type { VerifyBody } from './schemas.js'
@@ -83,13 +86,18 @@ export async function notifyContactsCancelled(transmissionId: string, userId: st
 }
 
 /** POST /transmission/cancel — l'owner est vivant : il reprend la main sans attendre le support. */
-export async function cancelByOwner(userId: string, now = new Date()): Promise<{ cancelled: true; next_checkin_due: string }> {
+export async function cancelByOwner(userId: string, now = new Date(), chainField?: ChainField): Promise<{ cancelled: true; next_checkin_due: string }> {
   const t = await prisma().transmissions.findFirst({
     where: { user_id: userId, status: { in: ['triggered', 'in_progress'] } },
-    include: { users: { select: { language: true } } },
+    include: { users: { select: { language: true } }, transmission_configs: { select: { checkin_frequency_weeks: true } } },
   })
   if (!t) throw new AppError('TRANSMISSION_NOT_TRIGGERED')
+  // Lot 2a : l'owner est vivant et le signe — cancelTrigger on-chain porte la même échéance que la base.
+  const chain = await prepareChainAction(chainField, 'cancelTrigger', ['cancelTrigger'], await chainContext(userId), {
+    nextDue: new Date(now.getTime() + t.transmission_configs.checkin_frequency_weeks * WEEK_MS),
+  })
   const { next_checkin_due } = await closeTransmission(t, { adminId: null, reason: 'owner' }, now)
+  await chain?.enqueue({ userId, configId: t.transmission_config_id, refId: t.id })
   await notifyContactsCancelled(t.id, userId, t.users.language === 'en' ? 'en' : 'fr')
   return { cancelled: true, next_checkin_due: next_checkin_due.toISOString() }
 }
@@ -107,6 +115,7 @@ export async function startTransmission(configId: string, now = new Date()): Pro
   const expiresAt = new Date(now.getTime() + ttlHours * HOUR_MS)
 
   const tokens: { contactId: string; token: string }[] = []
+  let transmissionId = ''
   await prisma().$transaction(async (tx) => {
     const tr = await tx.transmissions.create({
       data: {
@@ -119,6 +128,7 @@ export async function startTransmission(configId: string, now = new Date()): Pro
       },
       select: { id: true },
     })
+    transmissionId = tr.id
     for (const c of cfg.trusted_contacts) {
       const token = randomToken(32)
       await tx.transmission_contacts.create({
@@ -133,6 +143,11 @@ export async function startTransmission(configId: string, now = new Date()): Pro
       tokens.push({ contactId: c.id, token })
     }
   })
+
+  // Lot 2a : le déclenchement n'a pas besoin de signature — n'importe qui peut le poser (D4). Le drain attend que la chaîne soit d'accord.
+  if (cfg.chain_subject && cfg.contract_registered) {
+    await enqueueChainWrite({ subject: cfg.chain_subject as Hex, action: 'trigger', args: {}, userId: cfg.user_id, refId: transmissionId })
+  }
 
   // Emails hors transaction : un envoi qui échoue est tracé (email_log 'failed'), pas bloquant.
   let notified = 0
@@ -584,4 +599,7 @@ export async function purgeTransmission(transmissionId: string, userId: string, 
     prisma().transmissions.update({ where: { id: transmissionId }, data: { status: 'completed', completed_at: now } }),
     prisma().transmission_configs.update({ where: { id: configId }, data: { status: 'completed' } }),
   ])
+  // Lot 2a : la chaîne clôt après la purge chez Relais (`complete`, opérateur seul).
+  const cfg = await prisma().transmission_configs.findUnique({ where: { id: configId }, select: { chain_subject: true, contract_registered: true } })
+  if (cfg?.chain_subject && cfg.contract_registered) await enqueueChainWrite({ subject: cfg.chain_subject as Hex, action: 'complete', args: {}, userId, refId: transmissionId })
 }

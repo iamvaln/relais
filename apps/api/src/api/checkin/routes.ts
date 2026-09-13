@@ -22,7 +22,7 @@ export async function checkinRoutes(app: FastifyInstance): Promise<void> {
   app.post<{ Body: CompleteBody }>(
     '/complete',
     { schema: { body: completeBody }, preHandler: [authenticate] },
-    async (req) => ok(await checkin.complete(req.user!.id, req.body.checkin_token, req.body.journal_entry_id)),
+    async (req) => ok(await checkin.complete(req.user!.id, req.body.checkin_token, req.body.journal_entry_id, new Date(), req.body.chain)),
   )
 
   app.get('/streak', { preHandler: [authenticate] }, async (req) => ok(await checkin.getStreak(req.user!.id)))

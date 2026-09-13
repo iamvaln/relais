@@ -374,6 +374,32 @@ BEGIN
 END $$;
 
 -- ---------------------------------------------------------------------------
+-- Lot 2a (13/09/2026) — miroir Arbitrum : chain_subject, chain_registered_at,
+-- table chain_sync ; arbitrum_address (jamais lue) a disparu
+-- ---------------------------------------------------------------------------
+DO $$
+DECLARE n INT;
+BEGIN
+    SELECT count(*) INTO n FROM information_schema.columns
+     WHERE table_name = 'transmission_configs' AND column_name IN ('chain_subject', 'chain_registered_at');
+    ASSERT n = 2, 'transmission_configs.chain_subject et chain_registered_at devraient exister';
+    SELECT count(*) INTO n FROM information_schema.columns
+     WHERE table_name = 'transmission_configs' AND column_name = 'arbitrum_address';
+    ASSERT n = 0, 'transmission_configs.arbitrum_address devrait avoir disparu';
+    SELECT count(*) INTO n FROM information_schema.tables WHERE table_name = 'chain_sync';
+    ASSERT n = 1, 'chain_sync devrait exister';
+    -- statut contraint
+    BEGIN
+        INSERT INTO chain_sync (subject, action, status) VALUES ('0x' || repeat('a', 64), 'checkin', 'bizarre');
+        RAISE EXCEPTION 'chain_sync.status devrait être contraint';
+    EXCEPTION WHEN check_violation THEN NULL;
+    END;
+    INSERT INTO chain_sync (subject, action, status, tx_hash) VALUES ('0x' || repeat('a', 64), 'checkin', 'confirmed', '0x' || repeat('b', 64));
+    SELECT count(*) INTO n FROM chain_sync WHERE status = 'confirmed';
+    ASSERT n = 1, 'chain_sync insérée';
+END $$;
+
+-- ---------------------------------------------------------------------------
 -- Suppression du user : cascade sur toute la chaîne
 DELETE FROM payment_events;
 DELETE FROM escrow_shares;

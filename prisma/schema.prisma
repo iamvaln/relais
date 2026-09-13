@@ -19,6 +19,7 @@
 //   psql "$DATABASE_URL" -f prisma/migrations/20260914000000_owner_notified_after_trigger/migration.sql
 //   psql "$DATABASE_URL" -f prisma/migrations/20260915000000_ticket_resolved/migration.sql
 //   psql "$DATABASE_URL" -f prisma/migrations/20260916000000_drop_trial_days/migration.sql
+//   psql "$DATABASE_URL" -f prisma/migrations/20260917000000_chain_mirror/migration.sql
 //   npx prisma db pull
 // =============================================================================
 
@@ -369,7 +370,6 @@ model transmission_configs {
   schema_n                Int                @default(2)
   schema_m                Int                @default(2)
   storj_vault_path        String?
-  arbitrum_address        String?
   contract_registered     Boolean            @default(false)
   last_checkin_at         DateTime?          @db.Timestamptz(6)
   next_checkin_due        DateTime?          @db.Timestamptz(6)
@@ -380,6 +380,8 @@ model transmission_configs {
   activated_at            DateTime?          @db.Timestamptz(6)
   created_at              DateTime           @default(now()) @db.Timestamptz(6)
   updated_at              DateTime           @default(now()) @db.Timestamptz(6)
+  chain_subject           String?
+  chain_registered_at     DateTime?          @db.Timestamptz(6)
   checkin_log             checkin_log[]
   checkin_relances        checkin_relances[]
   users                   users              @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
@@ -513,6 +515,7 @@ model users {
   deleted_by_admin          String?                     @db.Uuid
   deletion_reason           String?
   annual_wrappeds           annual_wrappeds[]
+  chain_sync                chain_sync[]
   checkin_log               checkin_log[]
   checkin_relances          checkin_relances[]
   email_log                 email_log[]
@@ -542,4 +545,24 @@ model two_factor_recovery_codes {
   users      users     @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@unique([user_id, code_hash], map: "uq_user_code")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model chain_sync {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  subject      String
+  action       String
+  status       String   @default("queued")
+  args         Json     @default("{}")
+  user_id      String?  @db.Uuid
+  ref_id       String?  @db.Uuid
+  tx_hash      String?
+  block_number BigInt?
+  attempts     Int      @default(0)
+  error        String?
+  created_at   DateTime @default(now()) @db.Timestamptz(6)
+  updated_at   DateTime @default(now()) @db.Timestamptz(6)
+  users        users?   @relation(fields: [user_id], references: [id], onUpdate: NoAction)
+
+  @@index([subject, created_at(sort: Desc)], map: "idx_cs_subject")
 }
