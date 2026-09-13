@@ -72,6 +72,13 @@ client HTTP dans `packages/api-client`. L'app ne fait que les brancher.
    remis avec K2 et purgé à la fin. La logique vit dans `app-core`
    (`relay/`), partagée par l'app et la page web.
 
+7. **Signatures pour la chaîne** (lot 3a Arbitrum, 13/09/2026) — fait :
+   `app-core` signe le champ `chain` de l'activation, du check-in, de la
+   pause, de la reprise, de l'annulation et de la désactivation
+   (`chain.ts`) ; l'écran transmission dit « enregistrement en cours » puis
+   la date d'enregistrement. Le choix du mode d'autonomie et la carte
+   d'autonomie attendent la PR 2b (`docs/smart-contract-v2.md` §11).
+
 ## 3. Décisions (11 et 12 septembre 2026)
 
 | Point | Décision |
@@ -100,6 +107,7 @@ client HTTP dans `packages/api-client`. L'app ne fait que les brancher.
 | Page web du contact (lot 6) | **`apps/web-relay`, page Vite sans framework** : un HTML, TypeScript, crypto-core et app-core embarqués (libsodium en WASM, `Buffer` polyfillé), `VITE_API_URL` au build, construite en CI. Le lien de l'email l'ouvre ; elle propose « Ouvrir dans l'app ». Alternatives écartées : export web de l'app Expo (SQLCipher, OneSignal, SecureStore absents du web), app seule (revenait sur la décision du 11/09). Correction du 12/09 (back office lot 2) : `api-client` appelait `fetch` comme méthode de l'instance, refusé par les navigateurs (« Illegal invocation ») ; la page ne pouvait pas joindre l'API avant ce correctif (`docs/backoffice.md`). |
 | Données du contact (lot 6) | **En mémoire seulement** : le coffre est reconstitué à chaque ouverture depuis l'escrow (accès 30 jours), rien de lisible n'est écrit sur le téléphone ni dans le navigateur. Seule la progression « Fait » est gardée (SecureStore / localStorage), sous le hachage du token, et expire avec l'accès ; « J'ai terminé » l'efface. |
 | Carnet au Gardien du souvenir (lot 6) | `GET /relay/:token/data` rend `journal` (mois, mode, blob sous K2) au contact qui porte K2 une fois la catégorie déverrouillée ; la purge finale supprime carnet et rétrospectives (E5-US05 « toutes les données chiffrées »). |
+| Chaîne Arbitrum (lot 3a) | **L'app signe toujours, l'API décide** : une signature Ed25519 du seed par action (aucun gaz, aucun wallet, DEC-05), ignorée par le serveur tant que `CHAIN_ENABLED=false`. Sans sujet on-chain, pause/reprise/annulation/désactivation n'envoient rien (l'API répondrait 409) et le premier check-in enregistre. L'échéance signée dépasse strictement l'échéance courante (`next_checkin_due` + 1 jour au besoin) : le contrat n'accepte pas deux fois la même. |
 | P2 et fiches (lot 6) | `reconstruct` (crypto-core) ouvre P2 une fois et rend ce que l'owner a scellé : dans l'app, la liste JSON des fiches chiffrées une à une ; app-core déchiffre chaque fiche (Techniques §5.2 décrit P2 = seal(P1) pour un blob unique — la spec est à préciser). |
 | Check-in et carnet (lot 5) | Une entrée déjà écrite ce mois est passée à `POST /checkin/complete` (`journal_entry_id`) pour se rattacher au check-in ; écrite après, elle s'y rattache seule (Fix-09a). « Validé par simple ouverture de l'app » n'est pas retenu, comme côté API. |
 | Rôle dans `secret_enc` (lot 4) | `role` = les rôles détenus, `k1,k2,k3` joints par des virgules ; l'app du contact (lot 6) traduit. |

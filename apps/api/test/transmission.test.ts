@@ -40,6 +40,7 @@ describe('GET /transmission/config', () => {
       checkin_frequency_weeks: 4,
       pause_until: null,
       activated_at: null,
+      next_checkin_due: null,
       contacts: [],
       chain: { subject: null, registered_at: null },
     })

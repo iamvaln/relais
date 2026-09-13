@@ -73,7 +73,7 @@ Le module **auth** de §3.1 v1.1, le module **vault** de §3.3 v1.1, le module
 | `GET /vault/sync-status` | Date et taille par catégorie, lues sur le stockage |
 | `POST /vault/restore` | Renvoie le blob tel quel — exige un challenge Ed25519 vérifié dans les 15 minutes (403 `AUTH_RESTORE_REQUIRED`, audit LOW-13) |
 | `GET /transmission/relais-key` | **Public**, 60/min/IP, cache 24 h — DEC-28 |
-| `GET /transmission/config` | État complet, contacts inclus (jamais `removed`), `secret_enc` de chaque contact rendu à l'owner — voir §3. Lot 2a : `chain { subject, registered_at }` |
+| `GET /transmission/config` | État complet, contacts inclus (jamais `removed`), `secret_enc` de chaque contact rendu à l'owner — voir §3. Lot 2a : `chain { subject, registered_at }` ; lot 3a : `next_checkin_due` |
 | `GET /transmission/questions` | Bibliothèque des questions secrètes (BO-04) : actives, `secret_question` ou `both`, score ≥ `vault.question_min_score`, groupées par catégorie |
 | `POST /transmission/contacts` | Note-01, limite de plan, signature et sealed box vérifiées |
 | `PUT /transmission/contacts/:id` | Step-up `edit_contacts`, mêmes règles |

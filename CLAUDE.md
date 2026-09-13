@@ -35,9 +35,11 @@ justifier explicitement.
   transmission (`transmission/` : contacts chiffrés sur le device, réponses
   secrètes jamais envoyées, activation, vérification annuelle, pause),
   check-in (`checkin/`), carnet (`journal/` : entrées sous K2 déchiffrées
-  à la lecture, Wrapped calculé sur le device) et parcours du contact
+  à la lecture, Wrapped calculé sur le device), parcours du contact
   (`relay/` : réponses vérifiées sur le device, coffre reconstitué en
-  mémoire, progression locale).
+  mémoire, progression locale) et signatures pour la chaîne (`chain.ts` :
+  le champ `chain` des actions qui engagent le minuteur, `register` sans
+  sujet).
   Tests sous Node dans `test/` (vraie SQLite via `node:sqlite`), parcours
   contre l'API réelle dans `apps/api/test/app-core*.test.ts`.
 - `apps/mobile/` — l'app React Native (Expo SDK 57, Expo Router, Zustand,
@@ -115,8 +117,9 @@ localhost -p 55432 || scripts/dev-services.sh start` avant les tests.
 ## Ce qui n'est pas fait
 
 Logs API (export externe), fournisseur de paiement (encaissement manuel en
-V1), enregistrement Arbitrum (contrat et miroir API faits, lots 1 et 2a ; le mode
-autonome — packs, `setPointers`, épinglage IPFS — et les clients restent à
-écrire, `docs/smart-contract-v2.md` §10). L'app mobile (six lots), la page web du contact
+V1), enregistrement Arbitrum (contrat, miroir API et signatures de l'app faits,
+lots 1, 2a et 3a ; le mode autonome — packs, `setPointers`, épinglage IPFS —
+et la carte d'autonomie restent à écrire, `docs/smart-contract-v2.md` §10 et
+§11). L'app mobile (six lots), la page web du contact
 et le back office (trois lots) sont faits ; tests Maestro et vérification
 sur device restent à mener. La liste à jour est dans le README et `docs/backend.md` §2.

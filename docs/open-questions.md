@@ -332,9 +332,10 @@ granularité des dates, garde de la clé opérateur) sont dans son §7,
 **tranchées le 12/09/2026** avec les valeurs proposées. **Lot 1 fait le
 12/09/2026** : le contrat `contracts/src/RelaisDms.sol`, écrit test-first
 (§9 du design). **Lot 2a fait le 13/09/2026** : le miroir côté API (§10 du
-design, Backend §3 « Chaîne Arbitrum »). Restent le lot 2b (mode autonome :
-packs, `setPointers`, épinglage IPFS — **un compte d'épinglage est à ouvrir**,
-Storj + un second) et le lot 3 (clients).
+design, Backend §3 « Chaîne Arbitrum »). **Lot 3a fait le 13/09/2026** :
+l'app signe (§11). Restent la PR 2b (mode autonome : packs, `setPointers`,
+épinglage IPFS — **un compte d'épinglage est à ouvrir**, Storj + un second)
+et le lot 3b (choix du mode, carte d'autonomie, parcours autonome).
 Tableau conservé pour l'historique :
 
 | Point | Constat | Décision attendue |

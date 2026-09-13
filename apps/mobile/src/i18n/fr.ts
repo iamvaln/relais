@@ -154,6 +154,8 @@ export const fr = {
   'transmission.status.paused': 'En pause jusqu’au {date}',
   'transmission.status.triggered': 'Transmission déclenchée',
   'transmission.status.completed': 'Transmission terminée',
+  'transmission.chain.pending': 'Enregistrement sur la chaîne Arbitrum en cours',
+  'transmission.chain.registered': 'Enregistrée sur la chaîne Arbitrum le {date}',
   'transmission.contacts': 'Contacts de confiance',
   'transmission.noContacts': 'Aucun contact pour l’instant.',
   'transmission.addContact': 'Ajouter un contact',

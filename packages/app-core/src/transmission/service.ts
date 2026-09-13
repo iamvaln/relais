@@ -26,6 +26,7 @@ import {
 } from '@relais/crypto-core'
 import { type ContactStore, rolesToText } from './store.js'
 import { type Answers, type Contact, type ContactInput, type QuestionIds, type Roles, ROLE_SLOTS } from './types.js'
+import { chainFieldFor, type ChainField } from '../chain.js'
 
 export interface SecretQuestion {
   id: string
@@ -54,7 +55,11 @@ export interface TransmissionConfig {
   checkin_frequency_weeks: number
   pause_until: string | null
   activated_at: string | null
+  /** Lot 3a : l'échéance courante — l'échéance signée à la reprise doit la dépasser strictement. */
+  next_checkin_due: string | null
   contacts: ServerContact[]
+  /** Lot 2a : le pseudonyme on-chain et la date de l'enregistrement confirmé — null tant que rien n'est écrit. */
+  chain: { subject: string | null; registered_at: string | null }
 }
 
 export type SilenceMonths = 1 | 3 | 6
@@ -220,11 +225,31 @@ export class Transmission {
       silence_duration_months: cfg.silence_duration_months,
       checkin_frequency_weeks: cfg.checkin_frequency_weeks,
     })
-    return this.deps.api.post('/transmission/activate', body, { stepUpToken: await this.stepUp('activate_transmission') })
+    // Lot 3a : l'owner signe son enregistrement sur la chaîne (m = contacts porteurs).
+    const chain = await chainFieldFor(this.deps.signer(), cfg.chain.subject, 'register', {
+      checkinFrequencyWeeks: cfg.checkin_frequency_weeks,
+      register: { n: cfg.schema.n, m: contacts.length, silenceMonths: cfg.silence_duration_months },
+    })
+    return this.deps.api.post('/transmission/activate', { ...body, chain }, { stepUpToken: await this.stepUp('activate_transmission') })
+  }
+
+  /**
+   * Lot 3a : le champ `chain` d'une action sur un compte déjà enregistré ;
+   * rien tant que le compte n'a pas de sujet (l'API refuserait, 409).
+   */
+  private async chainFor(action: 'pause' | 'resume' | 'cancelTrigger' | 'deactivate', pauseDays?: PauseDays): Promise<{ chain: ChainField } | Record<string, never>> {
+    const cfg = await this.config()
+    if (!cfg.chain.subject) return {}
+    const chain = await chainFieldFor(this.deps.signer(), cfg.chain.subject, action, {
+      checkinFrequencyWeeks: cfg.checkin_frequency_weeks,
+      previousDue: cfg.next_checkin_due,
+      ...(pauseDays ? { pauseDays } : {}),
+    })
+    return { chain }
   }
 
   async deactivate(): Promise<{ deactivated: true }> {
-    return this.deps.api.delete('/transmission', undefined, { stepUpToken: await this.stepUp('delete_transmission') })
+    return this.deps.api.delete('/transmission', await this.chainFor('deactivate'), { stepUpToken: await this.stepUp('delete_transmission') })
   }
 
   /**
@@ -233,17 +258,17 @@ export class Transmission {
    * configuration de nouveau active ; 409 TRANSMISSION_NOT_TRIGGERED sinon.
    */
   async cancelTriggered(): Promise<{ cancelled: true; next_checkin_due: string }> {
-    return this.deps.api.post('/transmission/cancel', undefined, { stepUpToken: await this.stepUp('cancel_transmission') })
+    return this.deps.api.post('/transmission/cancel', await this.chainFor('cancelTrigger'), { stepUpToken: await this.stepUp('cancel_transmission') })
   }
 
   // --- Pause (E6-US04) ----------------------------------------------------------------
 
   async pause(days: PauseDays): Promise<TransmissionConfig> {
-    return this.deps.api.post('/transmission/pause', { duration_days: days }, { stepUpToken: await this.stepUp('edit_transmission') })
+    return this.deps.api.post('/transmission/pause', { duration_days: days, ...(await this.chainFor('pause', days)) }, { stepUpToken: await this.stepUp('edit_transmission') })
   }
 
-  resume(): Promise<TransmissionConfig> {
-    return this.deps.api.delete('/transmission/pause')
+  async resume(): Promise<TransmissionConfig> {
+    return this.deps.api.delete('/transmission/pause', await this.chainFor('resume'))
   }
 
   // --- Vérification annuelle (Techniques §7.2) ------------------------------------------

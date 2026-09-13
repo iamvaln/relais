@@ -51,6 +51,8 @@ export interface TransmissionConfigView {
   checkin_frequency_weeks: number
   pause_until: string | null
   activated_at: string | null
+  /** Lot 3a : l'échéance courante, pour que l'app signe une échéance strictement plus grande à la reprise. */
+  next_checkin_due: string | null
   contacts: ContactView[]
   /** Lot 2a : le pseudonyme on-chain et la date de l'enregistrement confirmé (null tant que rien n'est écrit). */
   chain: { subject: string | null; registered_at: string | null }
@@ -141,6 +143,7 @@ export async function getConfig(userId: string): Promise<TransmissionConfigView>
     checkin_frequency_weeks: cfg?.checkin_frequency_weeks ?? 4,
     pause_until: cfg?.pause_until?.toISOString() ?? null,
     activated_at: cfg?.activated_at?.toISOString() ?? null,
+    next_checkin_due: cfg?.next_checkin_due?.toISOString() ?? null,
     contacts: (cfg?.trusted_contacts ?? []).map(toContactView),
     chain: { subject: cfg?.chain_subject ?? null, registered_at: cfg?.chain_registered_at?.toISOString() ?? null },
   }
