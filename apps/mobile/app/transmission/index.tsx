@@ -7,7 +7,7 @@ import { Pressable, ScrollView, StyleSheet, Text } from 'react-native'
 import { ROLE_SLOTS } from '@relais/app-core'
 import { t } from '@/i18n'
 import { messageFor } from '@/lib/errors'
-import { checkinOccasions, schemaSentence, transmissionStatusLine } from '@/lib/transmission'
+import { chainStatusLine, checkinOccasions, schemaSentence, transmissionStatusLine } from '@/lib/transmission'
 import { useSession } from '@/state/session'
 import { openTransmission, refreshTransmission, useTransmission } from '@/state/transmission'
 import { Body, Button, ErrorText, Screen, Title, colors } from '@/ui'
@@ -56,6 +56,7 @@ export default function TransmissionHome() {
   }
 
   const status = config?.status ?? 'inactive'
+  const chainLine = config ? chainStatusLine(lang, config.chain) : null
   const editable = status === 'inactive'
   const m = contacts.length
   const n = Math.min(config?.schema.n ?? 2, Math.max(m, 2))
@@ -65,6 +66,7 @@ export default function TransmissionHome() {
       <ScrollView contentContainerStyle={styles.list}>
         <Title>{t(lang, 'transmission.title')}</Title>
         <Body>{transmissionStatusLine(lang, { status, pause_until: config?.pause_until ?? null, contacts: m })}</Body>
+        {chainLine && <Body>{chainLine}</Body>}
         {m === 0 && <Body>{t(lang, 'transmission.intro')}</Body>}
 
         <Text style={styles.section}>{t(lang, 'transmission.contacts')}</Text>

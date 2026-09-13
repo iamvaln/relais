@@ -2,6 +2,9 @@
 // serveur (docs/backend.md) ; l'app ne fait que jouer et valider.
 
 import type { ApiClient } from '@relais/api-client'
+import type { SigningKeypair } from '@relais/crypto-core'
+import { chainFieldFor, type ChainField } from '../chain.js'
+import type { TransmissionConfig } from '../transmission/service.js'
 
 export interface CheckinStatus {
   transmission_status: string
@@ -49,8 +52,17 @@ export interface CheckinStreak {
   badges: string[]
 }
 
+/** Lot 3a : de quoi signer le check-in pour la chaîne — la clé du seed et la config (sujet, fréquence, schéma, contacts). */
+export interface CheckinChainDeps {
+  signer: () => SigningKeypair
+  config: () => Promise<TransmissionConfig>
+}
+
 export class Checkin {
-  constructor(private readonly api: ApiClient) {}
+  constructor(
+    private readonly api: ApiClient,
+    private readonly chain?: CheckinChainDeps,
+  ) {}
 
   status(): Promise<CheckinStatus> {
     return this.api.get('/checkin/status')
@@ -64,8 +76,22 @@ export class Checkin {
     return this.api.post('/checkin/game/answer', { answer })
   }
 
-  complete(checkinToken: string, journalEntryId?: string): Promise<CheckinDone> {
-    return this.api.post('/checkin/complete', { checkin_token: checkinToken, ...(journalEntryId ? { journal_entry_id: journalEntryId } : {}) })
+  /**
+   * Valide le check-in. Lot 3a : signé pour la chaîne quand un signer est
+   * fourni — `checkin` sur un compte enregistré, `register` sinon (un compte
+   * activé avant la chaîne s'enregistre à son premier check-in).
+   */
+  async complete(checkinToken: string, journalEntryId?: string): Promise<CheckinDone> {
+    let chain: ChainField | undefined
+    if (this.chain) {
+      const cfg = await this.chain.config()
+      chain = await chainFieldFor(this.chain.signer(), cfg.chain.subject, 'checkin', {
+        checkinFrequencyWeeks: cfg.checkin_frequency_weeks,
+        previousDue: cfg.next_checkin_due,
+        register: { n: cfg.schema.n, m: cfg.contacts.length, silenceMonths: cfg.silence_duration_months },
+      })
+    }
+    return this.api.post('/checkin/complete', { checkin_token: checkinToken, ...(journalEntryId ? { journal_entry_id: journalEntryId } : {}), ...(chain ? { chain } : {}) })
   }
 
   history(): Promise<CheckinLogEntry[]> {

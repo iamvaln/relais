@@ -44,3 +44,14 @@ export function transmissionStatusLine(lang: Language, s: { status: string; paus
       return t(lang, 'transmission.status.completed')
   }
 }
+
+/**
+ * Lot 3a : ce que l'écran dit de la chaîne Arbitrum — rien tant que le compte
+ * n'a pas de sujet on-chain (l'API n'a pas la chaîne, ou rien n'est encore
+ * signé), « en cours » entre la signature et la confirmation, la date ensuite.
+ */
+export function chainStatusLine(lang: Language, chain: { subject: string | null; registered_at: string | null }): string | null {
+  if (!chain.subject) return null
+  if (!chain.registered_at) return t(lang, 'transmission.chain.pending')
+  return t(lang, 'transmission.chain.registered', { date: new Date(chain.registered_at).toLocaleDateString(lang === 'fr' ? 'fr-FR' : 'en-GB') })
+}

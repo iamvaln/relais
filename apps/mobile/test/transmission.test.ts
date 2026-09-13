@@ -2,7 +2,7 @@
 // comment un problème d'activation devient une phrase.
 
 import { describe, expect, it } from 'vitest'
-import { activationProblemKey, checkinOccasions, schemaSentence, transmissionStatusLine } from '../src/lib/transmission'
+import { activationProblemKey, chainStatusLine, checkinOccasions, schemaSentence, transmissionStatusLine } from '../src/lib/transmission'
 import { t } from '../src/i18n/index'
 
 describe('transmission — phrases', () => {
@@ -33,5 +33,13 @@ describe('transmission — phrases', () => {
     expect(transmissionStatusLine('fr', { status: 'active', pause_until: null, contacts: 2 })).toBe('Transmission active')
     expect(transmissionStatusLine('en', { status: 'paused', pause_until: '2026-10-12T00:00:00.000Z', contacts: 2 })).toMatch(/^Paused until /)
     expect(transmissionStatusLine('fr', { status: 'triggered', pause_until: null, contacts: 2 })).toBe('Transmission déclenchée')
+  })
+
+  it('lot 3a : la ligne « chaîne » — rien sans sujet, « en cours » avec un sujet, la date une fois enregistrée', () => {
+    expect(chainStatusLine('fr', { subject: null, registered_at: null })).toBeNull()
+    expect(chainStatusLine('fr', { subject: `0x${'ab'.repeat(32)}`, registered_at: null })).toBe('Enregistrement sur la chaîne Arbitrum en cours')
+    expect(chainStatusLine('en', { subject: `0x${'ab'.repeat(32)}`, registered_at: null })).toBe('Registration on the Arbitrum chain in progress')
+    expect(chainStatusLine('fr', { subject: `0x${'ab'.repeat(32)}`, registered_at: '2026-09-13T07:00:00Z' })).toBe('Enregistrée sur la chaîne Arbitrum le 13/09/2026')
+    expect(chainStatusLine('en', { subject: `0x${'ab'.repeat(32)}`, registered_at: '2026-09-13T07:00:00Z' })).toBe('Registered on the Arbitrum chain on 13/09/2026')
   })
 })

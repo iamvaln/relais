@@ -156,6 +156,8 @@ export const en: Record<keyof typeof fr, string> = {
   'transmission.status.paused': 'Paused until {date}',
   'transmission.status.triggered': 'Transmission triggered',
   'transmission.status.completed': 'Transmission completed',
+  'transmission.chain.pending': 'Registration on the Arbitrum chain in progress',
+  'transmission.chain.registered': 'Registered on the Arbitrum chain on {date}',
   'transmission.contacts': 'Trusted contacts',
   'transmission.noContacts': 'No contacts yet.',
   'transmission.addContact': 'Add a contact',

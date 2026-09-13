@@ -22,7 +22,7 @@ d'implémentation.
 | Page web du contact (pour qui n'installe pas l'app) | ✅ `apps/web-relay`, Vite, même logique que l'app (`app-core`) |
 | API backend — logs API, fournisseur de paiement | ⬜ À faire |
 | Back office (interface) | ✅ Lots 1 à 3 (connexion TOTP, tableau de bord, utilisateurs, transmissions, questions, configuration, facturation, tickets, monitoring) — `packages/admin-core` + `apps/web-admin` (React, Vite), décisions dans `docs/backoffice.md` |
-| Smart contract Arbitrum | 🟨 Lot 1 : contrat `contracts/src/RelaisDms.sol` (48 tests Foundry) ; lot 2a : le miroir côté API (`apps/api/src/services/chain`, signatures owner vérifiées, file `chain_sync`, réconciliation, alertes, Anvil en CI) ; lot 2b (mode autonome, IPFS) et lot 3 (clients) à écrire — design dans `docs/smart-contract-v2.md` |
+| Smart contract Arbitrum | 🟨 Lot 1 : contrat `contracts/src/RelaisDms.sol` (48 tests Foundry) ; lot 2a : le miroir côté API (`apps/api/src/services/chain`, signatures owner vérifiées, file `chain_sync`, réconciliation, alertes, Anvil en CI) ; lot 3a : l'app signe (`app-core` `chain.ts`, activation, check-in, pause, reprise, annulation, désactivation) ; PR 2b (mode autonome, IPFS) et lot 3b (carte d'autonomie, parcours autonome) à écrire — design dans `docs/smart-contract-v2.md` |
 
 ## Documentation
 

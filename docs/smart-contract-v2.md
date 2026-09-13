@@ -423,3 +423,36 @@ Reste pour le lot 2b : mode autonome (`autonomy_mode`, packs, `setPointers`,
 épinglage IPFS — compte à ouvrir), et la republication du coffre. Puis lot 3 :
 les clients (signatures dans l'app, choix du mode, carte d'autonomie, parcours
 autonome).
+
+## 11. Lot 3a — l'app signe ✅ (13/09/2026)
+
+Le §4 côté owner, sans le mode autonome (qui attend la PR 2b) :
+
+- `app-core` `chain.ts` : `chainFieldFor(signer, subject, action, opts)` construit
+  et signe le champ `chain` — sujet absent → `register` (n, contacts porteurs,
+  silence, fréquence) ; `pause` porte `paused_until` ; `deactivate` la
+  signature seule ; les autres `next_due`. Les dates sont arrondies au jour
+  supérieur ; l'échéance signée dépasse strictement l'échéance courante
+  (`next_checkin_due` + 1 jour si besoin, dans la tolérance de l'API) — sinon
+  une reprise le jour même d'un check-in serait refusée par le contrat.
+- `Transmission` signe l'activation (`register`), la pause, la reprise,
+  l'annulation (`cancelTrigger`) et la désactivation ; rien n'est envoyé pour
+  ces quatre dernières tant que la config n'a pas de sujet (l'API refuserait,
+  409). `Checkin` reçoit la clé et la config : `checkin` sur un compte
+  enregistré, `register` sinon — un compte activé avant la chaîne s'enregistre
+  à son premier check-in, sans rien changer à l'écran.
+- L'app ne sait pas si l'API a la chaîne activée : elle signe toujours, le
+  serveur ignore le champ quand `CHAIN_ENABLED=false`. Une signature Ed25519,
+  pas de gaz, pas de wallet (DEC-05).
+- Mobile : une ligne sur l'écran transmission — « Enregistrement sur la
+  chaîne Arbitrum en cours » puis « Enregistrée sur la chaîne Arbitrum le … »
+  — FR/EN. `GET /transmission/config` rend `next_checkin_due` pour la règle
+  ci-dessus.
+- Tests : 8 unitaires sur `chainFieldFor`, 6 parcours app-core contre l'API
+  et un Anvil par test (activation, pause/reprise/désactivation, check-in,
+  enregistrement au premier check-in, rien sans sujet, annulation après
+  déclenchement), 1 test d'écran mobile.
+
+Reste : PR 2b (mode autonome côté API — packs, `setPointers`, épinglage
+IPFS), puis lot 3b (choix du mode à l'activation, carte d'autonomie, parcours
+autonome du contact dans l'app et la page web).

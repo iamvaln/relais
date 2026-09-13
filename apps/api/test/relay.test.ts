@@ -161,7 +161,8 @@ describe('l’owner prévenu pendant la transmission (12/09/2026)', () => {
     await activateTransmission(o)
     await markTriggered(o)
     await prisma().push_tokens.create({ data: { user_id: o.userId, token: `sub_${o.userId}`, platform: 'android' } })
-    await trigger(NOW)
+    // À l'heure réelle : les liens vivent escrow_ttl_hours (72 h) et sont vérifiés contre l'horloge de l'API — une date figée les périme.
+    await trigger(new Date())
     const token = tokenFromEmail('contact1@example.cm')
     mailbox.clear()
     pushbox.clear()
