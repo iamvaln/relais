@@ -67,3 +67,50 @@ describe('audit MEDIUM-8 : garde-fous de configuration en production', () => {
     expect(loadEnv({ ...prod, NODE_ENV: 'development', HCV_ADDR: undefined, HCV_TOKEN: undefined, RELAIS_X25519_SK_DEV: 'ab'.repeat(32), EMAIL_TRANSPORT: 'console', STORAGE_BACKEND: 'fs', FRONTEND_URL: 'http://localhost:3000' }).EMAIL_TRANSPORT).toBe('console')
   })
 })
+
+describe('chaîne Arbitrum (lot 2a, docs/smart-contract-v2.md §3)', () => {
+  const base: NodeJS.ProcessEnv = {
+    ...process.env,
+    CHAIN_ENABLED: undefined,
+    CHAIN_RPC_URL: undefined,
+    CHAIN_CONTRACT_ADDRESS: undefined,
+    CHAIN_OPERATOR_KEY_ENC: undefined,
+    CHAIN_KEY_ENC_KEY: undefined,
+    CHAIN_TRUST_TRIGGERS: undefined,
+  }
+  const on: NodeJS.ProcessEnv = {
+    ...base,
+    CHAIN_ENABLED: 'true',
+    CHAIN_RPC_URL: 'http://127.0.0.1:8545',
+    CHAIN_CONTRACT_ADDRESS: '0x5FbDB2315678afecb367f032d93F642f64180aa3',
+    CHAIN_OPERATOR_KEY_ENC: 'enc1:AAAA',
+    CHAIN_KEY_ENC_KEY: 'e'.repeat(40),
+  }
+
+  it('désactivée par défaut, sans rien exiger', () => {
+    const e = loadEnv(base)
+    expect(e.CHAIN_ENABLED).toBe('false')
+    expect(e.CHAIN_TRUST_TRIGGERS).toBe('false')
+  })
+
+  it('activée : RPC, adresse du contrat, clé opérateur chiffrée et clé de chiffrement sont requises', () => {
+    expect(loadEnv(on).CHAIN_CONTRACT_ADDRESS).toBe('0x5FbDB2315678afecb367f032d93F642f64180aa3')
+    expect(() => loadEnv({ ...on, CHAIN_RPC_URL: undefined })).toThrow(/CHAIN_RPC_URL/)
+    expect(() => loadEnv({ ...on, CHAIN_CONTRACT_ADDRESS: undefined })).toThrow(/CHAIN_CONTRACT_ADDRESS/)
+    expect(() => loadEnv({ ...on, CHAIN_CONTRACT_ADDRESS: '0x1234' })).toThrow(/CHAIN_CONTRACT_ADDRESS/)
+    expect(() => loadEnv({ ...on, CHAIN_OPERATOR_KEY_ENC: undefined })).toThrow(/CHAIN_OPERATOR_KEY_ENC/)
+    expect(() => loadEnv({ ...on, CHAIN_OPERATOR_KEY_ENC: 'deadbeef' })).toThrow(/CHAIN_OPERATOR_KEY_ENC/)
+    expect(() => loadEnv({ ...on, CHAIN_KEY_ENC_KEY: undefined })).toThrow(/CHAIN_KEY_ENC_KEY/)
+    expect(() => loadEnv({ ...on, CHAIN_KEY_ENC_KEY: 'court' })).toThrow(/CHAIN_KEY_ENC_KEY/)
+  })
+
+  it('la clé de chiffrement de la clé opérateur est distincte des autres secrets', () => {
+    expect(() => loadEnv({ ...on, CHAIN_KEY_ENC_KEY: on.TOTP_ENC_KEY })).toThrow(/CHAIN_KEY_ENC_KEY/)
+    expect(() => loadEnv({ ...on, CHAIN_KEY_ENC_KEY: on.JWT_ACCESS_SECRET })).toThrow(/CHAIN_KEY_ENC_KEY/)
+  })
+
+  it('CHAIN_TRUST_TRIGGERS ne se pose que chaîne activée', () => {
+    expect(loadEnv({ ...on, CHAIN_TRUST_TRIGGERS: 'true' }).CHAIN_TRUST_TRIGGERS).toBe('true')
+    expect(() => loadEnv({ ...base, CHAIN_TRUST_TRIGGERS: 'true' })).toThrow(/CHAIN_TRUST_TRIGGERS/)
+  })
+})

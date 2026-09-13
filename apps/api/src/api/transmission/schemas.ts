@@ -1,3 +1,5 @@
+import { chainField, type ChainField } from '../../services/chain/schema.js'
+
 const base64 = { type: 'string', pattern: '^[A-Za-z0-9+/_-]+={0,2}$' } as const
 const uuid = { type: 'string', format: 'uuid' } as const
 
@@ -127,6 +129,8 @@ export const activateBody = {
         },
       },
     },
+    /** Lot 2a : signature owner de `register` (docs/smart-contract-v2.md D1), optionnelle tant que l'app ne l'envoie pas. */
+    chain: chainField,
   },
 } as const
 export interface ActivateContact extends ContactBody {
@@ -137,6 +141,7 @@ export interface ActivateContact extends ContactBody {
 export interface ActivateBody extends ConfigBody {
   schema: SchemaBody
   contacts: ActivateContact[]
+  chain?: ChainField
 }
 
 /** E4-US04 : 1 semaine / 1 mois / 3 mois, plafonné par dms.pause_max_months. */
@@ -144,10 +149,11 @@ export const pauseBody = {
   type: 'object',
   required: ['duration_days'],
   additionalProperties: false,
-  properties: { duration_days: { type: 'integer', enum: [7, 30, 90] } },
+  properties: { duration_days: { type: 'integer', enum: [7, 30, 90] }, chain: chainField },
 } as const
 export interface PauseBody {
   duration_days: 7 | 30 | 90
+  chain?: ChainField
 }
 
 /** Vérification annuelle : Ed25519.sign(SHA256(verify_token ‖ challenge), owner_sk) — challenge serveur à usage unique (audit LOW-15). */

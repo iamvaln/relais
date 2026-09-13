@@ -7,6 +7,7 @@ import { configInt } from '../../lib/app-config.js'
 import { DEFAULT_MAX_RESTARTS } from '../../jobs/relay-cleanup.js'
 import { prisma } from '../../lib/prisma.js'
 import { healthReport } from '../health/routes.js'
+import { chainAlerts } from '../../services/chain/reconcile.js'
 import { STORAGE_ERROR_WINDOW_MS, storageErrorsInWindow } from '../../services/storage/index.js'
 
 const HOUR_MS = 3600 * 1000
@@ -107,13 +108,14 @@ async function alerts(now: Date): Promise<DashboardAlert[]> {
   const stalled = triggeredConfigs.filter((c) => c.transmissions.length >= maxRestarts)
 
   for (const [service, status] of Object.entries(health.services)) {
-    if (status === 'down') out.push({ type: 'service_down', severity: service === 'storj' ? 'high' : 'critical', count: 1, service })
+    if (status === 'down') out.push({ type: 'service_down', severity: service === 'storj' || service === 'chain' ? 'high' : 'critical', count: 1, service })
   }
   if (storageErrors >= STORAGE_ALERT_ERRORS) out.push({ type: 'storage_degraded', severity: 'high', count: storageErrors, window_minutes: STORAGE_ERROR_WINDOW_MS / 60_000 })
   if (expiring.length > 0) out.push({ type: 'escrow_expiring', severity: 'high', count: expiring.length, transmission_ids: expiring.map((t) => t.id) })
   if (blockedRecently > BLOCKED_SPIKE_THRESHOLD) out.push({ type: 'contact_failures_spike', severity: 'high', count: blockedRecently })
   if (stalled.length > 0) out.push({ type: 'transmission_stalled', severity: 'high', count: stalled.length, transmission_config_ids: stalled.map((c) => c.id) })
   if (suspendedStale > 0) out.push({ type: 'accounts_suspended_stale', severity: 'medium', count: suspendedStale })
+  out.push(...(await chainAlerts()))
 
   return out.sort((a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity])
 }

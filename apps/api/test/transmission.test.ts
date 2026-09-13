@@ -41,6 +41,7 @@ describe('GET /transmission/config', () => {
       pause_until: null,
       activated_at: null,
       contacts: [],
+      chain: { subject: null, registered_at: null },
     })
   })
 })

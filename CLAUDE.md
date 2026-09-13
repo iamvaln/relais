@@ -16,7 +16,10 @@ justifier explicitement.
 - `apps/api/` — l'API Fastify 5 / TypeScript strict / Prisma 6. Un dossier
   par module dans `src/api/*` (`schemas.ts` JSON Schema, `service.ts`,
   `routes.ts`), jobs BullMQ dans `src/jobs/`, services partagés dans
-  `src/services/` (email, push OneSignal, stockage objet, secrets).
+  `src/services/` (email, push OneSignal, stockage objet, secrets, chaîne
+  Arbitrum : `chain/` — client viem, file `chain_sync`, réconciliation ; les
+  tests de la chaîne lancent un Anvil réel, `anvil` doit être dans le PATH et
+  `contracts/` construit par `forge build`).
 - `packages/crypto-core/` — le cœur crypto de l'app mobile (seed BIP39,
   K1/K2/K3, Ed25519, XChaCha20, Shamir GF(256), contacts, relay, carnet).
   Pur TypeScript, ni UI ni réseau ; `libsodium-wrappers-sumo` (Argon2id).
@@ -112,8 +115,8 @@ localhost -p 55432 || scripts/dev-services.sh start` avant les tests.
 ## Ce qui n'est pas fait
 
 Logs API (export externe), fournisseur de paiement (encaissement manuel en
-V1), enregistrement Arbitrum (contrat fait, lot 1 ; l'API — clé opérateur, file
-`chain:sync`, réconciliation, packs — et les clients restent à écrire,
-`docs/smart-contract-v2.md` §3 et §4). L'app mobile (six lots), la page web du contact
+V1), enregistrement Arbitrum (contrat et miroir API faits, lots 1 et 2a ; le mode
+autonome — packs, `setPointers`, épinglage IPFS — et les clients restent à
+écrire, `docs/smart-contract-v2.md` §10). L'app mobile (six lots), la page web du contact
 et le back office (trois lots) sont faits ; tests Maestro et vérification
 sur device restent à mener. La liste à jour est dans le README et `docs/backend.md` §2.

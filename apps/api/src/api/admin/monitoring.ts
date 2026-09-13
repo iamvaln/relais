@@ -1,6 +1,7 @@
 // BO-06 — journal d'audit et santé.
 
 import { healthReport, type HealthReport } from '../health/routes.js'
+import { chainStatus, type ChainStatus } from '../../services/chain/reconcile.js'
 import { env } from '../../config/env.js'
 import { prisma } from '../../lib/prisma.js'
 import type { AuditListQuery } from './schemas.js'
@@ -65,6 +66,8 @@ export async function listAudit(q: AuditListQuery): Promise<Page<AuditView>> {
 export interface AdminHealthView extends HealthReport {
   jobs: { enabled: boolean }
   counts: { users: number; transmissions_open: number; escrows_active: number }
+  /** Lot 2a : la chaîne Arbitrum — identifiant, bloc, opérateur et son solde, file, dernière réconciliation. */
+  chain: ChainStatus
 }
 
 export async function adminHealth(now = new Date()): Promise<AdminHealthView> {
@@ -74,5 +77,5 @@ export async function adminHealth(now = new Date()): Promise<AdminHealthView> {
     prisma().transmissions.count({ where: { status: { in: ['triggered', 'in_progress'] } } }),
     prisma().transmissions.count({ where: { status: { in: ['triggered', 'in_progress'] }, escrow_expires_at: { gt: now } } }),
   ])
-  return { ...report, jobs: { enabled: env().JOBS_ENABLED === 'true' }, counts: { users, transmissions_open: transmissionsOpen, escrows_active: escrowsActive } }
+  return { ...report, jobs: { enabled: env().JOBS_ENABLED === 'true' }, counts: { users, transmissions_open: transmissionsOpen, escrows_active: escrowsActive }, chain: await chainStatus() }
 }

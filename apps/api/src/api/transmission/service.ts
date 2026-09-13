@@ -12,6 +12,9 @@ import { env } from '../../config/env.js'
 import { emailService } from '../../services/email/index.js'
 import { objectStore } from '../../services/storage/index.js'
 import type { ActivateBody, ActivateContact, ConfigBody, ContactBody, PauseBody, Roles, SchemaBody } from './schemas.js'
+import { DAY_S } from '../../services/chain/message.js'
+import { prepareChainAction, type ChainContext } from '../../services/chain/sync.js'
+import type { ChainField } from '../../services/chain/schema.js'
 
 // --- Vues -----------------------------------------------------------------------
 
@@ -30,6 +33,17 @@ export interface ContactView {
   secret_enc: string
 }
 
+const WEEK_MS = 7 * 24 * 3600 * 1000
+const DAY_MS = 24 * 3600 * 1000
+const MONTH_DAYS = 30
+
+/** Contexte de la chaîne pour un owner : sujet et enregistrement déjà posés, clé publique. */
+export async function chainContext(userId: string, ed25519Pk?: Buffer): Promise<ChainContext> {
+  const cfg = await prisma().transmission_configs.findUnique({ where: { user_id: userId }, select: { chain_subject: true, chain_registered_at: true, users: { select: { ed25519_pk: true } } } })
+  const pk = ed25519Pk ?? (cfg?.users.ed25519_pk ? Buffer.from(cfg.users.ed25519_pk) : null)
+  return { chainSubject: cfg?.chain_subject ?? null, chainRegisteredAt: cfg?.chain_registered_at ?? null, ed25519Pk: pk }
+}
+
 export interface TransmissionConfigView {
   status: string
   schema: { n: number; m: number }
@@ -38,6 +52,8 @@ export interface TransmissionConfigView {
   pause_until: string | null
   activated_at: string | null
   contacts: ContactView[]
+  /** Lot 2a : le pseudonyme on-chain et la date de l'enregistrement confirmé (null tant que rien n'est écrit). */
+  chain: { subject: string | null; registered_at: string | null }
 }
 
 const contactSelect = {
@@ -126,6 +142,7 @@ export async function getConfig(userId: string): Promise<TransmissionConfigView>
     pause_until: cfg?.pause_until?.toISOString() ?? null,
     activated_at: cfg?.activated_at?.toISOString() ?? null,
     contacts: (cfg?.trusted_contacts ?? []).map(toContactView),
+    chain: { subject: cfg?.chain_subject ?? null, registered_at: cfg?.chain_registered_at?.toISOString() ?? null },
   }
 }
 
@@ -470,6 +487,14 @@ export async function activate(userId: string, body: ActivateBody): Promise<{ ac
 
   // Toutes les vérifications avant la moindre écriture.
   const owner = await ownerKey(userId)
+  const chainNow = new Date()
+  const chain = await prepareChainAction(body.chain, 'register', ['register'], await chainContext(userId, owner.ed25519Pk), {
+    nextDue: new Date(chainNow.getTime() + body.checkin_frequency_weeks * WEEK_MS),
+    n: body.schema.n,
+    m: body.contacts.length,
+    silenceSecs: body.silence_duration_months * MONTH_DAYS * DAY_S,
+    checkinFreqSecs: body.checkin_frequency_weeks * 7 * DAY_S,
+  })
   const prepared: PreparedContact[] = []
   for (const c of body.contacts) {
     const validated = await validateContactInput(userId, c, owner)
@@ -530,6 +555,9 @@ export async function activate(userId: string, body: ActivateBody): Promise<{ ac
     throw new AppError('VAULT_SYNC_FAILED', { message: 'Échec du dépôt des parts.', cause: err })
   }
 
+  // Lot 2a : le miroir on-chain part après la bascule en base — jamais avant.
+  await chain?.enqueue({ userId, configId: cfg.id })
+
   // DEC-30 / Point-1 : prévenir chaque contact, directement ici. L'adresse ne
   // vit que le temps de l'envoi ; email_log n'en garde que le hash. Le prénom
   // vient de la sealed box (D.2) : le serveur n'en a pas d'autre.
@@ -554,9 +582,6 @@ function notConfigured(why: string): never {
 
 // --- Pause, reprise, désactivation (E4-US04, Backend §3.4) ------------------------
 
-const WEEK_MS = 7 * 24 * 3600 * 1000
-const DAY_MS = 24 * 3600 * 1000
-
 async function configOrThrow(userId: string) {
   const cfg = await prisma().transmission_configs.findUnique({ where: { user_id: userId } })
   if (!cfg) notConfigured('Transmission non configurée.')
@@ -571,18 +596,23 @@ export async function pause(userId: string, body: PauseBody): Promise<Transmissi
     throw new AppError('VALIDATION_ERROR', { details: { duration_days: `${maxMonths} mois maximum` } })
   }
   const now = new Date()
+  const pauseUntil = new Date(now.getTime() + body.duration_days * DAY_MS)
+  const chain = await prepareChainAction(body.chain, 'pause', ['pause'], await chainContext(userId), { pausedUntil: pauseUntil })
   await prisma().transmission_configs.update({
     where: { id: cfg.id },
-    data: { status: 'paused', paused_at: now, pause_until: new Date(now.getTime() + body.duration_days * DAY_MS) },
+    data: { status: 'paused', paused_at: now, pause_until: pauseUntil },
   })
+  await chain?.enqueue({ userId, configId: cfg.id })
   return getConfig(userId)
 }
 
 /** Fin de pause : le cycle de check-in repart de zéro, comme à l'activation. */
-export async function resume(userId: string): Promise<TransmissionConfigView> {
+export async function resume(userId: string, chainField?: ChainField): Promise<TransmissionConfigView> {
   const cfg = await configOrThrow(userId)
   if (cfg.status !== 'paused') notConfigured('La transmission n’est pas en pause.')
   const now = new Date()
+  // Lot 2a : sans signature, rien n'est écrit — la chaîne expire la pause d'elle-même (D3).
+  const chain = await prepareChainAction(chainField, 'resume', ['resume'], await chainContext(userId), { nextDue: new Date(now.getTime() + cfg.checkin_frequency_weeks * WEEK_MS) })
   await prisma().transmission_configs.update({
     where: { id: cfg.id },
     data: {
@@ -595,6 +625,7 @@ export async function resume(userId: string): Promise<TransmissionConfigView> {
       last_relance_at: null,
     },
   })
+  await chain?.enqueue({ userId, configId: cfg.id })
   return getConfig(userId)
 }
 
@@ -603,9 +634,10 @@ export async function resume(userId: string): Promise<TransmissionConfigView> {
  * les contacts restent (et redeviennent modifiables), la config repasse
  * inactive. Une transmission déclenchée ne se désactive pas.
  */
-export async function deactivate(userId: string): Promise<{ deactivated: true }> {
+export async function deactivate(userId: string, chainField?: ChainField): Promise<{ deactivated: true }> {
   const cfg = await configOrThrow(userId)
   if (cfg.status !== 'active' && cfg.status !== 'paused') notConfigured('Aucune transmission active à désactiver.')
+  const chain = await prepareChainAction(chainField, 'deactivate', ['deactivate'], await chainContext(userId), {})
 
   await objectStore().deletePrefix(`shares/${userId}/`)
   await prisma().$transaction([
@@ -636,10 +668,11 @@ export async function deactivate(userId: string): Promise<{ deactivated: true }>
         next_checkin_due: null,
         relance_count: 0,
         last_relance_at: null,
-        contract_registered: false,
       },
     }),
   ])
+  // contract_registered ne tombe qu'à la confirmation on-chain du deactivate (afterConfirmed).
+  await chain?.enqueue({ userId, configId: cfg.id })
   return { deactivated: true }
 }
 

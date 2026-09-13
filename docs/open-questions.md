@@ -331,7 +331,10 @@ IPFS, plancher du score d'autonomie, mode par défaut, publication de P2,
 granularité des dates, garde de la clé opérateur) sont dans son §7,
 **tranchées le 12/09/2026** avec les valeurs proposées. **Lot 1 fait le
 12/09/2026** : le contrat `contracts/src/RelaisDms.sol`, écrit test-first
-(§9 du design). Lots 2 (API) et 3 (clients) à venir.
+(§9 du design). **Lot 2a fait le 13/09/2026** : le miroir côté API (§10 du
+design, Backend §3 « Chaîne Arbitrum »). Restent le lot 2b (mode autonome :
+packs, `setPointers`, épinglage IPFS — **un compte d'épinglage est à ouvrir**,
+Storj + un second) et le lot 3 (clients).
 Tableau conservé pour l'historique :
 
 | Point | Constat | Décision attendue |

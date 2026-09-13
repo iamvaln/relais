@@ -8,6 +8,7 @@ import { limits } from '../../plugins/rate-limit.js'
 import { relaisKeyVersion, relaisPublicKeyBase64 } from '../../services/secrets/index.js'
 import * as transmission from './service.js'
 import { cancelByOwner } from '../relay/service.js'
+import { chainOnlyBody, emptyBodyAsObject, type ChainOnlyBody } from '../../services/chain/schema.js'
 import {
   activateBody,
   configBody,
@@ -83,13 +84,24 @@ export async function transmissionRoutes(app: FastifyInstance): Promise<void> {
     async (req) => ok(await transmission.pause(req.user!.id, req.body)),
   )
 
-  app.delete('/pause', { preHandler: [authenticate] }, async (req) => ok(await transmission.resume(req.user!.id)))
+  // Lot 2a : ces trois actions acceptent un corps optionnel { chain } — la signature owner pour la chaîne.
+  app.delete<{ Body: ChainOnlyBody }>(
+    '/pause',
+    { schema: { body: chainOnlyBody }, preValidation: emptyBodyAsObject, preHandler: [authenticate] },
+    async (req) => ok(await transmission.resume(req.user!.id, req.body.chain)),
+  )
 
   // L'owner est vivant : il annule lui-même une transmission déclenchée (12/09/2026), sous step-up.
-  app.post('/cancel', { preHandler: [authenticate, requireStepUp('cancel_transmission')] }, async (req) => ok(await cancelByOwner(req.user!.id)))
+  app.post<{ Body: ChainOnlyBody }>(
+    '/cancel',
+    { schema: { body: chainOnlyBody }, preValidation: emptyBodyAsObject, preHandler: [authenticate, requireStepUp('cancel_transmission')] },
+    async (req) => ok(await cancelByOwner(req.user!.id, new Date(), req.body.chain)),
+  )
 
-  app.delete('/', { preHandler: [authenticate, requireStepUp('delete_transmission')] }, async (req) =>
-    ok(await transmission.deactivate(req.user!.id)),
+  app.delete<{ Body: ChainOnlyBody }>(
+    '/',
+    { schema: { body: chainOnlyBody }, preValidation: emptyBodyAsObject, preHandler: [authenticate, requireStepUp('delete_transmission')] },
+    async (req) => ok(await transmission.deactivate(req.user!.id, req.body.chain)),
   )
 
   app.get<{ Params: ContactParams }>(

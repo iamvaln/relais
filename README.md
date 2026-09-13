@@ -14,7 +14,7 @@ d'implémentation.
 |---|---|
 | Specs produit, techniques, backend, frontend, back office | ✅ v1 (`docs/specs/`) |
 | Schéma PostgreSQL v1.4 | ✅ Implémenté et testé (`prisma/`), Proposals 8 et 9 incluses |
-| API backend — auth, vault, transmission, check-in, relay, journal, admin, facturation, dashboard, tickets, jobs | ✅ 96 endpoints, 303 tests d'intégration (`apps/api/`) |
+| API backend — auth, vault, transmission, check-in, relay, journal, admin, facturation, dashboard, tickets, jobs | ✅ 96 endpoints, 343 tests d'intégration (`apps/api/`) |
 | Cœur crypto de l'app (seed, clés, coffre, Shamir, contacts, relay, carnet) | ✅ `packages/crypto-core`, 32 tests + 1 bout en bout contre l'API |
 | Client API partagé (mobile, back office web) | ✅ `packages/api-client`, testé contre l'API |
 | Logique de l'app (PIN, device, onboarding, session, coffre, transmission, check-in, carnet, parcours du contact) | ✅ `packages/app-core`, testé sous Node et contre l'API |
@@ -22,7 +22,7 @@ d'implémentation.
 | Page web du contact (pour qui n'installe pas l'app) | ✅ `apps/web-relay`, Vite, même logique que l'app (`app-core`) |
 | API backend — logs API, fournisseur de paiement | ⬜ À faire |
 | Back office (interface) | ✅ Lots 1 à 3 (connexion TOTP, tableau de bord, utilisateurs, transmissions, questions, configuration, facturation, tickets, monitoring) — `packages/admin-core` + `apps/web-admin` (React, Vite), décisions dans `docs/backoffice.md` |
-| Smart contract Arbitrum | 🟨 Lot 1 : contrat `contracts/src/RelaisDms.sol` écrit test-first (48 tests Foundry : machine à états, fuzz, invariants) ; API (lot 2) et clients (lot 3) à écrire — design dans `docs/smart-contract-v2.md` |
+| Smart contract Arbitrum | 🟨 Lot 1 : contrat `contracts/src/RelaisDms.sol` (48 tests Foundry) ; lot 2a : le miroir côté API (`apps/api/src/services/chain`, signatures owner vérifiées, file `chain_sync`, réconciliation, alertes, Anvil en CI) ; lot 2b (mode autonome, IPFS) et lot 3 (clients) à écrire — design dans `docs/smart-contract-v2.md` |
 
 ## Documentation
 
@@ -80,7 +80,7 @@ npm install
 scripts/dev-services.sh start          # PostgreSQL 16 + Redis jetables, migrations + seed
 cp apps/api/.env.example apps/api/.env # puis renseigner les secrets (openssl rand -hex 32)
 npm run dev                            # http://localhost:3000/health
-npm test                               # 204 tests d'intégration sur base réelle
+npm test                               # 343 tests d'intégration sur base réelle (anvil dans le PATH pour la chaîne)
 npm run typecheck && npm run lint
 ```
 
@@ -112,8 +112,11 @@ forge test --gas-report
 `RelaisDms.sol` est le chemin de secours : minuteur public que n'importe qui
 peut déclencher après le silence, registre de la clé Ed25519 et des hachés
 des parts, annuaire des CID des packs. L'opérateur écrit, l'owner signe,
-tout le monde vérifie. Design et décisions dans
-[`docs/smart-contract-v2.md`](docs/smart-contract-v2.md).
+tout le monde vérifie. Côté API (`CHAIN_ENABLED=true`), chaque action signée
+part dans la file `chain_sync`, vidée chaque minute, et une réconciliation
+quotidienne compare la chaîne à la base ; les tests tournent contre Anvil
+(`anvil` dans le PATH, `forge build` dans `contracts/`). Design et décisions
+dans [`docs/smart-contract-v2.md`](docs/smart-contract-v2.md).
 
 ## Principe non négociable
 

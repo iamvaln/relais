@@ -44,12 +44,20 @@ jobs:
       TEST_REDIS_PORT: '55379'
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
       - name: Clients PostgreSQL et Redis (psql, redis-cli)
         run: sudo apt-get update -q && sudo apt-get install -y -q postgresql-client redis-tools
+      - name: Foundry (anvil pour les tests de la chaîne, forge pour l'artefact du contrat)
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: v1.5.1
+      - name: Artefact du contrat (contracts/out) — lu par les tests de la chaîne
+        run: cd contracts && forge build
       - run: npm ci
       - run: npm run db:generate
       - name: Packages partagés (crypto-core, api-client, app-core, admin-core) → dist/

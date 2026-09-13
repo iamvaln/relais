@@ -389,3 +389,37 @@ Gaz mesuré (tests unitaires, optimiseur 10 000) : `register` ≈ 80 k,
 Non fait dans ce lot, et volontairement : aucun script de déploiement (il
 viendra avec le lot 2, l'API et Anvil en CI), pas de vérification Ed25519
 on-chain (D1), pas de proxy (§2).
+
+## 10. Lot 2a — l'API, le miroir ✅ (13/09/2026)
+
+Ce que le §3 décrivait, tel qu'écrit (détail dans `docs/backend.md` §3
+« Chaîne Arbitrum ») :
+
+- `crypto-core` `chain.ts` : `chainSubject`, `chainMessage`, `signChainAction`,
+  `verifyChainAction`. Le message canonique porte aussi `n`, `m`, `silenceSecs`
+  et `checkinFreqSecs` (champs à 0 hors `register`) : l'opérateur ne peut pas
+  substituer les paramètres d'enregistrement sous une signature valide —
+  précision apportée à D1.
+- API : `services/chain/` (client viem, ABI commitée, clé opérateur scellée,
+  file `chain_sync` traitée par `chain:drain`, réconciliation `chain:reconcile`,
+  alertes `chain_divergence` et `chain_gas_low`, section `chain` de la santé
+  admin) ; champ optionnel `chain { action?, next_due?, paused_until?, sig }`
+  sur activation, check-in, pause, reprise, annulation, désactivation ;
+  migration `20260917000000_chain_mirror` (`chain_subject`,
+  `chain_registered_at`, table `chain_sync`, `arbitrum_address` supprimée) ;
+  variables `CHAIN_*` ; `npm run chain:keygen`, `npm run chain:abi`.
+- Décisions prises en écrivant : la date signée est choisie par l'app et
+  bornée par l'API (± 2 jours) ; le champ `chain` reste optionnel (miroir
+  progressif) ; `m` on-chain = nombre de contacts porteurs ; la reprise
+  automatique n'écrit rien ; l'annulation admin laisse la chaîne `Triggered`
+  jusqu'à une signature de l'owner ; un `trigger` attend que la chaîne soit
+  d'accord au lieu d'échouer ; la fraîcheur de la file se juge à l'horloge de
+  la base.
+- Tests : 17 sur le miroir, 6 sur la réconciliation, 7 sur le client, 5 sur
+  la clé et le scellé, 6 dans crypto-core — tous contre un Anvil réel (un par
+  test) ; le job API de la CI installe Foundry et construit l'artefact.
+
+Reste pour le lot 2b : mode autonome (`autonomy_mode`, packs, `setPointers`,
+épinglage IPFS — compte à ouvrir), et la republication du coffre. Puis lot 3 :
+les clients (signatures dans l'app, choix du mode, carte d'autonomie, parcours
+autonome).

@@ -73,21 +73,21 @@ Le module **auth** de §3.1 v1.1, le module **vault** de §3.3 v1.1, le module
 | `GET /vault/sync-status` | Date et taille par catégorie, lues sur le stockage |
 | `POST /vault/restore` | Renvoie le blob tel quel — exige un challenge Ed25519 vérifié dans les 15 minutes (403 `AUTH_RESTORE_REQUIRED`, audit LOW-13) |
 | `GET /transmission/relais-key` | **Public**, 60/min/IP, cache 24 h — DEC-28 |
-| `GET /transmission/config` | État complet, contacts inclus (jamais `removed`), `secret_enc` de chaque contact rendu à l'owner — voir §3 |
+| `GET /transmission/config` | État complet, contacts inclus (jamais `removed`), `secret_enc` de chaque contact rendu à l'owner — voir §3. Lot 2a : `chain { subject, registered_at }` |
 | `GET /transmission/questions` | Bibliothèque des questions secrètes (BO-04) : actives, `secret_question` ou `both`, score ≥ `vault.question_min_score`, groupées par catégorie |
 | `POST /transmission/contacts` | Note-01, limite de plan, signature et sealed box vérifiées |
 | `PUT /transmission/contacts/:id` | Step-up `edit_contacts`, mêmes règles |
 | `DELETE /transmission/contacts/:id` | Step-up `edit_contacts`, retrait logique |
 | `PUT /transmission/schema` | Step-up `edit_contacts`, N ≥ 2, M ≥ N |
 | `PUT /transmission/config` | Step-up `edit_transmission`, DEC-22 |
-| `POST /transmission/activate` | Step-up `activate_transmission` — DEC-29, DEC-30, Proposal-8 (`plain_hash` + `plain_sig` par part), email `contact_designated` — voir §3 |
-| `POST /transmission/pause` · `DELETE /transmission/pause` | E4-US04, 7 / 30 / 90 jours, plafond `dms.pause_max_months` |
-| `DELETE /transmission` | Step-up `delete_transmission`, parts purgées |
-| `POST /transmission/cancel` | Step-up `cancel_transmission` : l'owner vivant annule une transmission déclenchée — escrow purgé, liens morts, config de nouveau active, contacts prévenus (12/09/2026), voir §3 |
+| `POST /transmission/activate` | Step-up `activate_transmission` — DEC-29, DEC-30, Proposal-8 (`plain_hash` + `plain_sig` par part), email `contact_designated` — voir §3. Lot 2a : champ optionnel `chain { next_due, sig }` = signature owner de `register` (voir §3 « Chaîne ») |
+| `POST /transmission/pause` · `DELETE /transmission/pause` | E4-US04, 7 / 30 / 90 jours, plafond `dms.pause_max_months`. Lot 2a : `chain { paused_until, sig }` / corps optionnel `{ chain: { next_due, sig } }` |
+| `DELETE /transmission` | Step-up `delete_transmission`, parts purgées. Lot 2a : corps optionnel `{ chain: { sig } }` |
+| `POST /transmission/cancel` | Step-up `cancel_transmission` : l'owner vivant annule une transmission déclenchée — escrow purgé, liens morts, config de nouveau active, contacts prévenus (12/09/2026), voir §3. Lot 2a : corps optionnel `{ chain: { next_due, sig } }` → `cancelTrigger` |
 | `GET /transmission/contacts/:id/verify-challenge` · `POST /transmission/contacts/:id/verify` | Vérification annuelle — challenge serveur (5 min, usage unique) puis attestation signée `SHA256(verify_token ‖ challenge)`, voir §3 |
 | `GET /checkin/status` | Échéance, retard en jours, relances, « validé ce mois » |
 | `GET /checkin/game` · `POST /checkin/game/answer` | Défi côté serveur, 10 réponses/h/user (§7.1) — voir §3 |
-| `POST /checkin/complete` | Consomme le jeton du jeu ; ligne du mois, streak, badge ; replanifie l'échéance |
+| `POST /checkin/complete` | Consomme le jeton du jeu ; ligne du mois, streak, badge ; replanifie l'échéance. Lot 2a : `chain { next_due, sig }` (ou `action: register` pour un compte activé avant la chaîne) |
 | `GET /checkin/history` · `GET /checkin/streak` | Log des mois validés ; streak courant, record, badges |
 | `POST /auth/push-token` · `DELETE /auth/push-token` | Lot 5 mobile : identifiant d'abonnement OneSignal du device (un token, un compte), désactivé au retrait — voir §3 |
 | `GET /relay/:token` | **Public** (token du lien), 30/min/IP : questions, rôles, `verify_token`, Si_enc, `secret_enc`, état |
@@ -715,6 +715,65 @@ compris), remet la configuration de transmission à zéro, puis anonymise la
 ligne (`deleted-{id}@anonymized.invalid`, nom générique, téléphone et clé
 publique effacés, statut `deleted`, motif, admin, date). `email_log` garde
 ses hashes, `subscriptions` et `payment_events` restent (comptabilité).
+
+### Chaîne Arbitrum : le miroir on-chain (lot 2a, 13/09/2026)
+
+Design dans `docs/smart-contract-v2.md` (§3, §10). Ce que l'API fait, et ce
+qu'elle ne fait pas :
+
+- **Rien n'attend la chaîne.** Un endpoint vérifie la signature de l'owner,
+  écrit en base, puis insère une ligne `chain_sync` (statut `queued`). La
+  table est la file : le job `chain:drain` (chaque minute, concurrence 1, un
+  seul signataire) la traite dans l'ordre, sujet par sujet. Une écriture déjà
+  satisfaite par l'état on-chain est `skipped` ; un revert déterministe du
+  contrat est `failed` (jamais rejoué) ; une panne réseau laisse la ligne
+  `queued` ; un `trigger` pas encore déclenchable **attend**, et les lignes
+  suivantes du même sujet avec lui.
+- **La signature est vérifiée avant toute écriture** (`CHAIN_SIG_INVALID`,
+  400) : Ed25519 de l'owner sur `SHA256("relais:dms:v2|action|subject|
+  nextDue|pausedUntil|n|m|silenceSecs|checkinFreqSecs")`, le même message que
+  `crypto-core` (`chain.ts`) produit. La date signée doit être alignée au jour
+  et à ± 2 jours de celle que l'API calcule (`CHAIN_FIELDS_MISMATCH`, 400) :
+  l'app choisit la date, l'API la borne. `subject = keccak256(ed25519_pk)`.
+- **Le champ `chain` est optionnel.** Sans lui, l'action se fait en base
+  seulement et la réconciliation signale le compte comme `unregistered`. Un
+  compte activé avant la chaîne s'enregistre à son prochain check-in
+  (`chain.action = register`) ; un `checkin` signé pour un compte jamais
+  enregistré est refusé (`CHAIN_NOT_REGISTERED`, 409) plutôt qu'écrit dans le
+  vide.
+- **Points d'écriture** : activation → `register` puis `setShareHashes` (un
+  haché par contact porteur : keccak256 des sha256 de ses parts, `m` on-chain
+  = nombre de contacts porteurs) ; check-in → `checkin` (hash de transaction
+  dans `checkin_log.arbitrum_tx_hash`) ; pause → `pause` ; reprise explicite →
+  `resume` ; annulation par l'owner → `cancelTrigger` ; désactivation →
+  `deactivate` ; balayage deadman → `trigger` (sans signature, permis à tous ;
+  bloc dans `transmissions.arbitrum_trigger_block`) ; purge → `complete`. La
+  reprise automatique en fin de pause n'écrit rien : la chaîne calcule
+  l'expiration elle-même (D3). `contract_registered` et `chain_registered_at`
+  ne bougent qu'à la confirmation on-chain.
+- **L'annulation admin n'a pas de signature owner** : la chaîne reste
+  `Triggered`, le prochain `checkin` signé échoue (`failed`, `BadStatus`) et la
+  réconciliation le montre. C'est voulu : seule une signature de l'owner
+  ramène le minuteur (D4). Le lot 3 fera signer `cancelTrigger` depuis l'app
+  dans ce cas.
+- **Réconciliation** (`chain:reconcile`, 10:00 UTC) : la base reste maître ;
+  écarts `unregistered`, `status`, `next_due` (± 3 jours), `chain_triggered`,
+  `stale_queue` (> 24 h en file, horloge de la base), `failed_write` (7 jours)
+  → alerte `chain_divergence` (moyenne) avec le détail par type. Le solde de
+  l'opérateur → `chain_gas_low` (haute) sous 0,01 ETH. `GET /admin/health`
+  gagne `services.chain` et une section `chain` (identifiant, bloc, opérateur,
+  solde, file, dernière réconciliation).
+- **`CHAIN_TRUST_TRIGGERS`** : à `false` (mode miroir), un `Triggered` posé par
+  un tiers n'est qu'un écart. À `true`, la réconciliation ouvre la
+  transmission (`startTransmission`) — le contrat a déjà vérifié que le
+  silence avait couru. C'est la seule fois où la chaîne commande à la base.
+- **Clé opérateur** : secp256k1, scellée `enc1:` sous `CHAIN_KEY_ENC_KEY`
+  (`lib/enc.ts`, le scellé du secret TOTP, extrait), déchiffrée au démarrage,
+  jamais loguée ; `npm run chain:keygen` n'imprime que l'adresse et le scellé.
+  L'ABI est commitée (`npm run chain:abi`) et comparée à l'artefact Foundry en
+  test ; les tests d'intégration tournent contre un Anvil réel, un par test.
+- **Non fait, volontairement** : le mode autonome (packs, `setPointers`,
+  épinglage IPFS) est la PR 2b — il attend un compte d'épinglage.
 
 ### Admin : annuler une transmission rend la main à l'owner
 

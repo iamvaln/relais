@@ -56,6 +56,9 @@ export const keys = {
   vaultSyncTs: (userId: string, category: string) => `vault:sync:ts:${userId}:${category}`,
   /** Erreurs du stockage objet, datées (sorted set) — alerte « stockage dégradé » du tableau de bord (12/09/2026). */
   storageErrors: () => 'storage:errors',
+  /** Lot 2a : solde de l'opérateur (wei, texte) et résumé de la dernière réconciliation (JSON). */
+  chainBalance: () => 'chain:balance_wei',
+  chainReconcile: () => 'chain:reconcile:last',
   /** Défi de check-in en cours pour un utilisateur (24 h). */
   checkinGame: (userId: string) => `checkin:game:${userId}`,
   /** Jeu réussi, à échanger contre un check-in (usage unique, 15 min). */
