@@ -124,9 +124,35 @@ export class DeviceVault {
     }
   }
 
+  /** Réglages, après l'onboarding : le PIN prouve la possession, puis le seed est rechiffré sous K_bio. */
+  async enableBiometricsWithPin(pin: string): Promise<void> {
+    const seed = await this.unlockWithPin(pin)
+    try {
+      await this.enableBiometrics(seed)
+    } finally {
+      wipe(seed)
+    }
+  }
+
   async disableBiometrics(): Promise<void> {
     await this.storage.delete(KEY_SEED_BIO)
     await this.storage.delete(KEY_BIO)
+  }
+
+  /**
+   * Confirmation locale d'une action sensible par la biométrie, en lieu et
+   * place du PIN : `ok` si le seed s'ouvre, `refused` si le device refuse ou
+   * échoue, `unavailable` si la biométrie n'est pas activée. Ne lance jamais :
+   * l'écran repasse au PIN sur tout autre verdict que `ok`.
+   */
+  async confirmWithBiometrics(): Promise<'ok' | 'refused' | 'unavailable'> {
+    if (!(await this.hasBiometrics())) return 'unavailable'
+    try {
+      wipe(await this.unlockWithBiometrics())
+      return 'ok'
+    } catch {
+      return 'refused'
+    }
   }
 
   /** Nouveau device, ou l'utilisateur quitte Relais sur celui-ci : plus rien. */

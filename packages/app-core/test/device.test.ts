@@ -84,6 +84,32 @@ describe('biométrie', () => {
     expect(await device.unlockWithPin('482913')).toHaveLength(64) // le PIN reste
   })
 
+  it('activer après coup avec le PIN (réglages) : le bon PIN rechiffre le seed sous la clé biométrique ; un mauvais PIN compte et n’active rien', async () => {
+    const { device } = makeDevice()
+    await device.setupPin(mnemonicToSeed(VECTOR), '482913')
+    await expect(device.enableBiometricsWithPin('000001')).rejects.toThrow(PinInvalidError)
+    expect(await device.hasBiometrics()).toBe(false)
+    await device.enableBiometricsWithPin('482913')
+    expect(await device.hasBiometrics()).toBe(true)
+    expect(Buffer.from(await device.unlockWithBiometrics()).toString('hex')).toBe(seedHex())
+    // le PIN reste le secours, et le seed n'apparaît nulle part en clair
+    expect(await device.unlockWithPin('482913')).toHaveLength(64)
+  })
+
+  it('confirmWithBiometrics : ok quand la biométrie ouvre le seed, refused sur refus, unavailable sans biométrie ; jamais d’exception', async () => {
+    const { storage, device } = makeDevice()
+    await device.setupPin(mnemonicToSeed(VECTOR), '482913')
+    expect(await device.confirmWithBiometrics()).toBe('unavailable')
+    await device.enableBiometricsWithPin('482913')
+    expect(await device.confirmWithBiometrics()).toBe('ok')
+    storage.biometricGate = async () => false
+    expect(await device.confirmWithBiometrics()).toBe('refused')
+    storage.biometricGate = async () => {
+      throw new Error('capteur en panne')
+    }
+    expect(await device.confirmWithBiometrics()).toBe('refused')
+  })
+
   it('wipe efface tout : plus de seed, plus de biométrie, compteur à zéro', async () => {
     const { storage, device } = makeDevice()
     await device.setupPin(mnemonicToSeed(VECTOR), '482913')
