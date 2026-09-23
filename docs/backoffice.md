@@ -26,6 +26,7 @@ tickets — `docs/backend.md` §3). Deux workspaces :
 | 1 | Connexion email + mot de passe + TOTP, session 8 h, coquille et menu par rôle, tableau de bord (KPIs, alertes, santé des services), utilisateurs (liste filtrable et paginée, fiche, débloquer, regénérer l'OTP, suspendre, changer l'email, supprimer RGPD avec double confirmation) | ✅ |
 | 2 | Transmissions (liste filtrée et paginée, détail en statuts et compteurs, étendre l'escrow +24/48 h, relancer, annuler, débloquer un contact), questions (bibliothèque filtrable, ajout, modification, archivage), configuration (BO-05, par catégorie, validation typée, double confirmation) | ✅ |
 | 3 | Facturation (vue d'ensemble, abonnements avec recherche, passage premium, renouvellement, extension, rétrogradation, export CSV), tickets (file filtrable, détail, prise en charge, priorité, résolution, fermeture, réouverture), monitoring (santé de l'API, jobs, compteurs, journal d'audit filtrable avec avant/après) | ✅ |
+| 4 | Mode sombre : thème du navigateur par défaut, sélecteur Auto / Clair / Sombre (connexion et barre latérale), palette de la marque en jetons ; la page du contact suit `prefers-color-scheme` | ✅ |
 
 ## 2. Décisions (12 septembre 2026)
 
@@ -65,6 +66,16 @@ tickets — `docs/backend.md` §3). Deux workspaces :
 | Monitoring | Santé (`GET /admin/health` : sondes, uptime, jobs, compteurs) rafraîchie toutes les 60 s ; journal d'audit filtrable (action parmi les codes du CHECK, admin, cible, dates) dans l'URL, 50 par page, avant/après dépliables. Aucun contenu utilisateur : identifiants et IP hachée seulement. |
 | Menu | Les huit modules existent : la route de repli « bientôt » est retirée, une URL inconnue renvoie à l'accueil du rôle. |
 | Vérification visuelle | Chromium contre l'API réelle : recherche d'un abonné, passage premium, téléchargement du CSV (nom `relais-billing-…`), prise en charge et résolution d'un ticket, journal filtré sur `PLAN_CHANGE` avec détails, bascule EN. |
+
+### Mode sombre (23 septembre 2026)
+
+| Sujet | Décision |
+|---|---|
+| Thème | **Celui du navigateur par défaut, réglage manuel mémorisé** : `styles.css` déclare la palette sombre deux fois, sous `prefers-color-scheme: dark` (sauf `data-theme="light"`) et sous `data-theme="dark"` ; `app-state` pose `data-theme` sur `<html>` depuis la préférence (`relais-admin-theme` dans localStorage, à côté de la langue) et la retire pour « système ». Résolution pure dans `admin-core` (`resolveTheme`, `parseThemePreference`). `color-scheme` suit, pour les champs natifs. |
+| Palette sombre | La même marque renversée : fond espresso `#1f1a15`, cartes `#2a231c`, texte crème, sable `#d9b07c` pour les actions (le brun `#8b5c2a` manque de contraste sur fond sombre), badges assombris, barre latérale plus profonde que le fond. Toutes les couleurs en dur (badges, en-têtes de table, survol, barre latérale, `code`) sont devenues des jetons pour que les deux thèmes se lisent au même endroit. |
+| Sélecteur | Trois boutons (Auto, Clair, Sombre) de la même forme que le sélecteur de langue, dans le pied de la barre latérale et sur l'écran de connexion ; `aria-pressed` et libellés FR/EN. |
+| Page du contact | `apps/web-relay` suit `prefers-color-scheme` seulement (dix lignes de CSS, palette de la marque) : pas de réglage, rien d'écrit dans le navigateur, conformément à la décision du 12/09. |
+| Vérification visuelle | Chromium (Playwright, `colorScheme` émulé) : connexion et tableau de bord en clair et en sombre, bascule par le sélecteur, préférence relue au rechargement. |
 
 ## 3. Lancer
 

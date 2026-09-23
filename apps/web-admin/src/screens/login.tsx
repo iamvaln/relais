@@ -3,6 +3,7 @@ import { homeModule } from '@relais/admin-core'
 import { useState, type FormEvent } from 'react'
 import { Navigate, useNavigate } from 'react-router-dom'
 import { useApp } from '../app-state'
+import { ThemeToggle } from '../theme-toggle'
 
 export function LoginScreen() {
   const { admin, ready, login, t, lostNotice, lang, setLang } = useApp()
@@ -60,6 +61,7 @@ export function LoginScreen() {
             </button>
           ))}
         </span>
+        <ThemeToggle />
       </form>
     </div>
   )
