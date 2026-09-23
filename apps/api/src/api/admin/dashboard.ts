@@ -26,6 +26,8 @@ export interface DashboardKpis {
   transmissions_triggered_this_month: number
   transmissions_completed_this_month: number
   transmissions_completed_total: number
+  /** configurations de transmission actives (le back office l'affiche depuis le lot 1) */
+  transmissions_active: number
   /** % des transmissions actives dont le check-in est à jour ; null sans transmission active. */
   checkin_rate: number | null
   revenue_this_month_fcfa: number
@@ -75,6 +77,7 @@ async function kpis(now: Date): Promise<DashboardKpis> {
     transmissions_triggered_this_month: triggered,
     transmissions_completed_this_month: completedMonth,
     transmissions_completed_total: completedTotal,
+    transmissions_active: activeTransmissions,
     checkin_rate: activeTransmissions === 0 ? null : Math.round((onTime / activeTransmissions) * 1000) / 10,
     revenue_this_month_fcfa: revenue._sum.amount_fcfa ?? 0,
     tickets_open: tickets,

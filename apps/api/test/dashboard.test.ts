@@ -59,6 +59,7 @@ describe('GET /admin/dashboard — KPIs (BO-01)', () => {
       transmissions_triggered_this_month: 2, // c et d
       transmissions_completed_this_month: 1,
       transmissions_completed_total: 1,
+      transmissions_active: 2, // a et b (config active), c et d sont déclenchées
       checkin_rate: 50, // parmi les transmissions actives (a, b), a est à jour
       revenue_this_month_fcfa: 10000,
       tickets_open: 1,
@@ -71,7 +72,7 @@ describe('GET /admin/dashboard — KPIs (BO-01)', () => {
     const sa = await loginAdmin()
     await registerUser('a@example.cm')
     const r = await (await api()).get('/admin/dashboard').set(sa.auth).expect(200)
-    expect(r.body.data.kpis).toMatchObject({ users_total: 1, checkin_rate: null, premium_active: 0, tickets_open: 0 })
+    expect(r.body.data.kpis).toMatchObject({ users_total: 1, transmissions_active: 0, checkin_rate: null, premium_active: 0, tickets_open: 0 })
   })
 })
 
