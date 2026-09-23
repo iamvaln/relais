@@ -109,7 +109,7 @@ Le module **auth** de §3.1 v1.1, le module **vault** de §3.3 v1.1, le module
 | `GET /admin/logs/audit` · `GET /admin/health` | BO-06 |
 | `GET /admin/billing/overview` · `GET /admin/billing/subscriptions` · `GET /admin/billing/export` | BO-07, rôles finance / super_admin ; la liste porte `user_email` et `full_name` et accepte `search` (BO lot 3) ; l'export reste sans email |
 | `PUT /admin/billing/:id/plan` · `POST /admin/billing/:id/extend` | Encaissement manuel, renouvellement, rétrogradation, geste commercial — voir §3 |
-| `GET /admin/dashboard` | BO-01 : les huit KPIs et les alertes calculables, triées par criticité — voir §3 |
+| `GET /admin/dashboard` | BO-01 : les huit KPIs, `transmissions_active` (attendu par le back office, ajouté le 23/09/2026) et les alertes calculables, triées par criticité — voir §3 |
 | `POST /support/tickets` · `GET /support/tickets` | Ouvert sans compte (email, 3/h/IP) ou avec token ; ses propres tickets — voir §3 |
 | `GET /admin/tickets` · `GET …/:id` · `PUT …/:id` | BO-02, rôle support : file, prise en charge, résolution (email `ticket_resolved` au demandeur, 12/09/2026), `TICKET_UPDATE` audité |
 | `GET /admin/admins` | Id, nom, rôle, statut des admins — jamais d'email ; pour assigner un ticket à un collègue (12/09/2026) |
