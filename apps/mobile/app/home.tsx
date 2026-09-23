@@ -88,6 +88,7 @@ export default function Home() {
       <Button title={t(lang, 'journal.title')} secondary onPress={() => router.push('/journal')} />
       <Button title={t(lang, 'transmission.title')} secondary onPress={() => router.push('/transmission')} />
       <Button title={t(lang, 'home.security')} secondary onPress={() => router.push('/settings/security')} />
+      <Button title={t(lang, 'home.appearance')} secondary onPress={() => router.push('/settings/appearance')} />
       <Button
         title={t(lang, 'home.lock')}
         secondary

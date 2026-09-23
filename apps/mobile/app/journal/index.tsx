@@ -8,9 +8,10 @@ import { t, type MessageKey } from '@/i18n'
 import { messageFor } from '@/lib/errors'
 import { journal } from '@/state/checkin'
 import { useSession } from '@/state/session'
-import { Body, Button, ErrorText, Screen, Title, colors } from '@/ui'
+import { Body, Button, ErrorText, Screen, Title, useStyles, type Palette } from '@/ui'
 
 export default function JournalHome() {
+  const styles = useStyles(makeStyles)
   const lang = useSession((s) => s.language)
   const [entries, setEntries] = useState<JournalEntry[]>([])
   const [answered, setAnswered] = useState<boolean | null>(null)
@@ -94,7 +95,8 @@ export default function JournalHome() {
   )
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (colors: Palette) =>
+  StyleSheet.create({
   item: { paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: colors.field },
   itemTitle: { fontSize: 16, color: colors.ink },
 })

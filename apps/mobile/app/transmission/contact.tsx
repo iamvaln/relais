@@ -9,7 +9,7 @@ import { t, type MessageKey } from '@/i18n'
 import { messageFor } from '@/lib/errors'
 import { useSession } from '@/state/session'
 import { openTransmission, useTransmission } from '@/state/transmission'
-import { Body, Button, ErrorText, Field, Screen, Title, colors } from '@/ui'
+import { Body, Button, ErrorText, Field, Screen, Title, useStyles, type Palette } from '@/ui'
 import { PinConfirm } from '@/ui/pin-confirm'
 
 type Form = Omit<ContactInput, 'questionIds' | 'answers'> & { questionIds: [string, string, string]; answers: [string, string, string] }
@@ -17,6 +17,7 @@ type Form = Omit<ContactInput, 'questionIds' | 'answers'> & { questionIds: [stri
 const EMPTY: Form = { name: '', email: '', phone: null, message: '', roles: { k1: true, k2: false, k3: false }, questionIds: ['', '', ''], answers: ['', '', ''] }
 
 export default function ContactForm() {
+  const styles = useStyles(makeStyles)
   const lang = useSession((s) => s.language)
   const { config } = useTransmission()
   const { id } = useLocalSearchParams<{ id?: string }>()
@@ -173,7 +174,8 @@ export default function ContactForm() {
   )
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (colors: Palette) =>
+  StyleSheet.create({
   list: { gap: 10 },
   section: { fontSize: 18, fontWeight: '600', color: colors.ink, marginTop: 8 },
   item: { paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: colors.field },
@@ -182,5 +184,5 @@ const styles = StyleSheet.create({
   itemMeta: { fontSize: 13, color: colors.muted },
   role: { padding: 10, borderRadius: 8, borderWidth: 1, borderColor: colors.brand },
   roleActive: { backgroundColor: colors.brand },
-  roleTextActive: { color: 'white' },
+  roleTextActive: { color: colors.onBrand },
 })

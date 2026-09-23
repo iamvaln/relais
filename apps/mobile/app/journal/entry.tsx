@@ -8,11 +8,12 @@ import { t, type MessageKey } from '@/i18n'
 import { messageFor } from '@/lib/errors'
 import { journal } from '@/state/checkin'
 import { useSession } from '@/state/session'
-import { Body, Button, ErrorText, Field, Screen, Title, colors } from '@/ui'
+import { Body, Button, ErrorText, Field, Screen, Title, useStyles, type Palette } from '@/ui'
 
 const MODES: JournalMode[] = ['essential', 'reflective', 'free']
 
 export default function JournalEntry() {
+  const styles = useStyles(makeStyles)
   const lang = useSession((s) => s.language)
   const [mode, setMode] = useState<JournalMode>('essential')
   const [question, setQuestion] = useState<MonthQuestion | null>(null)
@@ -82,10 +83,11 @@ export default function JournalEntry() {
   )
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (colors: Palette) =>
+  StyleSheet.create({
   row: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
   chip: { paddingVertical: 6, paddingHorizontal: 12, borderRadius: 16, borderWidth: 1, borderColor: colors.brand },
   chipActive: { backgroundColor: colors.brand },
   chipText: { color: colors.brand },
-  chipTextActive: { color: 'white' },
+  chipTextActive: { color: colors.onBrand },
 })

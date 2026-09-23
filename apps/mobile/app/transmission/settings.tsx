@@ -8,13 +8,14 @@ import { t } from '@/i18n'
 import { checkinOccasions, schemaSentence } from '@/lib/transmission'
 import { useSession } from '@/state/session'
 import { openTransmission, refreshTransmission, useTransmission } from '@/state/transmission'
-import { Body, Button, Screen, Title, colors } from '@/ui'
+import { Body, Button, Screen, Title, useStyles, type Palette } from '@/ui'
 import { PinConfirm } from '@/ui/pin-confirm'
 
 const MONTHS: SilenceMonths[] = [1, 3, 6]
 const WEEKS: CheckinWeeks[] = [1, 2, 4]
 
 function Chip({ label, active, disabled, onPress }: { label: string; active: boolean; disabled?: boolean; onPress: () => void }) {
+  const styles = useStyles(makeStyles)
   return (
     <Pressable onPress={onPress} disabled={disabled} style={[styles.chip, active && styles.chipActive, disabled && styles.chipDisabled]}>
       <Text style={[styles.chipText, active && styles.chipTextActive]}>{label}</Text>
@@ -23,6 +24,7 @@ function Chip({ label, active, disabled, onPress }: { label: string; active: boo
 }
 
 export default function TransmissionSettings() {
+  const styles = useStyles(makeStyles)
   const lang = useSession((s) => s.language)
   const { config, contacts } = useTransmission()
   const m = Math.max(contacts.length, 2)
@@ -90,11 +92,12 @@ export default function TransmissionSettings() {
   )
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (colors: Palette) =>
+  StyleSheet.create({
   row: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
   chip: { paddingVertical: 6, paddingHorizontal: 12, borderRadius: 16, borderWidth: 1, borderColor: colors.brand },
   chipActive: { backgroundColor: colors.brand },
   chipDisabled: { opacity: 0.4 },
   chipText: { color: colors.brand },
-  chipTextActive: { color: 'white' },
+  chipTextActive: { color: colors.onBrand },
 })

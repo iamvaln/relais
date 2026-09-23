@@ -9,9 +9,10 @@ import { badgeKey } from '@/lib/checkin'
 import { messageFor } from '@/lib/errors'
 import { checkin, journal } from '@/state/checkin'
 import { useSession } from '@/state/session'
-import { Body, Button, ErrorText, Field, Screen, Title, colors } from '@/ui'
+import { Body, Button, ErrorText, Field, Screen, Title, useStyles, type Palette } from '@/ui'
 
 export default function Game() {
+  const styles = useStyles(makeStyles)
   const lang = useSession((s) => s.language)
   const [game, setGame] = useState<CheckinGame | null>(null)
   const [answer, setAnswer] = useState('')
@@ -86,7 +87,8 @@ export default function Game() {
   )
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (colors: Palette) =>
+  StyleSheet.create({
   row: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
   chip: { paddingVertical: 6, paddingHorizontal: 12, borderRadius: 16, borderWidth: 1, borderColor: colors.brand },
   chipText: { color: colors.brand },
