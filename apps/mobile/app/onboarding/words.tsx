@@ -4,9 +4,10 @@ import { useState } from 'react'
 import { StyleSheet, Switch, Text, View } from 'react-native'
 import { t } from '@/i18n'
 import { useSession } from '@/state/session'
-import { Body, Button, Screen, Title, colors } from '@/ui'
+import { Body, Button, Screen, Title, useStyles, type Palette } from '@/ui'
 
 export default function Words() {
+  const styles = useStyles(makeStyles)
   const lang = useSession((s) => s.language)
   const flow = useSession((s) => s.onboarding)
   const [noted, setNoted] = useState(false)
@@ -40,7 +41,8 @@ export default function Words() {
   )
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (colors: Palette) =>
+  StyleSheet.create({
   grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginVertical: 12 },
   word: { width: '45%', fontSize: 17, fontWeight: '600', color: colors.ink, backgroundColor: colors.field, padding: 8, borderRadius: 6 },
   row: { flexDirection: 'row', alignItems: 'center', gap: 12 },

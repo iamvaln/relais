@@ -81,6 +81,10 @@ client HTTP dans `packages/api-client`. L'app ne fait que les brancher.
 8. **Biométrie après coup** (14/09/2026) — fait : interrupteur dans Sécurité
    (activer avec le PIN, désactiver), raccourci biométrique dans les
    confirmations sensibles avec repli sur le PIN.
+9. **Mode sombre** (23/09/2026) — fait : palette de la marque (crème, encre,
+   sable, brun, doré) dans les deux modes, thème du téléphone par défaut,
+   réglage « Apparence » (comme le téléphone, clair, sombre) mémorisé sur le
+   device, barre d'état et fond de navigation accordés.
 
 ## 3. Décisions (11 et 12 septembre 2026)
 
@@ -111,6 +115,7 @@ client HTTP dans `packages/api-client`. L'app ne fait que les brancher.
 | Données du contact (lot 6) | **En mémoire seulement** : le coffre est reconstitué à chaque ouverture depuis l'escrow (accès 30 jours), rien de lisible n'est écrit sur le téléphone ni dans le navigateur. Seule la progression « Fait » est gardée (SecureStore / localStorage), sous le hachage du token, et expire avec l'accès ; « J'ai terminé » l'efface. |
 | Carnet au Gardien du souvenir (lot 6) | `GET /relay/:token/data` rend `journal` (mois, mode, blob sous K2) au contact qui porte K2 une fois la catégorie déverrouillée ; la purge finale supprime carnet et rétrospectives (E5-US05 « toutes les données chiffrées »). |
 | Biométrie après coup (14/09/2026) | **Activer depuis Sécurité, avec le PIN** : le PIN prouve la possession et le seed est rechiffré sous une nouvelle clé biométrique (`enableBiometricsWithPin`) ; désactiver efface la copie biométrique, le PIN reste. **Les confirmations sensibles proposent la biométrie** (activation, pause, annulation, contacts, fiche finances) : proposée d'emblée puis sur un bouton, un refus repasse au PIN sans message d'erreur (`confirmWithBiometrics` rend `ok`, `refused` ou `unavailable`, jamais d'exception). Rien ne change côté serveur : c'est une preuve locale, le step-up reste identique. |
+| Mode sombre (23/09/2026) | **Thème du téléphone par défaut, réglage manuel mémorisé** (`relais.theme` dans le stockage sécurisé, seul stockage clé-valeur de l'app ; ce n'est pas un secret). Les couleurs ne sont plus une constante : `useTheme()` résout préférence + `useColorScheme()` en une palette (`src/lib/theme.ts`), `useStyles(makeStyles)` recalcule les styles d'un écran quand elle change. Palette alignée sur la landing (crème `#faf8f5`, encre `#2a1f12`, brun `#8b5c2a`, doré `#f4a335` inchangé en sombre ; fond espresso `#1f1a15`, sable `#d9b07c` pour les actions) : le vert `#1b4332` disparaît. |
 | Chaîne Arbitrum (lot 3a) | **L'app signe toujours, l'API décide** : une signature Ed25519 du seed par action (aucun gaz, aucun wallet, DEC-05), ignorée par le serveur tant que `CHAIN_ENABLED=false`. Sans sujet on-chain, pause/reprise/annulation/désactivation n'envoient rien (l'API répondrait 409) et le premier check-in enregistre. L'échéance signée dépasse strictement l'échéance courante (`next_checkin_due` + 1 jour au besoin) : le contrat n'accepte pas deux fois la même. |
 | P2 et fiches (lot 6) | `reconstruct` (crypto-core) ouvre P2 une fois et rend ce que l'owner a scellé : dans l'app, la liste JSON des fiches chiffrées une à une ; app-core déchiffre chaque fiche (Techniques §5.2 décrit P2 = seal(P1) pour un blob unique — la spec est à préciser). |
 | Check-in et carnet (lot 5) | Une entrée déjà écrite ce mois est passée à `POST /checkin/complete` (`journal_entry_id`) pour se rattacher au check-in ; écrite après, elle s'y rattache seule (Fix-09a). « Validé par simple ouverture de l'app » n'est pas retenu, comme côté API. |
@@ -139,6 +144,13 @@ mappe pas `./x.js` vers `x.ts`) ; `Buffer` polyfillé par `src/lib/polyfills.ts`
 `libsodium-wrappers-sumo` aliasé vers `react-native-libsodium`.
 
 ## 5. Vérifications
+
+Lot 9 (mode sombre) :
+
+- mobile (5 tests) : « système » suit le téléphone (y compris `unspecified`
+  → clair), la préférence l'emporte ; les deux palettes ont les mêmes jetons,
+  doré inchangé, fond et encre inversés ; préférence stockée relue, valeur
+  inconnue → « système ». Typecheck, lint, bundle Metro Android.
 
 Lot 6 :
 

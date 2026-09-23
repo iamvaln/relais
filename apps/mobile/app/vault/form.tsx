@@ -10,11 +10,12 @@ import { device } from '@/lib/device'
 import { messageFor } from '@/lib/errors'
 import { useSession } from '@/state/session'
 import { openVault } from '@/state/vault'
-import { Body, Button, ErrorText, Field, PinField, Screen, Title, colors } from '@/ui'
+import { Body, Button, ErrorText, Field, PinField, Screen, Title, useStyles, type Palette } from '@/ui'
 
 const EXAMPLE: Partial<VaultItemInput> = { service_name: 'Orange Money', login: '+237 6 99 00 00 00', instructions: 'Appelle le 8008, demande la clôture au nom de …, ils demandent la CNI.' }
 
 export default function VaultForm() {
+  const styles = useStyles(makeStyles)
   const lang = useSession((s) => s.language)
   const params = useLocalSearchParams<{ id?: string; category?: VaultCategory; tutorial?: string }>()
   const editing = Boolean(params.id)
@@ -107,10 +108,11 @@ export default function VaultForm() {
   )
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (colors: Palette) =>
+  StyleSheet.create({
   row: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
   chip: { paddingVertical: 6, paddingHorizontal: 12, borderRadius: 16, borderWidth: 1, borderColor: colors.brand },
   chipActive: { backgroundColor: colors.brand },
   chipText: { color: colors.brand },
-  chipTextActive: { color: 'white' },
+  chipTextActive: { color: colors.onBrand },
 })

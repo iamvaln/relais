@@ -10,10 +10,11 @@ import { messageFor } from '@/lib/errors'
 import { chainStatusLine, checkinOccasions, schemaSentence, transmissionStatusLine } from '@/lib/transmission'
 import { useSession } from '@/state/session'
 import { openTransmission, refreshTransmission, useTransmission } from '@/state/transmission'
-import { Body, Button, ErrorText, Screen, Title, colors } from '@/ui'
+import { Body, Button, ErrorText, Screen, Title, useStyles, type Palette } from '@/ui'
 import { PinConfirm } from '@/ui/pin-confirm'
 
 export default function TransmissionHome() {
+  const styles = useStyles(makeStyles)
   const lang = useSession((s) => s.language)
   const { config, contacts } = useTransmission()
   const [error, setError] = useState<string | null>(null)
@@ -115,7 +116,8 @@ export default function TransmissionHome() {
   )
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (colors: Palette) =>
+  StyleSheet.create({
   list: { gap: 12 },
   section: { fontSize: 18, fontWeight: '600', color: colors.ink, marginTop: 8 },
   item: { paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: colors.field },

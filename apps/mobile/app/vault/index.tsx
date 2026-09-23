@@ -6,9 +6,10 @@ import { URGENCIES, VAULT_CATEGORIES, type Urgency, type VaultCategory, type Vau
 import { t } from '@/i18n'
 import { useSession } from '@/state/session'
 import { openVault, useVaultVersion } from '@/state/vault'
-import { Body, Button, Field, Screen, Title, colors } from '@/ui'
+import { Body, Button, Field, Screen, Title, useStyles, type Palette } from '@/ui'
 
 function Chip({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) {
+  const styles = useStyles(makeStyles)
   return (
     <Pressable onPress={onPress} style={[styles.chip, active && styles.chipActive]}>
       <Text style={[styles.chipText, active && styles.chipTextActive]}>{label}</Text>
@@ -17,6 +18,7 @@ function Chip({ label, active, onPress }: { label: string; active: boolean; onPr
 }
 
 export default function VaultList() {
+  const styles = useStyles(makeStyles)
   const lang = useSession((s) => s.language)
   const params = useLocalSearchParams<{ category?: VaultCategory }>()
   const version = useVaultVersion()
@@ -66,12 +68,13 @@ export default function VaultList() {
   )
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (colors: Palette) =>
+  StyleSheet.create({
   row: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
   chip: { paddingVertical: 6, paddingHorizontal: 12, borderRadius: 16, borderWidth: 1, borderColor: colors.brand },
   chipActive: { backgroundColor: colors.brand },
   chipText: { color: colors.brand },
-  chipTextActive: { color: 'white' },
+  chipTextActive: { color: colors.onBrand },
   item: { paddingVertical: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderColor: colors.muted },
   itemTitle: { fontSize: 17, fontWeight: '600', color: colors.ink },
   itemMeta: { fontSize: 13, color: colors.muted },

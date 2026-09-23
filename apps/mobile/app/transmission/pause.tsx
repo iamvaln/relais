@@ -6,12 +6,13 @@ import type { PauseDays } from '@relais/app-core'
 import { t } from '@/i18n'
 import { useSession } from '@/state/session'
 import { openTransmission, refreshTransmission } from '@/state/transmission'
-import { Body, Button, Screen, Title, colors } from '@/ui'
+import { Body, Button, Screen, Title, useStyles, type Palette } from '@/ui'
 import { PinConfirm } from '@/ui/pin-confirm'
 
 const DAYS: PauseDays[] = [7, 30, 90]
 
 export default function Pause() {
+  const styles = useStyles(makeStyles)
   const lang = useSession((s) => s.language)
   const [days, setDays] = useState<PauseDays>(30)
   const [askPin, setAskPin] = useState(false)
@@ -50,10 +51,11 @@ export default function Pause() {
   )
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (colors: Palette) =>
+  StyleSheet.create({
   row: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
   chip: { paddingVertical: 6, paddingHorizontal: 12, borderRadius: 16, borderWidth: 1, borderColor: colors.brand },
   chipActive: { backgroundColor: colors.brand },
   chipText: { color: colors.brand },
-  chipTextActive: { color: 'white' },
+  chipTextActive: { color: colors.onBrand },
 })

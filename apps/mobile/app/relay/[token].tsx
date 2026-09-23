@@ -11,11 +11,12 @@ import { api } from '@/lib/api'
 import { secureStorage } from '@/lib/device'
 import { messageFor } from '@/lib/errors'
 import { useSession } from '@/state/session'
-import { Body, Button, ErrorText, Field, Screen, Title, colors } from '@/ui'
+import { Body, Button, ErrorText, Field, Screen, Title, useStyles, type Palette } from '@/ui'
 
 const flow = new RelayFlow({ api, storage: secureStorage })
 
 export default function Relay() {
+  const styles = useStyles(makeStyles)
   const lang = useSession((s) => s.language)
   const { token } = useLocalSearchParams<{ token: string }>()
   const [link, setLink] = useState<RelayLinkView | null>(null)
@@ -221,7 +222,8 @@ export default function Relay() {
   )
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (colors: Palette) =>
+  StyleSheet.create({
   list: { gap: 12 },
   section: { fontSize: 18, fontWeight: '600', color: colors.ink, marginTop: 8 },
   item: { padding: 10, borderRadius: 8, borderWidth: 1, borderColor: colors.field, gap: 4 },
