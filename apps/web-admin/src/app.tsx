@@ -4,6 +4,7 @@
 import { homeModule, modulesFor, type Module } from '@relais/admin-core'
 import { createBrowserRouter, Navigate, NavLink, Outlet, useLocation } from 'react-router-dom'
 import { useApp } from './app-state'
+import { ThemeToggle } from './theme-toggle'
 import { DashboardScreen } from './screens/dashboard'
 import { BillingScreen } from './screens/billing'
 import { ConfigScreen } from './screens/config'
@@ -52,6 +53,7 @@ function Shell() {
             {admin.full_name} · {admin.role}
           </span>
           <LangToggle />
+          <ThemeToggle />
           <button type="button" className="secondary" onClick={() => void logout()}>
             {t('nav.logout')}
           </button>

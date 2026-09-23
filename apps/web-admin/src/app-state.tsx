@@ -1,11 +1,12 @@
 // L'état partagé des écrans : session (admin-core), langue, perte de session.
-import { AdminClient, AdminSession, type AdminView } from '@relais/admin-core'
+import { AdminClient, AdminSession, parseThemePreference, type AdminView, type ThemePreference } from '@relais/admin-core'
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { browserLang, type Key, type Lang, t as translate } from './i18n'
 import { BrowserSessionStore } from './session-store'
 
 const API_URL = (import.meta.env.VITE_API_URL as string | undefined) ?? 'http://localhost:3000'
 const LANG_KEY = 'relais-admin-lang'
+const THEME_KEY = 'relais-admin-theme'
 
 interface AppState {
   client: AdminClient
@@ -15,6 +16,8 @@ interface AppState {
   lostNotice: boolean
   lang: Lang
   setLang: (lang: Lang) => void
+  theme: ThemePreference
+  setTheme: (theme: ThemePreference) => void
   t: (key: Key, params?: Record<string, string | number>) => string
   login: (input: { email: string; password: string; code: string }) => Promise<AdminView>
   logout: () => Promise<void>
@@ -33,6 +36,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   const [ready, setReady] = useState(false)
   const [lostNotice, setLostNotice] = useState(false)
   const [lang, setLangState] = useState<Lang>(initialLang)
+  const [theme, setThemeState] = useState<ThemePreference>(() => parseThemePreference(localStorage.getItem(THEME_KEY)))
 
   const { client, session } = useMemo(() => {
     const store = new BrowserSessionStore()
@@ -64,6 +68,17 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     setLangState(next)
   }, [])
 
+  // Apparence : « système » laisse `prefers-color-scheme` décider ; clair ou sombre s'impose via data-theme (styles.css).
+  useEffect(() => {
+    if (theme === 'system') delete document.documentElement.dataset.theme
+    else document.documentElement.dataset.theme = theme
+  }, [theme])
+
+  const setTheme = useCallback((next: ThemePreference) => {
+    localStorage.setItem(THEME_KEY, next)
+    setThemeState(next)
+  }, [])
+
   const value = useMemo<AppState>(
     () => ({
       client,
@@ -73,6 +88,8 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       lostNotice,
       lang,
       setLang,
+      theme,
+      setTheme,
       t: (key, params) => translate(lang, key, params),
       login: async (input) => {
         const a = await session.login(input)
@@ -85,7 +102,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         setAdmin(null)
       },
     }),
-    [client, session, admin, ready, lostNotice, lang, setLang],
+    [client, session, admin, ready, lostNotice, lang, setLang, theme, setTheme],
   )
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>
